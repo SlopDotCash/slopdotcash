@@ -964,6 +964,67 @@ test("undecided: still open 14 days after payment, the fee is due back", async (
   }
 });
 
+test("undecided: a close after the 14 days does not keep the fee when the check runs late", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    w.pay(paid.toISOString());
+    await w.check(new Date(paid.getTime() + 13 * DAY));
+    expect(w.gate()?.next_check_at).toBe(
+      new Date(paid.getTime() + 14 * DAY).toISOString(),
+    );
+    // The day-14 check is delayed, and the pull request is closed an hour
+    // after the 14 days ended: nobody decided it in time.
+    const closed = new Date(paid.getTime() + 14 * DAY + 60 * 60_000);
+    w.github.state = "closed";
+    w.github.closedAt = closed.toISOString();
+    const late = new Date(closed.getTime() + 60 * 60_000);
+    expect(await w.dispatch(late)).toBe(1);
+    expect((await w.check(late)).outcome).toBe(
+      "submission fee: refund_due: undecided",
+    );
+    expect(w.item()).toMatchObject({ outcome: "refund_due" });
+    expect(w.feeComments()[0].body).toContain(
+      "No maintainer merged or closed this pull request within 14 days",
+    );
+    // Seven more days closed change nothing: the fee is never kept.
+    await w.check(new Date(closed.getTime() + 8 * DAY));
+    expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("undecided: a late close under appeal waits for the appeal, then the fee is due back at once", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    // Slopbot closes the pull request an hour after the 14 days ended and
+    // the author appeals that close.
+    const closed = new Date(paid.getTime() + 14 * DAY + 60 * 60_000);
+    const appealed = new Date(closed.getTime() + 60 * 60_000);
+    const decide = await w.slopbotClosesAndAuthorAppeals(closed, appealed);
+    expect((await w.check(appealed)).outcome).toBe("submission fee: fee-paid");
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(w.gate()?.next_check_at).toBe(
+      new Date(appealed.getTime() + DAY).toISOString(),
+    );
+    // Upheld a day later: no 7 days are counted from the upheld time.
+    const upheld = new Date(appealed.getTime() + DAY);
+    expect(await decide("upheld", upheld)).toBe(true);
+    expect((await w.check(upheld)).outcome).toBe(
+      "submission fee: refund_due: undecided",
+    );
+    expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
+  }
+});
+
 test("closed: a paid fee is kept only after 7 days still closed", async () => {
   const w = world();
   try {
@@ -2163,6 +2224,63 @@ test("the outcome rule", () => {
       at(15),
     ).outcome,
   ).toBeNull();
+  // A close after the 14 days decided nothing in time: the fee is due back
+  // as undecided whenever the check runs.
+  const closedLate = {
+    ...open,
+    closed: true,
+    closedAt: at(14.5).toISOString(),
+  };
+  for (const now of [at(14.6), at(21.5), at(40)])
+    expect(feeOutcome(closedLate, now)).toEqual({
+      outcome: "refund_due",
+      why: "undecided",
+      nextCheckAt: null,
+    });
+  // An open appeal of Slopbot's close still holds the row; once it is no
+  // longer open the same row is due back.
+  expect(feeOutcome({ ...closedLate, appealOpen: true }, at(15))).toEqual({
+    outcome: null,
+    why: null,
+    nextCheckAt: at(16).toISOString(),
+  });
+  expect(feeOutcome({ ...closedLate, appealOpen: false }, at(15))).toEqual({
+    outcome: "refund_due",
+    why: "undecided",
+    nextCheckAt: null,
+  });
+  // An upheld appeal does not start 7 more days for a late close.
+  expect(
+    feeOutcome(
+      { ...closedLate, appealUpheldAt: at(16).toISOString() },
+      at(16.1),
+    ),
+  ).toEqual({ outcome: "refund_due", why: "undecided", nextCheckAt: null });
+  // Invited work with a keep label added within its 7 days is still due
+  // back as undecided: the close itself came after the 14 days.
+  expect(
+    feeOutcome(
+      {
+        ...closedLate,
+        wanted: true,
+        keepMarked: true,
+        keepMarkedAt: at(15).toISOString(),
+      },
+      at(40),
+    ),
+  ).toEqual({ outcome: "refund_due", why: "undecided", nextCheckAt: null });
+  // A close exactly at the 14-day mark is still a decision within the 14 days.
+  const closedAtMark = {
+    ...open,
+    closed: true,
+    closedAt: at(14).toISOString(),
+  };
+  expect(feeOutcome(closedAtMark, at(20)).outcome).toBeNull();
+  expect(feeOutcome(closedAtMark, at(21))).toEqual({
+    outcome: "kept_due",
+    why: "closed",
+    nextCheckAt: null,
+  });
   // Without a close time nothing is kept on a guess.
   expect(
     feeOutcome({ ...open, closed: true, closedAt: null }, at(40)).outcome,

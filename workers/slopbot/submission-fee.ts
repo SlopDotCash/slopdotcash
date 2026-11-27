@@ -1177,6 +1177,12 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
     if (!Number.isFinite(closedAt) || !Number.isFinite(paid))
       return wait(time + FEE_RECHECK_MS);
     if (facts.appealOpen) return wait(time + FEE_RECHECK_MS);
+    // A close after the 14 days decided nothing in time: the refund was due
+    // while the pull request was still open, whenever this check runs. An
+    // open appeal still holds the row; the 7 days, the keep label and the
+    // wanted link do not delay it.
+    if (closedAt > paid + SUBMISSION_FEE_REFUND_UNDECIDED_DAYS * DAY_MS)
+      return { outcome: "refund_due", why: "undecided", nextCheckAt: null };
     const upheldAt = Date.parse(facts.appealUpheldAt ?? "");
     // A deposit made after the close still gets the full wait.
     const due =

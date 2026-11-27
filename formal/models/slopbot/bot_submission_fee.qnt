@@ -18,7 +18,10 @@
 // the row paid; the fee check then swaps the label and the held review runs.
 // The check sets refund_due when the pull request is merged or still open
 // REFUND_AFTER days after payment, and kept_due when it has stayed closed
-// without a merge for KEPT_AFTER days. Slopbot has no action that closes a
+// without a merge for KEPT_AFTER days. A close after REFUND_AFTER decided
+// nothing in time: the pull request was open at that age, so the fee is
+// refund_due whenever the check runs, once no appeal of Slopbot's close is
+// open and without the KEPT_AFTER wait. Slopbot has no action that closes a
 // pull request or moves money, and a maintainer can merge an unpaid one.
 // REFUND_AFTER and KEPT_AFTER abstract 14 and 7 days. A switch that is live
 // with no published deposit contract behaves as "off" and is modelled so.
@@ -64,6 +67,7 @@ module bot_submission_fee {
     comments: int,
     paidDays: int, closedDays: int,
     everMerged: bool, openAtRefundAge: bool, closedAtKeptAge: bool,
+    keptPastRefundAge: bool,
     wanted: bool, keepMark: bool, keepMarkLate: bool,
     decidedWithTimelyMark: bool,
     slopClosed: bool,
@@ -78,6 +82,7 @@ module bot_submission_fee {
     outcome: "none",
     label: "none", comments: 0, paidDays: 0, closedDays: 0,
     everMerged: false, openAtRefundAge: false, closedAtKeptAge: false,
+    keptPastRefundAge: false,
     wanted: false, keepMark: false, keepMarkLate: false,
     decidedWithTimelyMark: false,
     slopClosed: false, appeal: "none",
@@ -159,10 +164,11 @@ module bot_submission_fee {
         or (s.paid and s.paidDays >= REFUND_AFTER)) }
   // The submission-fee Worker accepts a deposit for a row Slopbot inserted.
   // It marks only an undecided row, and may withdraw the mark while no
-  // outcome is set.
+  // outcome is set. A new payment starts its own REFUND_AFTER days.
   action workerMarksPaid = all { s.row, not(s.paid), s.outcome == "none",
     s' = s.with("paid", true).with("everPaid", true).with("paidDays", 0)
-      .with("closedDays", 0).with("keepMarkLate", false) }
+      .with("closedDays", 0).with("keepMarkLate", false)
+      .with("openAtRefundAge", false) }
   // The resolver plans only a finalized deposit, which no reorganisation can
   // withdraw.
   action workerWithdrawsPayment = all { s.paid, s.outcome == "none", not(s.planned),
@@ -218,12 +224,17 @@ module bot_submission_fee {
   // The scheduled or event-driven check of an asked pull request.
   val dueOutcome = if (s.outcome != "none") s.outcome
     else if (s.pr == "merged") "refund_due"
-    else if (s.pr == "closed" and s.appeal != "open" and s.closedDays >= KEPT_AFTER)
+    // An open appeal of Slopbot's close holds every closed outcome.
+    else if (s.pr == "closed" and s.appeal == "open") "none"
+    // Closed only after it was open at the refund age: nobody decided in time.
+    else if (s.pr == "closed" and s.openAtRefundAge) "refund_due"
+    else if (s.pr == "closed" and s.closedDays >= KEPT_AFTER)
       (if (s.wanted and (not(s.keepMark) or s.keepMarkLate)) "refund_due"
         else "kept_due")
     else if (s.pr == "open" and s.paidDays >= REFUND_AFTER) "refund_due"
     else "none"
-  // A closed wanted pull request whose link GitHub could not answer waits.
+  // A closed wanted pull request whose link GitHub could not answer waits,
+  // unless it was closed after the refund age, which needs no such read.
   action check(readable: bool): bool = all { s.mode == "live", s.row, s.gate != "none",
     not(s.gate == "asking" and s.holder),
     if (not(s.paid))
@@ -233,8 +244,10 @@ module bot_submission_fee {
           if (s.pr == "open") "needed" else "none")
         else s)
     else s' = s.with("gate", "paid").with("label", "paid").with("comments", 1)
-      .with("outcome", if (not(readable) and s.pr == "closed" and s.outcome == "none")
-        "none" else dueOutcome)
+      .with("outcome", if (not(readable) and s.pr == "closed" and s.outcome == "none"
+        and not(s.openAtRefundAge)) "none" else dueOutcome)
+      .with("keptPastRefundAge", s.keptPastRefundAge or (s.outcome == "none"
+        and readable and dueOutcome == "kept_due" and s.openAtRefundAge))
       .with("decidedWithTimelyMark",
         if (s.outcome == "none") (s.keepMark and not(s.keepMarkLate))
         else s.decidedWithTimelyMark)
@@ -264,6 +277,8 @@ module bot_submission_fee {
     // Slopbot only sets an outcome on a paid row, and only when it is due.
     s.outcome != "none" implies (s.paid and s.gate == "paid"),
     s.outcome == "kept_due" implies s.closedAtKeptAge,
+    // No fee is kept for a close that came after the refund age.
+    not(s.keptPastRefundAge),
     // No fee is kept for Slopbot's own close while its appeal is undecided,
     // unless the Worker had already recorded its send.
     (s.outcome == "kept_due" and s.appeal == "open") implies s.sent,
@@ -309,6 +324,19 @@ module bot_submission_fee {
     .then(workerMarksPaid).then(feeCheck).then(dayPasses).then(dayPasses)
     .then(feeCheck)
     .expect(s.outcome == "refund_due" and s.pr == "open")
+  run closedAfterTheRefundAgeIsDueBackTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
+    .then(askRecords).then(workerMarksPaid).then(feeCheck).then(dayPasses)
+    .then(dayPasses).then(closes).then(dayPasses).then(dayPasses).then(feeCheck)
+    .expect(s.outcome == "refund_due" and s.pr == "closed")
+  run lateCloseWaitsForItsAppealThenIsDueBackTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
+    .then(askRecords).then(workerMarksPaid).then(feeCheck).then(dayPasses)
+    .then(dayPasses).then(slopbotCloses).then(authorAppeals).then(feeCheck)
+    .expect(s.outcome == "none" and s.appeal == "open" and s.openAtRefundAge)
+    .then(moderatorUpholds).then(feeCheck)
+    .expect(s.outcome == "refund_due" and s.pr == "closed"
+      and s.closedDays < KEPT_AFTER)
   run undecidedBeforeTheAgeWaitsTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(workerMarksPaid).then(feeCheck).then(dayPasses).then(feeCheck)
@@ -334,6 +362,13 @@ module bot_submission_fee {
     .then(dayPasses).then(maintainerMarksKeep).then(feeCheck)
     .expect(s.outcome == "refund_due" and s.keepMarkLate
       and not(s.decidedWithTimelyMark))
+  run wantedClosedAfterTheRefundAgeIsDueBackTest = init.then(ownerTurnsOn)
+    .then(setMode("live")).then(opensFor(true, true)).then(review(true))
+    .then(askPosts).then(askRecords).then(workerMarksPaid).then(feeCheck)
+    .then(dayPasses).then(dayPasses).then(closes).then(maintainerMarksKeep)
+    .then(dayPasses).then(dayPasses).then(feeCheck)
+    .expect(s.outcome == "refund_due" and s.keepMark and not(s.keepMarkLate)
+      and s.openAtRefundAge)
   run wantedUnreadableWaitsTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
     .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)

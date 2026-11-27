@@ -301,7 +301,10 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
 - **Outcome.** The same job sets `outcome` on a paid, undecided row only:
   `refund_due` when the pull request is merged or still open 14 days after
   `paid_at`; `kept_due` when it has been closed without a merge for 7 days,
-  counted from the later of the close and `paid_at`. A pull request that
+  counted from the later of the close and `paid_at`. A close after those 14
+  days decided nothing in time, so once no appeal of Slopbot's close is open
+  it is `refund_due` without the 7 days, however late the check runs. A pull
+  request that
   closes an issue of its own repository labelled `slop-wanted` before the
   pull request was opened is invited work: closed without a merge, it is
   `refund_due` after the same 7 days unless a maintainer has added the label
