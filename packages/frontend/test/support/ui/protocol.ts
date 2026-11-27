@@ -167,6 +167,7 @@ export interface Box {
 
 export type Op =
   | { readonly kind: "start" }
+  | { readonly kind: "stop" }
   | { readonly kind: "user"; readonly id: number; readonly login: string }
   | { readonly kind: "deploy"; readonly roles: Roles }
   | { readonly kind: "repository"; readonly setup: RepositorySetup }
@@ -232,6 +233,7 @@ export type Op =
 
 export interface Results {
   readonly start: null;
+  readonly stop: null;
   readonly user: null;
   readonly deploy: null;
   readonly repository: null;

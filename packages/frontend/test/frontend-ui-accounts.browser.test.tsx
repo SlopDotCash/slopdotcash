@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loginPath } from "../src/platform/environment.ts";
 import { accessible, at, named, origin, shown, signIn, signOut, site, tabTo } from "./support/ui/browser.ts";
 
@@ -31,6 +31,8 @@ afterEach(async () => {
   expect(await site.popups()).toBe(expectedPopups);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
+
+afterAll(() => site.stop());
 
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"
 describe("Resume an authorized destination after signing in", () => {

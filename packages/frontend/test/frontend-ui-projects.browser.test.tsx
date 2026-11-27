@@ -1,5 +1,5 @@
 // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
 import type { Target } from "./support/ui/protocol.ts";
 
@@ -162,6 +162,8 @@ afterEach(async () => {
   expect(await site.popups()).toBe(0);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
+
+afterAll(() => site.stop());
 
 // spec/frontend/presentation.md, "Story: Complete project setup with explicit independent readiness"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document"
 describe("Complete project setup with explicit independent", () => {

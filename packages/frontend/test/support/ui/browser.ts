@@ -19,6 +19,7 @@ export const named = (role: Role, name?: string, more: Omit<Target, "role" | "na
 
 export const site = {
   start: () => ask({ kind: "start" }),
+  stop: () => ask({ kind: "stop" }),
   user: (id: number, login: string) => ask({ kind: "user", id, login }),
   deploy: (roles: Roles) => ask({ kind: "deploy", roles }),
   repository: (setup: RepositorySetup) => ask({ kind: "repository", setup }),

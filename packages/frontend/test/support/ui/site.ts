@@ -123,7 +123,19 @@ interface Session {
   restore: (() => Promise<void>) | undefined;
   wallets: Wallets | undefined;
   clocked: boolean;
+  closed: boolean;
   downloaded: Promise<Downloaded> | undefined;
+}
+
+interface Instance {
+  readonly started: Started;
+  readonly session: Session;
+}
+
+interface Slot {
+  instance: Instance | undefined;
+  tail: Promise<void>;
+  pending: number;
 }
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -240,10 +252,10 @@ let built: Promise<Built> | undefined;
 
 export const prepare = () => (built ??= build());
 
-async function open({ assets, script, identityScript, slopbotScript }: Built): Promise<Started> {
+async function open({ assets, script, identityScript, slopbotScript }: Built, chains: ReadonlyMap<number, Promise<Anvil>>): Promise<Started> {
   const github = githubFake();
   github.world.addUser(reader);
-  const net = internet({ github: github.handler, hosts: { [backendRpcHost]: sessionRpc } });
+  const net = internet({ github: github.handler, hosts: { [backendRpcHost]: chainRpc(chains) } });
   const verifications: Verification[] = [];
   const signer = scannerKey();
   const readToken = github.tokens.user(reader.login);
@@ -327,28 +339,43 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
   };
 }
 
-let started: Started | undefined;
-let session: Session | undefined;
+const slots = new Map<string, Slot>();
 
-async function sessionRpc(request: Request): Promise<Response> {
-  const chain = session?.chains.get(homeChainId);
-  if (chain === undefined) return new Response("no session chain", { status: 503 });
-  return forward((await chain).url)(request);
+function chainRpc(chains: ReadonlyMap<number, Promise<Anvil>>): Handler {
+  return async (request) => {
+    const chain = chains.get(homeChainId);
+    if (chain === undefined) return new Response("no session chain", { status: 503 });
+    return forward((await chain).url)(request);
+  };
 }
 
-function backend(): Started {
-  if (started === undefined) throw new Error("site: start the site first");
-  return started;
+function slotOf(context: BrowserCommandContext): Slot {
+  const id = context.sessionId;
+  const existing = slots.get(id);
+  if (existing !== undefined) return existing;
+  const created: Slot = { instance: undefined, tail: Promise.resolve(), pending: 0 };
+  slots.set(id, created);
+  return created;
 }
 
-function current(): Session {
-  if (session === undefined) throw new Error("site: start the site first");
-  return session;
+function serialize<T>(slot: Slot, work: () => Promise<T>): Promise<T> {
+  slot.pending += 1;
+  const next = slot.tail.then(work, work);
+  slot.tail = next.then(() => undefined, () => undefined);
+  return next.finally(() => {
+    slot.pending -= 1;
+  });
 }
 
-function page(): Page {
-  const opened = current().tabs.get(current().current);
-  if (opened === undefined) throw new Error(`site: no tab ${current().current}`);
+function runningOf(context: BrowserCommandContext): Instance {
+  const running = slots.get(context.sessionId)?.instance;
+  if (running === undefined) throw new Error("site: start the site first");
+  return running;
+}
+
+function pageOf(into: Session): Page {
+  const opened = into.tabs.get(into.current);
+  if (opened === undefined) throw new Error(`site: no tab ${into.current}`);
   return opened;
 }
 
@@ -360,17 +387,18 @@ async function answer(route: Route, into: Session, worker: (request: Request) =>
   const asked = route.request();
   const url = transform(new URL(asked.url()));
   const rawHeaders = await asked.allHeaders().catch(() => undefined);
-  if (rawHeaders === undefined || session !== into) return route.abort("aborted").catch(() => undefined);
+  if (rawHeaders === undefined || into.closed) return route.abort("aborted").catch(() => undefined);
   const headers = Object.fromEntries(Object.entries(rawHeaders).filter(([name]) => !name.startsWith(":")));
   const body = asked.postDataBuffer();
   if (url.origin === site) into.sent.push({ method: asked.method(), path: url.pathname, actor: headers["x-slop-expected-github-id"] ?? null });
   const answered = await worker(new Request(url.toString(), { method: asked.method(), headers, redirect: "manual", ...(body === null ? {} : { body: new Uint8Array(body) }) }))
     .then(async (response) => ({ response, bytes: Buffer.from(await response.arrayBuffer()) }))
     .catch(() => undefined);
-  if (answered === undefined) return route.abort("failed").catch(() => undefined);
+  if (answered === undefined || into.closed) return route.abort(into.closed ? "aborted" : "failed").catch(() => undefined);
   const { response, bytes } = answered;
   const held = url.origin === site ? into.holds.get(holdKey(asked.method(), url.pathname)) : undefined;
   if (held !== undefined) await held.released;
+  if (into.closed) return route.abort("aborted").catch(() => undefined);
   const shown: Record<string, string> = {};
   response.headers.forEach((value, name) => {
     if (name !== "set-cookie") shown[name] = value;
@@ -391,12 +419,12 @@ function cannedFor({ canned }: Session, method: string, path: string): Canned | 
 }
 
 async function routed(route: Route, into: Session, backendNow: Started) {
-  if (session !== into) return route.abort("aborted").catch(() => undefined);
+  if (into.closed) return route.abort("aborted").catch(() => undefined);
   const url = new URL(route.request().url());
   const canned = url.origin === site ? cannedFor(into, route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
     const rawHeaders = await route.request().allHeaders().catch(() => undefined);
-    if (rawHeaders === undefined || session !== into) return route.abort("aborted").catch(() => undefined);
+    if (rawHeaders === undefined || into.closed) return route.abort("aborted").catch(() => undefined);
     into.sent.push({ method: route.request().method(), path: url.pathname, actor: rawHeaders["x-slop-expected-github-id"] ?? null });
     const fulfilled = canned.kind === "json" ? { contentType: "application/json", body: JSON.stringify(canned.body) } : { contentType: canned.contentType, body: Buffer.from(canned.bytes) };
     return route.fulfill({ status: canned.status, ...fulfilled }).catch(() => undefined);
@@ -425,47 +453,67 @@ function watch(opened: BrowserContext, into: Session) {
     });
   });
   opened.on("console", (message) => {
-    if (message.type() === "error") into.console.push(`console ${message.text()}`);
+    if (!into.closed && message.type() === "error") into.console.push(`console ${message.text()}`);
   });
-  opened.on("weberror", (error) => into.console.push(`pageerror ${error.error().message}`));
+  opened.on("weberror", (error) => {
+    if (!into.closed) into.console.push(`pageerror ${error.error().message}`);
+  });
   opened.on("requestfailed", (request) => {
     const error = request.failure()?.errorText ?? "";
-    if (request.url().startsWith(site) && !(request.method() === "GET" && error === "net::ERR_ABORTED")) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${error}`);
+    if (!into.closed && request.url().startsWith(site) && !(request.method() === "GET" && error === "net::ERR_ABORTED")) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${error}`);
   });
   opened.on("response", (response) => {
-    if (response.url().startsWith(site) && response.status() >= 400) into.failed.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
+    if (!into.closed && response.url().startsWith(site) && response.status() >= 400) into.failed.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
   });
+}
+
+async function disposeInstance(previous: Instance): Promise<void> {
+  previous.session.closed = true;
+  for (const held of previous.session.holds.values()) held.release();
+  await previous.session.context.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
+  await previous.session.context.close().catch(() => undefined);
+  await Promise.allSettled([...previous.session.chains.values()].map((chain) => chain.then((started) => started.close(), () => undefined)));
+  await previous.started.dispose().catch(() => undefined);
+}
+
+async function disposeSlot(slot: Slot): Promise<void> {
+  const previous = slot.instance;
+  slot.instance = undefined;
+  if (previous !== undefined) await disposeInstance(previous);
 }
 
 export async function close() {
-  const previous = session;
-  session = undefined;
-  if (previous !== undefined) {
-    for (const held of previous.holds.values()) held.release();
-    await previous.context.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
-    await previous.context.close();
-    for (const chain of previous.chains.values()) await chain.then((started) => started.close(), () => undefined);
+  const active = [...slots.values()];
+  slots.clear();
+  await Promise.allSettled(active.map((slot) => serialize(slot, () => disposeSlot(slot))));
+}
+
+async function reset(context: BrowserCommandContext, slot: Slot) {
+  await disposeSlot(slot);
+  const chains = new Map<number, Promise<Anvil>>();
+  const backendNow = await open(await prepare(), chains);
+  let opened: BrowserContext | undefined;
+  let made: Session | undefined;
+  try {
+    const browser: Browser | null = context.context.browser();
+    if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
+    opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    made = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains, sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, closed: false, downloaded: undefined };
+    const created = made;
+    watch(opened, created);
+    await opened.route("**/*", (route) => routed(route, created, backendNow));
+    slot.instance = { started: backendNow, session: created };
+  } catch (error) {
+    if (made !== undefined) made.closed = true;
+    await opened?.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
+    await opened?.close().catch(() => undefined);
+    await Promise.allSettled([...chains.values()].map((chain) => chain.then((started) => started.close(), () => undefined)));
+    await backendNow.dispose().catch(() => undefined);
+    throw error;
   }
-  const replaced = started;
-  started = undefined;
-  await replaced?.dispose();
 }
 
-async function reset(context: BrowserCommandContext) {
-  await close();
-  const backendNow = await open(await prepare());
-  started = backendNow;
-  const browser: Browser | null = context.context.browser();
-  if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
-  const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, downloaded: undefined };
-  session = made;
-  watch(opened, made);
-  await opened.route("**/*", (route) => routed(route, made, backendNow));
-}
-
-async function tab(name: string): Promise<Page> {
-  const into = current();
+async function tab(into: Session, name: string): Promise<Page> {
   const switching = into.current !== name;
   const known = into.tabs.get(name);
   into.current = name;
@@ -546,9 +594,9 @@ async function reviewedVault(stack: EscrowStack, vault: string, owner: string, b
   };
 }
 
-async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed> {
-  const started = backend();
-  const chain = await walletChain(current(), homeChainId);
+async function vault(running: Instance, projectId: string, purpose: VaultPurpose): Promise<Deployed> {
+  const { started, session } = running;
+  const chain = await walletChain(session, homeChainId);
   const [depositor, owner] = [chain.accounts[0], chain.accounts[6]];
   const ownerAddress = owner === undefined ? undefined : evmAddress(owner.address);
   if (depositor === undefined || ownerAddress === undefined) throw new Error("site: the wallet anvil has no accounts 0 and 6");
@@ -606,9 +654,9 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
   }
 }
 
-async function bindPayout(githubId: string, vault: string) {
-  const [row] = await backend().rows("SELECT b.signature, b.expires_at, b.expected_version, w.wallet_address, w.record_sha256 FROM payment_binding_authorizations b JOIN wallet_claims w ON w.id = b.claim_id WHERE b.github_user_id = ? AND b.vault = ?", [githubId, vault]);
-  const chain = await walletChain(current(), homeChainId);
+async function bindPayout(running: Instance, githubId: string, vault: string) {
+  const [row] = await running.started.rows("SELECT b.signature, b.expires_at, b.expected_version, w.wallet_address, w.record_sha256 FROM payment_binding_authorizations b JOIN wallet_claims w ON w.id = b.claim_id WHERE b.github_user_id = ? AND b.vault = ?", [githubId, vault]);
+  const chain = await walletChain(running.session, homeChainId);
   const authority = chain.accounts[1];
   const to = evmAddress(vault);
   const destination = evmAddress(String(row?.wallet_address));
@@ -621,12 +669,12 @@ async function bindPayout(githubId: string, vault: string) {
   if (receipt.status !== "success") throw new Error("site: local binding reverted");
 }
 
-async function published(context: BrowserCommandContext, leaderboard: LeaderboardTransport): Promise<Published> {
+async function published(context: BrowserCommandContext, into: Session, leaderboard: LeaderboardTransport): Promise<Published> {
   const { publishedFixture } = await context.project.import<PointsTesting>("@repo/points/testing");
   const fixture = await publishedFixture();
   const transport = [{ path: "/data/leaderboard.json", bytes: fixture.transport.root }, ...fixture.transport.parts];
   const files = leaderboard === "whole" ? fixture.files : [...fixture.files.filter((file) => file.path !== "/data/leaderboard.json" && !file.path.startsWith("/data/leaderboard/")), ...transport];
-  for (const file of files) current().canned.set(holdKey("*", file.path), { kind: "bytes", status: 200, bytes: file.bytes, contentType: file.path.endsWith(".part") ? "text/plain; charset=utf-8" : "application/json" });
+  for (const file of files) into.canned.set(holdKey("*", file.path), { kind: "bytes", status: 200, bytes: file.bytes, contentType: file.path.endsWith(".part") ? "text/plain; charset=utf-8" : "application/json" });
   return {
     registry: fixture.registry,
     leaders: fixture.leaderboard.snapshot.leaders.map(({ actor }) => ({ id: actor.id, login: actor.login, avatarUrl: actor.avatarUrl })),
@@ -636,8 +684,8 @@ async function published(context: BrowserCommandContext, leaderboard: Leaderboar
 
 const absent: Shown = { count: 0, visible: false, text: "", value: null, disabled: false, checked: null, focused: false, href: null };
 
-async function read(target: Target): Promise<Shown> {
-  const found = locate(page(), target);
+async function read(into: Session, target: Target): Promise<Shown> {
+  const found = locate(pageOf(into), target);
   const count = await found.count();
   if (count === 0) return absent;
   const first = found.first();
@@ -666,8 +714,8 @@ async function read(target: Target): Promise<Shown> {
   return { count, visible, ...facts };
 }
 
-function layout(): Promise<Layout> {
-  return page().evaluate(() => {
+function layout(into: Session): Promise<Layout> {
+  return pageOf(into).evaluate(() => {
     const shown = (element: Element) => element instanceof HTMLElement && element.offsetParent !== null && getComputedStyle(element).visibility !== "hidden" && element.getAttribute("aria-hidden") !== "true";
     const named = (element: Element) => {
       const labelled = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/u).filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "").join("");
@@ -690,8 +738,8 @@ function layout(): Promise<Layout> {
   });
 }
 
-function leaks(text: string): Promise<boolean> {
-  return page().evaluate((needle) => {
+function leaks(into: Session, text: string): Promise<boolean> {
+  return pageOf(into).evaluate((needle) => {
     if (document.body.innerText.includes(needle)) return true;
     for (const element of document.querySelectorAll("*")) {
       if ((element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && element.value.includes(needle)) return true;
@@ -701,74 +749,84 @@ function leaks(text: string): Promise<boolean> {
   }, text);
 }
 
-function diagnostics(): Diagnostics {
-  const into = current();
+function diagnostics(into: Session): Diagnostics {
   const allowed = (line: string) => into.allowed.some((pattern) => pattern.test(line));
   return { console: into.console.filter((line) => !allowed(line)), failed: into.failed.filter((line) => !allowed(line)) };
 }
 
 async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
+  if (op.kind === "start") {
+    const slot = slotOf(context);
+    await serialize(slot, () => reset(context, slot));
+    return null;
+  }
+  if (op.kind === "stop") {
+    const id = context.sessionId;
+    const slot = slots.get(id);
+    if (slot !== undefined) {
+      await serialize(slot, () => disposeSlot(slot));
+      if (slot.pending === 0 && slot.instance === undefined && slots.get(id) === slot) slots.delete(id);
+    }
+    return null;
+  }
+  const running = runningOf(context);
+  const { started, session } = running;
   switch (op.kind) {
-    case "start":
-      await reset(context);
-      return null;
     case "user": {
-      const { world } = backend().github;
+      const { world } = started.github;
       if (world.accountById(op.id) === undefined) world.addUser({ id: op.id, login: op.login, nodeId: `U_${op.login}` });
       return null;
     }
     case "deploy": {
-      const started = backend();
       await started.deploy({ ...started.deployed(), roles: op.roles });
       return null;
     }
     case "repository": {
       const { id, owner, name, fork, archived, license, files } = op.setup;
-      backend().github.world.addRepo({ id, owner, name, fork, archived, description: `${name} open-source repository on GitHub.`, license: { spdx: license }, files });
+      started.github.world.addRepo({ id, owner, name, fork, archived, description: `${name} open-source repository on GitHub.`, license: { spdx: license }, files });
       return null;
     }
     case "permission":
-      backend().github.world.setPermission(op.repository, op.login, op.level);
+      started.github.world.setPermission(op.repository, op.login, op.level);
       return null;
     case "installation":
-      backend().github.world.addInstallation({ ...op.setup, permissions: { contents: "read", issues: "write", pull_requests: "write" } });
+      started.github.world.addInstallation({ ...op.setup, permissions: { contents: "read", issues: "write", pull_requests: "write" } });
       return null;
     case "githubFail":
-      backend().github.failNext(op.path, { status: op.status });
+      started.github.failNext(op.path, { status: op.status });
       return null;
     case "scanner":
-      return backend().scanner(op.method, op.path, op.body);
+      return started.scanner(op.method, op.path, op.body);
     case "object":
-      await backend().replace(op.bucket, op.key, op.text);
+      await started.replace(op.bucket, op.key, op.text);
       return null;
     case "vault":
-      return vault(op.projectId, op.purpose);
+      return vault(running, op.projectId, op.purpose);
     case "bindPayout":
-      await bindPayout(op.githubId, op.vault);
+      await bindPayout(running, op.githubId, op.vault);
       return null;
     case "backendRpc": {
-      if (op.enabled) await walletChain(current(), homeChainId);
-      const started = backend();
+      if (op.enabled) await walletChain(session, homeChainId);
       await started.deploy({ ...started.deployed(), rpc: op.enabled });
       return null;
     }
     case "finalize": {
-      const chain = await walletChain(current(), op.chainId);
+      const chain = await walletChain(session, op.chainId);
       const head = BigInt(String(await chain.rpc("eth_blockNumber")));
       chain.setFinalized(head);
       return Number(head);
     }
     case "branch": {
-      const { world } = backend().github;
+      const { world } = started.github;
       const repository = world.repo(op.repository);
       const head = repository.branches.get(op.name) ?? repository.branches.get(repository.defaultBranch);
       return world.addCommit(op.repository, { branch: op.name, files: op.files, parents: head === undefined ? [] : [head] });
     }
     case "github":
-      current().consenting = op.login;
+      session.consenting = op.login;
       return null;
     case "open": {
-      const opened = await tab(op.tab ?? current().current);
+      const opened = await tab(session, op.tab ?? session.current);
       const destination = `${site}${op.path}`;
       const loaded = opened.url() === destination
         ? await opened.reload({ waitUntil: "load" })
@@ -776,165 +834,164 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return { status: loaded?.status() ?? 0, headers: loaded?.headers() ?? {} };
     }
     case "tab":
-      await tab(op.tab);
+      await tab(session, op.tab);
       return null;
     case "where":
-      return page().url();
+      return pageOf(session).url();
     case "click":
-      await locate(page(), op.target).first().click();
+      await locate(pageOf(session), op.target).first().click();
       return null;
     case "fill":
-      await locate(page(), op.target).first().fill(op.value);
+      await locate(pageOf(session), op.target).first().fill(op.value);
       return null;
     case "select":
-      await locate(page(), op.target).first().selectOption({ label: op.label });
+      await locate(pageOf(session), op.target).first().selectOption({ label: op.label });
       return null;
     case "press":
-      await page().keyboard.press(op.keys);
+      await pageOf(session).keyboard.press(op.keys);
       return null;
     case "read":
-      return read(op.target);
+      return read(session, op.target);
     case "focused":
-      return page().evaluate(() => {
+      return pageOf(session).evaluate(() => {
         const active = document.activeElement;
         return { tag: active?.tagName.toLowerCase() ?? "", name: (active?.getAttribute("aria-label") ?? active?.textContent ?? "").trim() };
       });
     case "refocus":
-      await page().evaluate(() => {
+      await pageOf(session).evaluate(() => {
         document.dispatchEvent(new Event("visibilitychange"));
         window.dispatchEvent(new FocusEvent("focus"));
       });
       return null;
     case "blockCookies":
-      current().cookiesBlocked = true;
+      session.cookiesBlocked = true;
       return null;
     case "upload":
-      await locate(page(), op.target).first().locator("xpath=descendant-or-self::input[@type='file']").first().setInputFiles({ name: op.file.name, mimeType: op.file.mimeType, buffer: Buffer.from(op.file.bytes) });
+      await locate(pageOf(session), op.target).first().locator("xpath=descendant-or-self::input[@type='file']").first().setInputFiles({ name: op.file.name, mimeType: op.file.mimeType, buffer: Buffer.from(op.file.bytes) });
       return null;
     case "fetch":
-      return page().evaluate(async ({ method, path, body }) => {
+      return pageOf(session).evaluate(async ({ method, path, body }) => {
         const response = await fetch(path, { method, credentials: "same-origin", headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
         const text = await response.text();
         return { status: response.status, body: text === "" ? null : (JSON.parse(text) as unknown) };
       }, { method: op.method, path: op.path, body: op.body });
     case "download":
-      return (await current().downloaded) ?? null;
+      return (await session.downloaded) ?? null;
     case "leaks":
-      return leaks(op.text);
+      return leaks(session, op.text);
     case "hold": {
       let release = () => undefined as void;
       const released = new Promise<void>((resolve) => {
         release = resolve;
       });
-      current().holds.set(holdKey(op.method, op.path), { released, release });
+      session.holds.set(holdKey(op.method, op.path), { released, release });
       return null;
     }
     case "release": {
       const key = holdKey(op.method, op.path);
-      current().holds.get(key)?.release();
-      current().holds.delete(key);
+      session.holds.get(key)?.release();
+      session.holds.delete(key);
       return null;
     }
     case "fail":
-      current().canned.set(holdKey(op.method, op.path), { kind: "json", status: op.status, body: op.body });
+      session.canned.set(holdKey(op.method, op.path), { kind: "json", status: op.status, body: op.body });
       return null;
     case "unfail":
-      current().canned.delete(holdKey(op.method, op.path));
+      session.canned.delete(holdKey(op.method, op.path));
       return null;
     case "serve":
-      current().canned.set(
+      session.canned.set(
         holdKey("*", op.path),
         op.bytes === undefined ? { kind: "json", status: op.status, body: op.body } : { kind: "bytes", status: op.status, bytes: new Uint8Array(Buffer.from(op.bytes, "base64")), contentType: op.contentType ?? "application/octet-stream" },
       );
       return null;
     case "published":
-      return published(context, op.leaderboard);
+      return published(context, session, op.leaderboard);
     case "unserve":
-      current().canned.delete(holdKey("*", op.path));
+      session.canned.delete(holdKey("*", op.path));
       return null;
     case "clock": {
-      const into = current();
-      if (into.clocked) await into.context.clock.setSystemTime(op.iso);
-      else await into.context.clock.install({ time: op.iso });
-      into.clocked = true;
+      if (session.clocked) await session.context.clock.setSystemTime(op.iso);
+      else await session.context.clock.install({ time: op.iso });
+      session.clocked = true;
       return null;
     }
     case "sent":
-      return [...current().sent];
+      return [...session.sent];
     case "verifications":
-      return [...backend().verifications];
+      return [...started.verifications];
     case "sql":
-      return backend().rows(op.text, op.params);
+      return started.rows(op.text, op.params);
     case "popups":
-      return current().context.pages().filter((opened) => ![...current().tabs.values()].includes(opened)).length;
+      return session.context.pages().filter((opened) => ![...session.tabs.values()].includes(opened)).length;
     case "view": {
-      const opened = await tab(current().current);
+      const opened = await tab(session, session.current);
       await opened.setViewportSize({ width: op.width, height: op.height });
       await opened.emulateMedia({ reducedMotion: op.reducedMotion ? "reduce" : "no-preference" });
       return null;
     }
     case "enlarge":
-      await current().restore?.();
-      current().restore = await enlargeText(locate(page(), op.target).first());
+      await session.restore?.();
+      session.restore = await enlargeText(locate(pageOf(session), op.target).first());
       return null;
     case "restore":
-      await current().restore?.();
-      current().restore = undefined;
+      await session.restore?.();
+      session.restore = undefined;
       return null;
     case "layout":
-      return layout();
+      return layout(session);
     case "box": {
-      const found = locate(page(), op.target);
+      const found = locate(pageOf(session), op.target);
       if ((await found.count()) === 0) return null;
       const box = await found.first().boundingBox();
       return box === null ? null : ({ top: box.y, bottom: box.y + box.height } satisfies Box);
     }
     case "scrollY":
-      return page().evaluate(() => window.scrollY);
+      return pageOf(session).evaluate(() => window.scrollY);
     case "wheel":
-      await page().mouse.wheel(op.dx, op.dy);
+      await pageOf(session).mouse.wheel(op.dx, op.dy);
       return null;
     case "scrollEnd":
-      return page().evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+      return pageOf(session).evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
     case "reveal":
-      await locate(page(), op.target).first().scrollIntoViewIfNeeded();
-      await page().evaluate(() => document.fonts.ready.then(() => undefined));
+      await locate(pageOf(session), op.target).first().scrollIntoViewIfNeeded();
+      await pageOf(session).evaluate(() => document.fonts.ready.then(() => undefined));
       return null;
     case "back":
-      await page().goBack({ waitUntil: "load" });
+      await pageOf(session).goBack({ waitUntil: "load" });
       return null;
     case "forward":
-      await page().goForward({ waitUntil: "load" });
+      await pageOf(session).goForward({ waitUntil: "load" });
       return null;
     case "stamp":
-      await page().evaluate((value) => history.replaceState({ ...(history.state as object | null), readerState: value }, ""), op.value);
+      await pageOf(session).evaluate((value) => history.replaceState({ ...(history.state as object | null), readerState: value }, ""), op.value);
       return null;
     case "stamped":
-      return page().evaluate(() => {
+      return pageOf(session).evaluate(() => {
         const state: unknown = history.state;
         return typeof state === "object" && state !== null && "readerState" in state && typeof state.readerState === "string" ? state.readerState : null;
       });
     case "allow":
-      current().allowed = [...current().allowed, ...op.patterns.map((pattern) => new RegExp(pattern, "u"))];
+      session.allowed = [...session.allowed, ...op.patterns.map((pattern) => new RegExp(pattern, "u"))];
       return null;
     case "diagnostics":
-      return diagnostics();
+      return diagnostics(session);
     case "wallets":
-      current().wallets = await injectWallets(current().context, op.setup, op.setup.evm === undefined ? undefined : (chainId) => walletChain(current(), chainId));
+      session.wallets = await injectWallets(session.context, op.setup, op.setup.evm === undefined ? undefined : (chainId) => walletChain(session, chainId));
       return null;
     case "walletAccount":
-      wallets().useAccount(op.index);
+      walletsOf(session).useAccount(op.index);
       return null;
     case "walletReject":
-      wallets().rejectNext();
+      walletsOf(session).rejectNext();
       return null;
     case "walletFail":
-      wallets().failNext(op.method);
+      walletsOf(session).failNext(op.method);
       return null;
     case "walletAsked":
-      return [...wallets().asked];
+      return [...walletsOf(session).asked];
     case "walletAddresses":
-      return wallets().addresses();
+      return walletsOf(session).addresses();
     default: {
       const _exhaustive: never = op;
       return _exhaustive;
@@ -942,8 +999,8 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
   }
 }
 
-function wallets(): Wallets {
-  const injected = current().wallets;
+function walletsOf(into: Session): Wallets {
+  const injected = into.wallets;
   if (injected === undefined) throw new Error("site: inject the wallets first");
   return injected;
 }
