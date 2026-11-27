@@ -399,7 +399,7 @@
     },
     {
       "path": "spec/backend/accounts.md",
-      "sha256": "7e25d924a51ba1f26c3c9cb7ce93d2d4a22e6ad7dacb4f5dd6804990fcaa5f06",
+      "sha256": "740be3a6b1da177263a3f7ce1db9ef9d5c5e5a50f39e259ca6250ffb51d3e6e0",
       "module": "backend__accounts",
       "stories": [
         {
@@ -408,15 +408,15 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history",
-          "line": 298
+          "line": 302
         },
         {
           "heading": "Story: Connect an optional public X profile",
-          "line": 353
+          "line": 359
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account",
-          "line": 413
+          "line": 419
         }
       ],
       "rules": [
@@ -453,7 +453,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / A web sign-in consumes one web assertion and opens a public membership",
-          "line": 111,
+          "line": 115,
           "definitions": [
             "assertedGithub",
             "actorKeyFor",
@@ -478,7 +478,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Only the configured owner, while a current administrator, gets a seven-day session",
-          "line": 174,
+          "line": 178,
           "definitions": [
             "ownerSessionLifetime",
             "lifetimeFor",
@@ -488,7 +488,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / An ordinary sign-in cannot reopen a closed account; explicit reopening can",
-          "line": 196,
+          "line": 200,
           "definitions": [
             "canRefuseClosedSignIn",
             "refuseClosedSignIn",
@@ -501,7 +501,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Sign-out ends only the caller's session and revocation never reaches another account",
-          "line": 221,
+          "line": 225,
           "definitions": [
             "canSignOut",
             "signOut",
@@ -518,7 +518,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Active memberships are public and a hide request is refused",
-          "line": 257,
+          "line": 261,
           "definitions": [
             "canPublishMembership",
             "publishMembership",
@@ -528,7 +528,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Public reads show only public open members and never publish anything",
-          "line": 272,
+          "line": 276,
           "definitions": [
             "publicPeople",
             "memberLookup",
@@ -542,7 +542,7 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents",
-          "line": 303,
+          "line": 307,
           "definitions": [
             "canClose",
             "close",
@@ -554,14 +554,14 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Telegram stays retired and historical participation awards stay frozen",
-          "line": 338,
+          "line": 344,
           "definitions": [
             "stepTelegramFrozen"
           ]
         },
         {
           "heading": "Story: Connect an optional public X profile / The X flow is started by a live session and committed only while that session lives",
-          "line": 357,
+          "line": 363,
           "definitions": [
             "canStartX",
             "startX",
@@ -585,7 +585,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change",
-          "line": 419,
+          "line": 425,
           "definitions": [
             "otherAccountsRecent",
             "senderMember",
@@ -617,7 +617,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Every account outcome is reachable from the launch state",
-          "line": 504,
+          "line": 517,
           "definitions": [
             "identityStart",
             "canIdentityStart",
@@ -724,11 +724,11 @@
         },
         {
           "target": "./email.md",
-          "line": 423
+          "line": 429
         },
         {
           "target": "./identity.md",
-          "line": 514
+          "line": 527
         }
       ]
     },
@@ -8642,7 +8642,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "dc4bc5081878fb303c7740ee8af79fd1099a51594096c40bc84905f2aedd8e53",
+      "sha256": "0bc8e652998c6b955374866a46f731a6555b0fbf2500390f5737aa444a0027a2",
       "module": "fees__conversion",
       "stories": [
         {
@@ -8651,27 +8651,27 @@
         },
         {
           "heading": "Story: Know what the wallet received before anything converts",
-          "line": 170
+          "line": 174
         },
         {
           "heading": "Story: Evaluate each wallet token once per run and record why it waits",
-          "line": 251
+          "line": 257
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send",
-          "line": 337
+          "line": 343
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts",
-          "line": 550
+          "line": 571
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults",
-          "line": 770
+          "line": 795
         },
         {
           "heading": "Story: Keep every journal record and its evidence",
-          "line": 825
+          "line": 850
         }
       ],
       "rules": [
@@ -8716,7 +8716,7 @@
         },
         {
           "heading": "Story: Run one network at a time under a fenced lease / An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile",
-          "line": 98,
+          "line": 102,
           "definitions": [
             "rotationHolds",
             "runHolds",
@@ -8736,7 +8736,7 @@
         },
         {
           "heading": "Story: Run one network at a time under a fenced lease / The Worker configuration and the reviewed vaults are published components",
-          "line": 145,
+          "line": 149,
           "definitions": [
             "canPublishWorker",
             "publishWorker",
@@ -8755,7 +8755,7 @@
         },
         {
           "heading": "Story: Know what the wallet received before anything converts / A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are",
-          "line": 172,
+          "line": 176,
           "definitions": [
             "FinalizedTransfer",
             "VaultAccrual",
@@ -8787,7 +8787,7 @@
         },
         {
           "heading": "Story: Evaluate each wallet token once per run and record why it waits / Each evaluation records one outcome from the pinned order of checks",
-          "line": 253,
+          "line": 259,
           "definitions": [
             "RouteResult",
             "Quote",
@@ -8820,7 +8820,7 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send / Native gas is reserved before signing and committed atomically with the signed row",
-          "line": 339,
+          "line": 345,
           "definitions": [
             "EvmFees",
             "RouteInspection",
@@ -8863,7 +8863,7 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send / A recorded send without a reservation is imported at its own worst case",
-          "line": 480,
+          "line": 501,
           "definitions": [
             "RecordedSend",
             "recordedMaximum",
@@ -8878,7 +8878,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / Only a finalized receipt of one of the row's own attempts settles it",
-          "line": 552,
+          "line": 573,
           "definitions": [
             "SendReceipt",
             "landedIn",
@@ -8897,7 +8897,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / An unknown send is rebroadcast unchanged; only proven expiry retires it",
-          "line": 617,
+          "line": 638,
           "definitions": [
             "DeadlineEvidence",
             "Coverage",
@@ -8929,7 +8929,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / A same-nonce EVM replacement changes only its fees, in bounded steps",
-          "line": 714,
+          "line": 736,
           "definitions": [
             "NetworkFeeObservation",
             "replacementDeadlineMarginMs",
@@ -8947,7 +8947,7 @@
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults / A claim delivers the accrued amount to the configured fee wallet and shares the native budget",
-          "line": 772,
+          "line": 797,
           "definitions": [
             "VaultClaim",
             "claimAdmitted",
@@ -8958,7 +8958,7 @@
         },
         {
           "heading": "Story: Keep every journal record and its evidence / Rows and reservations are append-only and settled records never change",
-          "line": 827,
+          "line": 852,
           "definitions": [
             "settledState",
             "rowFrozen",
@@ -9049,15 +9049,15 @@
         },
         {
           "target": "./solanaRpcRotation.md",
-          "line": 100
+          "line": 104
         },
         {
           "target": "./buyback.md",
-          "line": 107
+          "line": 111
         },
         {
           "target": "../settlement/feeReplacement.md",
-          "line": 727
+          "line": 749
         }
       ]
     },

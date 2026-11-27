@@ -36,8 +36,10 @@ reviewed configuration.
 `Off` starts nothing: no lease, no read and no reconciliation. A later run
 may take an expired lease; the earlier holder then can neither sign nor
 commit. Taking the lease retires every reservation another run left
-unsigned. A reservation can never precede a broadcast, so retiring it
-cannot strand a send.
+unsigned, so at most one unsigned reservation exists at a time and any
+unsigned reservation belongs to the current holder while a lease is held. A
+reservation can never precede a broadcast, so retiring it cannot strand a
+send. The Worker clock starts at zero and never moves backward.
 
 ```quint
 import runtime as R from "./runtime"
@@ -89,8 +91,10 @@ pure def canRenewLease(f: Fee, runId: int, by: R::Sender): bool = by == R::Worke
 pure def renewLease(f: Fee, runId: int, by: R::Sender): Fee = { ...f, lease: { holder: runId, expiresAt: f.clock + lockMs } }
 pure def canReleaseLease(f: Fee, runId: int, by: R::Sender): bool = by == R::Worker and leaseHeld(f, runId)
 pure def releaseLease(f: Fee, runId: int, by: R::Sender): Fee = { ...f, lease: { holder: 0, expiresAt: 0 } }
-pure def alwaysLeaseIdentity(f: Fee): bool = f.lease.holder >= 0 and f.lease.holder < f.nextRun
+pure def alwaysLeaseIdentity(f: Fee): bool = f.lease.holder >= 0 and f.lease.holder < f.nextRun and f.clock >= 0
   and f.gas.every(g => g.runId > 0 and g.runId < f.nextRun) and f.rows.every(r => r.runId > 0 and r.runId < f.nextRun)
+  and (f.lease.holder > 0 implies f.gas.every(g => g.state == Reserved implies g.runId == f.lease.holder))
+  and f.gas.every(g => g.state == Reserved implies f.gas.every(o => o.state == Reserved implies o.id == g.id))
 pure def stepStaleRunCannotSign(before: Fee, via: str, after: Fee): bool =
   after.gas.length() > before.gas.length() implies leaseHeld(before, after.gas.nthOr(before.gas.length(), noGas).runId)
 ```
@@ -171,7 +175,8 @@ pure def alwaysRuntimeSound(f: Fee): bool = R::alwaysPublishedPassedPreflight(f.
 
 ### A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are
 
-Each wallet token is one holding. A receipt identifier counts once on the
+Each wallet token is one holding numbered sequentially from one in append
+order. A receipt identifier counts once on the
 network. A project token, an allowlisted token or the network's USDC is
 evaluated from the fee wallet's current token balance (`balanceOf`), which
 the chain observation adapter reads at the start of each evaluation; any
@@ -235,6 +240,7 @@ pure def spendable(f: Fee, token: int): int =
   val earned = h.feeIncome - h.sold - perTransactionReserve(f, h)
   if (h.asset != NativeAsset) h.balance else if (earned <= 0) 0 else if (earned < h.balance) earned else h.balance
 pure def alwaysHoldingsIdentity(f: Fee): bool = f.holdings.every(h => h.token >= 1 and holding(f, h.token) == h)
+  and f.holdings.foldl(0, (i, h) => if (i >= 0 and h.token == i + 1) i + 1 else -1) == f.holdings.length()
   and f.rows.every(r => validToken(f, r.token)) and f.vaults.every(v => validToken(f, v.token))
 pure def alwaysTopUpsNeverSold(f: Fee): bool = f.holdings.every(h =>
   (if (h.asset == NativeAsset) h.balance == h.feeIncome + h.topUps - h.sold else h.topUps == 0 and h.sold + h.balance <= h.feeIncome)
@@ -352,8 +358,15 @@ exceeds its reservation holds every later signature on the network. A lost
 lease between reservation and signature leaves an unsigned reservation that
 the stepped run abandons. Every token draws nonces from the one network
 sequence, and a nonce held by a reservation of another send is never
-issued twice; only a nonce whose send expired unlanded, and that no
-canonical receipt has settled since, may be reused. A
+issued twice; only a nonce whose send of the current fee wallet expired
+unlanded, and that no canonical receipt has settled since, may be reused. A
+run reserves gas only for its own live intent of the current fee wallet.
+Every signed reservation carries a unique positive transaction identifier
+and settles on a day no later than today; every unsigned reservation carries
+no transaction identifier, belongs to a live pending intent of its run, and
+never collides with the nonce of an open send; open sends never share a
+nonce with one another; and unsettled reservations sharing a nonce belong to
+the same fee wallet. A
 claim starts only when the run has no other reservation or intent. A Solana signature records the slot of the
 blockhash it was signed against; that slot never changes. Every reservation
 the journal makes itself stays within the per-transaction ceiling, and while
@@ -399,7 +412,7 @@ pure def liability(f: Fee): int = liabilityOf(f.gas, day(f))
 pure def additionalReserve(network: R::Network): int = if (network == R::Base) 50000000 else 0
 pure def worstCase(f: Fee, gasLimit: int, fees: EvmFees): int =
   if (f.network == R::Solana) R::transactionCeilingOf(f.network) else gasLimit * fees.maxFee + additionalReserve(f.network)
-pure def expiredRow(f: Fee, id: int): bool = f.rows.some(r => r.id == id and r.reason == ExpiredUnlanded)
+pure def expiredRow(f: Fee, id: int): bool = f.rows.some(r => r.id == id and r.reason == ExpiredUnlanded and r.wallet == wallet(f))
 pure def nonceFloor(f: Fee): int = f.gas.foldl(0, (t, g) =>
   if ((g.state == Reserved or (g.state == Signed and (g.settled or not(expiredRow(f, g.row))))) and g.nonce >= t) g.nonce + 1 else t)
 pure def solanaSequence(f: Fee): int = f.gas.foldl(0, (t, g) => if (g.nonce >= t) g.nonce + 1 else t)
@@ -409,7 +422,7 @@ pure def pendingIntent(f: Fee, runId: int): Row =
   f.rows.foldl(noRow, (found, r) => if (r.state == Quoted and r.live and r.runId == runId) r else found)
 pure def canReserveGas(f: Fee, runId: int, nonce: int, maximum: int, by: R::Sender): bool =
   val intent = pendingIntent(f, runId)
-  by == R::Worker and leaseHeld(f, runId) and intent.id > 0 and ownReservation(f, runId).id == 0 and not(f.overrun)
+  by == R::Worker and leaseHeld(f, runId) and intent.id > 0 and intent.wallet == wallet(f) and ownReservation(f, runId).id == 0 and not(f.overrun)
     and maximum > 0 and maximum <= R::transactionCeilingOf(f.network)
     and (if (f.network == R::Solana) nonce == solanaSequence(f) and maximum == R::transactionCeilingOf(f.network) else nonce >= nonceFloor(f))
     and liabilityOf(f.gas.append({ ...noGas, id: f.gas.length() + 1, nonce: nonce, maximum: maximum, state: Reserved, settled: false }), day(f))
@@ -462,12 +475,20 @@ pure def journaledGas(f: Fee): List[Reservation] = f.gas.select(g => not(g.impor
 pure def alwaysLiabilityWithinDay(f: Fee): bool = not(f.overrun) implies liabilityOf(journaledGas(f), day(f)) <= R::dailyCeilingOf(f.network)
 pure def alwaysReservationsWithinTransaction(f: Fee): bool = f.gas.every(g => g.maximum > 0
   and (not(g.imported) implies g.maximum <= R::transactionCeilingOf(f.network)) and (g.imported implies g.state == Signed)
-  and g.actual >= 0 and (g.state == Reserved implies g.row == 0 and not(g.settled) and g.blockhashSlot == 0)
-  and (g.settled implies g.state == Signed)
-  and (g.state == Signed implies (if (f.network == R::Solana) g.blockhashSlot > 0 else g.blockhashSlot == 0)))
+  and g.actual >= 0 and (g.state == Reserved implies g.row == 0 and not(g.settled) and g.blockhashSlot == 0 and g.tx == 0
+    and pendingIntent(f, g.runId).id > 0
+    and f.rows.every(r => (r.state == Submitted or r.state == Unknown) implies r.nonce != g.nonce)
+    and f.gas.every(o => (o.state == Signed and not(o.settled) and o.nonce == g.nonce) implies
+      pendingIntent(f, g.runId).wallet == f.rows.nthOr(o.row - 1, noRow).wallet))
+  and (g.settled implies g.state == Signed and g.settledDay <= day(f))
+  and (g.state == Signed implies g.tx > 0 and (if (f.network == R::Solana) g.blockhashSlot > 0 else g.blockhashSlot == 0))
+  and (g.tx > 0 implies f.gas.every(o => o.tx == g.tx implies o.id == g.id))
+  and ((g.state == Signed and not(g.settled)) implies f.gas.every(o => (o.state == Signed and not(o.settled) and o.nonce == g.nonce) implies
+    f.rows.nthOr(g.row - 1, noRow).wallet == f.rows.nthOr(o.row - 1, noRow).wallet)))
 pure def alwaysOneOpenSend(f: Fee): bool = f.holdings.every(h => openRows(f, h.token) <= 1)
 pure def alwaysOpenSendHeld(f: Fee): bool = f.rows.every(r => (r.state == Submitted or r.state == Unknown) implies
-  r.attempts.length() > 0 and r.attempts.every(a => f.gas.some(g => g.row == r.id and g.tx == a.tx and g.state == Signed and not(g.settled))))
+  r.attempts.length() > 0 and r.attempts.every(a => f.gas.some(g => g.row == r.id and g.tx == a.tx and g.state == Signed and not(g.settled)))
+    and f.rows.every(o => ((o.state == Submitted or o.state == Unknown) and o.id != r.id) implies o.nonce != r.nonce))
 pure def alwaysSignedRowsAttributed(f: Fee): bool = f.gas.every(g => g.state == Signed implies
   f.rows.some(r => r.id == g.row and r.nonce == g.nonce and r.attempts.some(a => a.tx == g.tx)))
 pure def sometimesAbandonedReservation(f: Fee): bool = f.gas.some(g => g.state == Abandoned and g.row == 0)
@@ -626,6 +647,7 @@ settles that nonce at its actual fee and leaves the row failed. That receipt
 proves the nonce consumed, so an open send that reused it can never land: it
 closes as failed with its nonce consumed, a claim among them returns its
 amount to the accrued balance, and no later send may take that nonce.
+Reconciling that late revert runs while the run holds no unsigned reservation.
 
 An expired claim returns its amount to the accrued balance. A Solana send
 releases its reservation only with proof from two independent
@@ -676,7 +698,7 @@ pure def expireEvm(f: Fee, runId: int, id: int, deadline: DeadlineEvidence, by: 
   { ...f, rows: f.rows.listMap(r => if (r.id == id) { ...r, state: Failed, reason: ExpiredUnlanded } else r) }
 pure def canSettleExpired(f: Fee, runId: int, id: int, receipt: SendReceipt, by: R::Sender): bool =
   val r = f.rows.nthOr(id - 1, noRow)
-  by == R::Worker and leaseHeld(f, runId) and f.network != R::Solana and r.id == id and r.state == Failed and r.reason == ExpiredUnlanded
+  by == R::Worker and leaseHeld(f, runId) and ownReservation(f, runId).id == 0 and f.network != R::Solana and r.id == id and r.state == Failed and r.reason == ExpiredUnlanded
     and receipt.finalized and not(receipt.succeeded) and landedIn(r, receipt.tx) and receipt.actualNative >= 0
     and f.gas.some(g => g.tx == receipt.tx and g.state == Signed and not(g.settled))
 pure def reusedNonce(f: Fee, r: Row, x: Row): bool = x.id != r.id and x.wallet == r.wallet and (x.state == Submitted or x.state == Unknown)
@@ -728,7 +750,9 @@ fees of each step come from the shared
 and latest attempts, with the per-gas ceiling left after the Base allowance;
 a refused step keeps the send waiting. The replacement has the same nonce,
 row and content. Its worst case is reserved against the daily ceiling and
-journaled before broadcast, and every attempt stays in the journal.
+journaled before broadcast, every signed row keeps a positive gas limit,
+every attempt keeps a positive maximum fee and nonnegative priority fee,
+and every attempt stays in the journal.
 
 ```quint
 type NetworkFeeObservation = { maxFeeNeeded: int, observedAt: int, pricedFeeMicro: int }
@@ -759,8 +783,9 @@ pure def replace(f: Fee, runId: int, id: int, tx: int, networkFee: NetworkFeeObs
       attempts: x.attempts.append({ tx: tx, maxFee: stepped.maxFee, priority: stepped.priorityFee, at: f.clock }) } else x),
     gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: r.nonce, maximum: r.gasLimit * stepped.maxFee + additionalReserve(f.network),
       state: Signed, row: id, tx: tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: 0, imported: false }) }
-pure def alwaysAttemptsKeepContent(f: Fee): bool = f.rows.every(r => r.attempts.every(a =>
-  a.maxFee >= firstAttempt(r).maxFee and a.maxFee <= firstAttempt(r).maxFee * 3 and a.priority <= a.maxFee))
+pure def alwaysAttemptsKeepContent(f: Fee): bool = f.rows.every(r =>
+  (r.attempts.length() > 0 implies r.gasLimit > 0) and r.attempts.every(a =>
+    a.maxFee > 0 and a.priority >= 0 and a.maxFee >= firstAttempt(r).maxFee and a.maxFee <= firstAttempt(r).maxFee * 3 and a.priority <= a.maxFee))
 pure def stepReplacementNeedsActivation(before: Fee, via: str, after: Fee): bool =
   via == "replace" implies before.runtime.replacementActive and before.network != R::Solana
 pure def sometimesReplaced(f: Fee): bool = f.rows.some(r => r.attempts.length() > 1)
@@ -826,7 +851,10 @@ pure def sometimesClaimFinalized(f: Fee): bool = f.holdings.some(h => h.claimed 
 
 ### Rows and reservations are append-only and settled records never change
 
-A row in a terminal or waiting state never changes again. A signed
+A row in a terminal or waiting state never changes again. Rows and
+reservations are numbered sequentially from one in append order; every row
+records a positive input amount and nonnegative value, every quoted row is a
+conversion with no attempts, and only a failed row records an expired-unlanded reason. A signed
 reservation keeps its nonce, maximum, transaction and blockhash slot, and
 its settlement is written once. Signing, replacement and claims happen only
 under the live runtime; dry runs only quote and reconcile.
@@ -843,8 +871,12 @@ pure def stepJournalAppendOnly(before: Fee, after: Fee): bool =
     and before.gas.every(g => (g.settled or g.state == Abandoned) implies after.gas.includes(g))
 pure def stepSignaturesNeedLive(before: Fee, via: str, after: Fee): bool =
   (via == "sign" or via == "replace" or via == "claim") implies before.runtime.converterMode == R::Live
-pure def alwaysRowIdentity(f: Fee): bool = f.rows.every(r => r.id > 0 and f.rows.nthOr(r.id - 1, noRow) == r)
+pure def alwaysRowIdentity(f: Fee): bool = f.rows.every(r => r.id > 0 and f.rows.nthOr(r.id - 1, noRow) == r
+    and r.amountIn > 0 and r.valueMicro >= 0 and (r.state == Quoted implies r.kind == Conversion and r.attempts.length() == 0)
+    and (r.reason == ExpiredUnlanded implies r.state == Failed))
+  and f.rows.foldl(0, (i, r) => if (i >= 0 and r.id == i + 1) i + 1 else -1) == f.rows.length()
   and f.gas.every(g => g.id > 0 and f.gas.nthOr(g.id - 1, noGas).id == g.id)
+  and f.gas.foldl(0, (i, g) => if (i >= 0 and g.id == i + 1) i + 1 else -1) == f.gas.length()
 pure def alwaysDryRowsNeverSign(f: Fee): bool = f.rows.every(r => not(r.live) implies r.attempts.length() == 0 and r.state != Submitted and r.state != Unknown)
 ```
 
