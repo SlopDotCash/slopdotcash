@@ -443,7 +443,7 @@ jobs:
 
       - name: Clone repositories for local Git object reads
         id: local_git
-        if: github.ref == 'refs/heads/main' && inputs.use_published_data != true
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && inputs.use_published_data != true
         continue-on-error: true
         env:
           LOCAL_GIT_REPOSITORIES: ${{ github.repository }} ${{ vars.LOCAL_GIT_REPOSITORIES }}

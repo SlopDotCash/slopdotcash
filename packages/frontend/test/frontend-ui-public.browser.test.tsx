@@ -6,7 +6,7 @@ import { Effect, Exit, Layer, ManagedRuntime } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { type Hex, decodeFunctionData, encodeAbiParameters, pad, parseAbi, toEventSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { overLimitNotice } from "../gen/backend__backlogRule.ts";
 import { pausedNotice } from "../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../gen/backend__mergeActivity.ts";
@@ -164,6 +164,8 @@ afterEach(async () => {
   expect(await site.popups()).toBe(0);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
+
+afterAll(() => site.stop());
 
 // spec/frontend/navigation.md, "Story: Open every product route at its existing address"; spec/app/index.md, "Story: Open a page by its address"
 describe("Open every product route at its existing address", () => {

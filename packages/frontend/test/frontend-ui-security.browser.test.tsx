@@ -2,7 +2,7 @@ import { webCrypto, sha256Hex } from "@repo/platform/crypto";
 import { pointRevisionId } from "@repo/points/client";
 import { REPORT_DEPOSIT_SWITCHED_ON, SECURITY_DEFAULT_EXCLUSIONS, SECURITY_ROUTINE_DECISION_NOTICE, reportDepositItem, reportDepositOn } from "@repo/security/client";
 import { Effect } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loginPath } from "../src/platform/environment.ts";
 import { REPORT_DEPOSIT_NOTICE, REPORT_DEPOSIT_SPAM_INFO } from "../src/projections/reportDeposit.ts";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
@@ -182,6 +182,8 @@ afterEach(async () => {
   expect(await site.popups()).toBe(0);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
+
+afterAll(() => site.stop());
 
 // spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/security/intake.md, "Story: Submit and recover one private report"
 describe("Recover a report draft and an uncertain submission", () => {

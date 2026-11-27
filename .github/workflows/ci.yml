@@ -19,18 +19,18 @@ permissions:
 jobs:
   vibestack-precompute-simulations:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           job: simulate-${{ matrix.shard }}
       - id: precompute
-        run: node vibestack/spec.ts ci precompute-simulations --shard ${{ matrix.shard }} --shards 8
+        run: node vibestack/spec.ts ci precompute-simulations --shard ${{ matrix.shard }} --shards 12
       - if: always() && steps.precompute.outputs.checkpoint != ''
         uses: actions/upload-artifact@v7
         with:
@@ -41,9 +41,9 @@ jobs:
 
   verify:
     needs: [vibestack-precompute-simulations]
-    if: ${{ !cancelled() && (needs.vibestack-precompute-simulations.result == 'success' || needs.vibestack-precompute-simulations.result == 'failure') }}
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -72,6 +72,11 @@ jobs:
             done < <(find "$RUNNER_TEMP/simulation-receipts" -maxdepth 2 -type f \( -name 'action-*.json.zst' -o -name 'simulate-*.json.zst' \) -print0)
           fi
           echo "Seeded $seeded precomputed simulation receipts into .spec-cache."
+      - id: verify-browser
+        name: Run browser tests in isolation
+        env:
+          VITEST_MAX_WORKERS: "2"
+        run: pnpm all test:browser --concurrency=1 --continue=dependencies-successful
       - id: verify-tasks
         env:
           VITEST_MAX_WORKERS: "2"
