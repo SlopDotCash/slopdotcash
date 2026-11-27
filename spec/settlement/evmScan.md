@@ -134,12 +134,19 @@ pure def verifiedThrough(s: EvmScan): int = if (s.coverage == NeedsAudit) s.orig
 
 ### The cursor stays inside the finalized deployment range and never decreases
 
+Before configuration, the scanner has no in-flight pages, no held blocks,
+cursor `-1`, finalized head `0`, and `Trusted` coverage. Once configured, the
+page size stays positive, the cursor stays within the finalized deployment
+range and never decreases, no verified page spans a held block, and every held
+block stays above the cursor.
+
 ```quint
 pure def alwaysCursorBounded(s: EvmScan): bool = s.configured implies
-  s.cursor >= s.origin - 1 and (s.cursor == s.origin - 1 or s.cursor <= s.head)
+  s.pageBlocks >= 1 and s.cursor >= s.origin - 1 and (s.cursor == s.origin - 1 or s.cursor <= s.head)
 pure def alwaysPagesInsideHead(s: EvmScan): bool = s.pages.every(p => p.start >= s.origin and p.start <= p.end and p.end <= s.head
   and p.start <= s.cursor + 1 and s.pages.select(o => o.id == p.id).length() == 1)
-pure def alwaysUnconfiguredIdle(s: EvmScan): bool = not(s.configured) implies s.pages.length() == 0 and s.cursor == -1
+pure def alwaysUnconfiguredIdle(s: EvmScan): bool = not(s.configured) implies
+  s.pages.length() == 0 and s.cursor == -1 and s.head == 0 and s.holds.length() == 0 and s.coverage == Trusted
 pure def alwaysAuditFlagShape(s: EvmScan): bool = (s.coverage == NeedsAudit implies s.unverifiedThrough >= s.origin
   and s.unverifiedThrough == s.legacyThrough) and verifiedThrough(s) <= s.cursor
 pure def alwaysHeldBlocksUncovered(s: EvmScan): bool = s.holds.every(b => b > s.cursor)
