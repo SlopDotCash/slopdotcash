@@ -52,7 +52,9 @@ sign-ins look the member up by numeric GitHub ID and reuse the stored actor
 even when GitHub spells the node differently. A web session lasts exactly
 one hour from sign-in, or seven days for the configured owner
 ([below](#only-the-configured-owner-while-a-current-administrator-gets-a-seven-day-session)).
-Session IDs are issued in order and never reused.
+Session IDs are issued in order and never reused. The embedded identity store
+satisfies all of its invariants, and every stored assertion carries a non-empty
+GitHub login.
 
 ```quint
 import identity as I from "./identity"
@@ -96,11 +98,13 @@ pure def alwaysSessionsBelongToOpenMembers(s: Accounts): bool = s.lastSession >=
     and s.members.some(m => m.actor == x.actor and m.membership == Open))
 pure def alwaysClockShared(s: Accounts): bool = s.identity.now == s.now and s.now >= launchClock
 pure def alwaysIdentityStoreValid(s: Accounts): bool =
-  I::alwaysFlowsWellFormed(s.identity) and I::alwaysFlowIdsUnique(s.identity) and I::alwaysOneAssertionPerFlow(s.identity)
+  I::alwaysFlowsWellFormed(s.identity) and I::alwaysFlowIdsUnique(s.identity) and I::alwaysRateWindowsCounted(s.identity)
+    and I::alwaysOneAssertionPerFlow(s.identity)
     and I::alwaysIssuedOnce(s.identity) and I::alwaysIssuedFlowsClosed(s.identity) and I::alwaysConsumedOnce(s.identity)
+    and I::alwaysConsumedBeforeExpiry(s.identity)
     and I::alwaysIdentityAfterCallback(s.identity) and I::alwaysAssertionsMatchTheirFlow(s.identity)
     and I::alwaysVerifierOnlyWhilePending(s.identity) and I::alwaysLocalFlowsHaveNoAssertion(s.identity)
-    and I::alwaysBoundOnlyForWebsite(s.identity)
+    and I::alwaysBoundOnlyForWebsite(s.identity) and s.identity.assertions.every(a => a.github.login != "")
 pure def stepMembersPermanent(before: Accounts, after: Accounts): bool = before.members.every(m =>
   after.members.some(n => n.actor == m.actor and n.githubId == m.githubId and n.joinedAt == m.joinedAt))
 pure def stepSessionIdsFresh(before: Accounts, after: Accounts): bool =
@@ -309,7 +313,9 @@ email consents and clears the consent version, cancels pending email
 verifications and deletes every session of the account. X and historical
 Telegram reservations, wallet records, obligations, settlement records,
 private cases and Points history are untouched. A repeated closure that
-raced the first reads back the original closure time.
+raced the first reads back the original closure time. When every session
+belongs to an open member with a unique session ID, closure invalidates every
+session of that account.
 
 ```quint
 pure def canClose(s: Accounts, by: int, confirmation: str): bool =
@@ -332,7 +338,7 @@ pure def stepClosureCancelsWaitingMail(before: Accounts, after: Accounts): bool 
 pure def stepClosedAtStable(before: Accounts, after: Accounts): bool = before.members.every(m =>
   (m.membership == Closed and memberByActor(after, m.actor).membership == Closed) implies memberByActor(after, m.actor).closedAt == m.closedAt)
 pure def lawClosureInvalidatesEverySession(s: Accounts, by: int, confirmation: str, other: int): bool =
-  (canClose(s, by, confirmation) and senderActor(s, other) == senderActor(s, by)) implies senderActor(close(s, by, confirmation), other) == 0
+  (alwaysSessionsBelongToOpenMembers(s) and canClose(s, by, confirmation) and senderActor(s, other) == senderActor(s, by)) implies senderActor(close(s, by, confirmation), other) == 0
 ```
 
 ### Telegram stays retired and historical participation awards stay frozen
@@ -426,7 +432,10 @@ issues the unsubscribe capability of each mail it sends. A verification, a
 consent save and an unsubscribe hand the committed enrollment to the notice
 outbox in the same write, and closure suppresses the account's waiting mail
 there, so the outbox never queues or keeps mail on consent the account no
-longer has.
+longer has. Email identifier counters are non-negative, every pilot destination
+version stays within the version counter, an unstored preference keeps revision
+and version zero, and the outbox only holds enrollment snapshots for existing
+members.
 
 ```quint
 pure def otherAccountsRecent(s: Accounts, githubId: int, addressKey: str): int =
@@ -476,12 +485,15 @@ pure def unsubscribe(s: Accounts, token: int): Accounts =
   val m = unsubscribeHolder(s, token)
   val e = E::unsubscribe(m.email, token)
   { ...s, members: withEmail(s, m, e), inbox: syncMail(e, s.inbox) }
-pure def alwaysEmailValid(s: Accounts): bool = s.members.every(m => E::wellFormed(m.email, s.now)
+pure def alwaysEmailValid(s: Accounts): bool = s.lastEmailId >= 0 and s.lastVersion >= 0 and s.lastUnsubscribe >= 0
+  and s.members.every(m => E::wellFormed(m.email, s.now)
   and m.email.verifications.every(v => v.id <= s.lastEmailId
     and s.members.every(o => o.githubId == m.githubId or not(o.email.verifications.some(w => w.id == v.id))))
   and m.email.unsubscribeTokens.every(t => t.token <= s.lastUnsubscribe
     and s.members.every(o => o.githubId == m.githubId or not(o.email.unsubscribeTokens.some(u => u.token == t.token))))
   and m.email.destination.version <= s.lastVersion and m.email.preference.version <= s.lastVersion
+  and m.email.pilotVersion <= s.lastVersion
+  and (not(m.email.preference.stored) implies (m.email.preference.revision == 0 and m.email.preference.version == 0))
   and (m.email.destination.version > 0 implies s.members.every(o => o.githubId == m.githubId
     or o.email.destination.version != m.email.destination.version)))
 pure def stepConsentOnlyFromExplicitChoice(before: Accounts, via: str, after: Accounts): bool =
@@ -494,6 +506,7 @@ pure def saveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int
   { ...s, inbox: N::save(s.inbox, key, kind, githubId) }
 pure def alwaysOutboxSeesCurrentConsent(s: Accounts): bool =
   s.members.every(m => mailView(N::enrollmentOf(s.inbox, m.githubId)) == mailView(m.email))
+    and s.inbox.enrollments.every(e => hasGithubMember(s, e.actor))
 pure def sometimesClosureSuppressedMail(s: Accounts): bool =
   N::anySuppressed(s.inbox) and s.members.some(m => m.membership == Closed)
 pure def stepEmailHistoryRetained(before: Accounts, after: Accounts): bool = before.members.every(m =>

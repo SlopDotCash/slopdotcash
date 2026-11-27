@@ -399,7 +399,7 @@
     },
     {
       "path": "spec/backend/accounts.md",
-      "sha256": "7e25d924a51ba1f26c3c9cb7ce93d2d4a22e6ad7dacb4f5dd6804990fcaa5f06",
+      "sha256": "740be3a6b1da177263a3f7ce1db9ef9d5c5e5a50f39e259ca6250ffb51d3e6e0",
       "module": "backend__accounts",
       "stories": [
         {
@@ -408,15 +408,15 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history",
-          "line": 298
+          "line": 302
         },
         {
           "heading": "Story: Connect an optional public X profile",
-          "line": 353
+          "line": 359
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account",
-          "line": 413
+          "line": 419
         }
       ],
       "rules": [
@@ -453,7 +453,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / A web sign-in consumes one web assertion and opens a public membership",
-          "line": 111,
+          "line": 115,
           "definitions": [
             "assertedGithub",
             "actorKeyFor",
@@ -478,7 +478,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Only the configured owner, while a current administrator, gets a seven-day session",
-          "line": 174,
+          "line": 178,
           "definitions": [
             "ownerSessionLifetime",
             "lifetimeFor",
@@ -488,7 +488,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / An ordinary sign-in cannot reopen a closed account; explicit reopening can",
-          "line": 196,
+          "line": 200,
           "definitions": [
             "canRefuseClosedSignIn",
             "refuseClosedSignIn",
@@ -501,7 +501,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Sign-out ends only the caller's session and revocation never reaches another account",
-          "line": 221,
+          "line": 225,
           "definitions": [
             "canSignOut",
             "signOut",
@@ -518,7 +518,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Active memberships are public and a hide request is refused",
-          "line": 257,
+          "line": 261,
           "definitions": [
             "canPublishMembership",
             "publishMembership",
@@ -528,7 +528,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Public reads show only public open members and never publish anything",
-          "line": 272,
+          "line": 276,
           "definitions": [
             "publicPeople",
             "memberLookup",
@@ -542,7 +542,7 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents",
-          "line": 303,
+          "line": 307,
           "definitions": [
             "canClose",
             "close",
@@ -554,14 +554,14 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Telegram stays retired and historical participation awards stay frozen",
-          "line": 338,
+          "line": 344,
           "definitions": [
             "stepTelegramFrozen"
           ]
         },
         {
           "heading": "Story: Connect an optional public X profile / The X flow is started by a live session and committed only while that session lives",
-          "line": 357,
+          "line": 363,
           "definitions": [
             "canStartX",
             "startX",
@@ -585,7 +585,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change",
-          "line": 419,
+          "line": 425,
           "definitions": [
             "otherAccountsRecent",
             "senderMember",
@@ -617,7 +617,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Every account outcome is reachable from the launch state",
-          "line": 504,
+          "line": 517,
           "definitions": [
             "identityStart",
             "canIdentityStart",
@@ -724,11 +724,11 @@
         },
         {
           "target": "./email.md",
-          "line": 423
+          "line": 429
         },
         {
           "target": "./identity.md",
-          "line": 514
+          "line": 527
         }
       ]
     },
