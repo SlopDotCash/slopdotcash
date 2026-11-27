@@ -28545,7 +28545,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "485166d315a0baae242712938e76f897576befe9c17ab929918d99b0808e2c0e",
+      "sha256": "5d90cd60777778b17e07061925cb1f55a281fb5923426260d12f9ef621de09f4",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -28558,7 +28558,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 372
+          "line": 376
         }
       ],
       "rules": [
@@ -28642,20 +28642,22 @@
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized admitted root that matches a signed attempt admits the month",
           "line": 246,
-          "definitions": []
-        },
-        {
-          "heading": "Story: Admission and completion come only from finalized contract state / Only the latest authorization, the one with the highest source sequence, is admitted",
-          "line": 251,
           "definitions": [
-            "canAdmit",
-            "supersededRoot",
+            "matchesSignedAttempt",
             "admit"
           ]
         },
         {
+          "heading": "Story: Admission and completion come only from finalized contract state / Only the latest authorization, the one with the highest source sequence, is admitted",
+          "line": 257,
+          "definitions": [
+            "canAdmit",
+            "supersededRoot"
+          ]
+        },
+        {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 307,
+          "line": 311,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -28665,7 +28667,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 332,
+          "line": 336,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -28676,7 +28678,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 351,
+          "line": 355,
           "definitions": [
             "canComplete",
             "complete"
@@ -28684,7 +28686,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 362,
+          "line": 366,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -28692,7 +28694,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 374,
+          "line": 378,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -28705,7 +28707,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 395,
+          "line": 399,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -28743,7 +28745,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 462,
+          "line": 466,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -28790,7 +28792,7 @@
         },
         {
           "target": "./monthlyExecution.md",
-          "line": 260
+          "line": 266
         }
       ]
     },
@@ -37765,7 +37767,7 @@
     },
     {
       "path": "spec/ui/index.md",
-      "sha256": "e3cd0435cc266a593aedef5ba178b29af2cf501f333130d228cb424931e6ad6f",
+      "sha256": "0a71326056cd96bc766ad50d2a30c38c2ba78456c05719c396ac123627baa105",
       "module": "ui",
       "stories": [
         {
@@ -37812,7 +37814,17 @@
         {
           "heading": "Story: One look for every control / Colors are tokens, except another party's mark",
           "line": 95,
-          "definitions": []
+          "definitions": [
+            "ColorForm",
+            "IdentityMark",
+            "ColorUse",
+            "markComponent",
+            "colorAllowed",
+            "lawTokenColorAlwaysAllowed",
+            "lawLiteralColorRequiresMatchingMarkAndReason",
+            "lawOtherComponentRefusesLiteral",
+            "colorValues"
+          ]
         }
       ],
       "imports": [],

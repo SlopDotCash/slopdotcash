@@ -248,6 +248,12 @@ pure def signSolana(c: Commitment, attemptId: int, root: str, by: str): Commitme
 After admission no new attempt is signed. A V2 or V3 admission must equal
 one of the journal's signed attempts.
 
+```quint
+pure def matchesSignedAttempt(c: Commitment): bool =
+  c.view.admittedRoot != "" and not(c.view.legacyRoot) and c.attempts.some(a => a.root == c.view.admittedRoot)
+pure def admit(c: Commitment): Commitment = { ...c, phase: Admitted, admittedRoot: c.view.admittedRoot }
+```
+
 ### Only the latest authorization, the one with the highest source sequence, is admitted
 
 The monthly executor submits and resumes only the current authorization,
@@ -297,11 +303,9 @@ that contradicts this.
 
 ```quint
 pure def canAdmit(c: Commitment): bool =
-  c.phase == Authorized and c.view.admittedRoot != "" and not(c.view.legacyRoot) and c.attempts.some(a => a.root == c.view.admittedRoot)
-    and c.view.admittedRoot == latestAttempt(c).root
+  c.phase == Authorized and matchesSignedAttempt(c) and c.view.admittedRoot == latestAttempt(c).root
 pure def supersededRoot(c: Commitment): bool = c.view.admittedRoot != "" and c.attempts.some(a => a.root == c.view.admittedRoot)
   and c.view.admittedRoot != latestAttempt(c).root
-pure def admit(c: Commitment): Commitment = { ...c, phase: Admitted, admittedRoot: c.view.admittedRoot }
 ```
 
 ### A retained V1 authorization of the same frozen month may win on EVM

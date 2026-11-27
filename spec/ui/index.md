@@ -99,3 +99,22 @@ another party's published identity, a network or the Slop mark, in the
 component that draws that mark (`Logo`, `NetworkMark`), with the reason on
 the line above naming the mark. `inventory.test.ts` refuses any other
 literal.
+
+```quint
+type ColorForm = TokenColor | LiteralColor
+type IdentityMark = NoMark | SlopMark | NetworkIdentity
+type ColorUse = { form: ColorForm, component: str, mark: IdentityMark, reasonNamesMark: bool }
+pure def markComponent(mark: IdentityMark): str =
+  if (mark == SlopMark) "Logo" else if (mark == NetworkIdentity) "NetworkMark" else ""
+pure def colorAllowed(color: ColorUse): bool =
+  color.form == TokenColor or (color.mark != NoMark and color.component == markComponent(color.mark) and color.reasonNamesMark)
+pure def lawTokenColorAlwaysAllowed(color: ColorUse): bool =
+  color.form == TokenColor implies colorAllowed(color)
+pure def lawLiteralColorRequiresMatchingMarkAndReason(color: ColorUse): bool =
+  (color.form == LiteralColor and colorAllowed(color)) implies
+    (color.mark != NoMark and color.component == markComponent(color.mark) and color.reasonNamesMark)
+pure def lawOtherComponentRefusesLiteral(color: ColorUse): bool =
+  (color.form == LiteralColor and color.component != "Logo" and color.component != "NetworkMark") implies not(colorAllowed(color))
+pure val colorValues = tuples(Set(TokenColor, LiteralColor), Set("Logo", "NetworkMark", "Button"), Set(NoMark, SlopMark, NetworkIdentity), Set(true, false))
+  .map(((form, component, mark, reasonNamesMark)) => { form: form, component: component, mark: mark, reasonNamesMark: reasonNamesMark })
+```
