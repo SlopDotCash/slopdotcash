@@ -1,7 +1,6 @@
 // spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"
 import { vectors } from "../../kernels/vectors.ts";
-import { preparedBindingShape, signedCompletesPrepared } from "./payoutConsent.ts";
-import { unsignedWireOf } from "./solanaWire.ts";
+import { preparedBindingShape, signedCompletesPrepared, unsignedWireOf } from "./solanaWire.ts";
 
 const message = Uint8Array.from({ length: 40 }, (_, index) => index + 1);
 const unsigned = Uint8Array.from([1, ...new Array<number>(64).fill(0), ...message]);

@@ -13,7 +13,7 @@ import { accountChangedMessage, checkActor } from "./registration.vibe"
 import { type SolanaConnection, connectSolana, solanaSignTransaction } from "./solana.vibe"
 
 module verified {
-  import { signedCompletesPrepared as completes } from "./payoutConsent.ts"
+  import { signedCompletesPrepared as completes } from "./solanaWire.ts"
   /** @throws {never} */
   export function signedCompletesPrepared(prepared: Uint8Array, signed: Uint8Array, destination: Uint8Array): boolean { return completes(prepared, signed, destination) }
 }

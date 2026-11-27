@@ -6,7 +6,7 @@ import { bindingTypedData } from "@repo/settlement/chain/evm/typedData";
 import { digest, i64, u64 } from "@repo/settlement/chain/solana/bytes";
 import { bindWallet } from "@repo/settlement/chain/solana/instructions";
 import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
-import { destinationAt, payloadLength, preparedBindingShape, signaturesEnd } from "./payoutConsent.ts";
+import { destinationAt, payloadLength, preparedBindingShape, signaturesEnd } from "./solanaWire.ts";
 
 export interface EvmBindingTerms {
   readonly chainId: bigint;
