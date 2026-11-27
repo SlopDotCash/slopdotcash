@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { handleRaw } from "@repo/platform/http"
+import { handleRaw, methodNotAllowed } from "@repo/platform/http"
 import { Rejected, xCallback } from "../../gen/backend__accounts.effect.vibe"
 import { AccountSettings, type XClient, pointsAnswer, pointsJson } from "../accounts/routes/admission.vibe"
 import { boundedObject, keysOf } from "../accounts/routes/membership.vibe"
@@ -74,6 +74,10 @@ const plainJson = HttpServerResponse.setHeader("content-type", "application/json
 
 function signedOut() {
   return bare(postPointsXStart.notSignedInNoStore)
+}
+
+effect function unsupportedXMethod() {
+  return (try xSession()) === undefined ? signedOut() : bare({ status: 404, error: "not_found" })
 }
 
 function invalidBody() {
@@ -189,4 +193,5 @@ export const XRoutes = Layer.mergeAll(
   handleRaw(xStart, () => pointsAnswer(start())),
   handleRaw(xDisconnect, () => pointsAnswer(disconnect())),
   handleRaw(xVisibility, () => pointsAnswer(publishLink())),
+  methodNotAllowed([xStart, xDisconnect, xVisibility], pointsAnswer(Effect.map(unsupportedXMethod(), plainJson))),
 )

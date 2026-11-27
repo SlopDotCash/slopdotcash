@@ -208,6 +208,49 @@ effect function ownerExpiries() {
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Accidental account reads check the session and leave membership and X visibility unchanged (spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives")', () => effect {
+    const area = try Area
+    const actor = { actorId: "U_retained_visibility", githubId: "99103", login: "retained-visibility" }
+    const liveToken = "retained-account-live-".padEnd(48, "x")
+    const expiredToken = "retained-account-expired-".padEnd(48, "x")
+    const live = { ...actor, cookie: `__Host-slop_points=${liveToken}` } satisfies Session
+    const expired = { ...actor, cookie: `__Host-slop_points=${expiredToken}` } satisfies Session
+    const joined = "2026-10-24T00:00:00.000Z"
+    try area.sql("INSERT INTO points_members (actor_id,github_id,login,joined_at,public,welcome) VALUES (?,?,?,?,0,5)", actor.actorId, actor.githubId, actor.login, joined)
+    try area.sql("INSERT INTO points_sessions (token_hash,actor_id,expires_at) VALUES (?,?,?),(?,?,?)", try sha256Hex(liveToken), actor.actorId, "2099-01-01T00:00:00.000Z", try sha256Hex(expiredToken), actor.actorId, "2000-01-01T00:00:00.000Z")
+    try area.sql("INSERT INTO points_x_claims (x_id,actor_id,claimed_at) VALUES (?,?,?)", "721000000001", actor.actorId, joined)
+    try area.sql("INSERT INTO points_x_links (x_id,actor_id,username,verified_at,public) VALUES (?,?,?,?,0)", "721000000001", actor.actorId, "retained_x", joined)
+    const state = () => area.sql(`SELECT m.public, m.closed_at, l.public AS link_visible, l.x_id,
+      (SELECT count(*) FROM points_sessions WHERE actor_id=m.actor_id) AS sessions,
+      (SELECT count(*) FROM points_x_flows WHERE actor_id=m.actor_id) AS flows
+      FROM points_members m JOIN points_x_links l ON l.actor_id=m.actor_id WHERE m.actor_id=?`, actor.actorId)
+    const before = try state()
+    const reply = (answer: Answer) => [answer.status, answer.body, answer.headers["cache-control"], answer.headers["content-type"], answer.headers["set-cookie"]?.includes("Max-Age=0") ?? false]
+    const unsigned = { error: "not_signed_in" }
+    const missing = { error: "not_found" }
+    const prefix = "/api/v1/points"
+    for (const path of ["/signout", "/sessions/revoke", "/visibility", "/account/close"]) {
+      const route = `${prefix}${path}`
+      try same([reply(try get(route)), reply(try get(route, expired)), reply(try get(route, live))], [
+        [401, unsigned, "no-store", "application/json; charset=utf-8", false],
+        [401, { error: "session_expired" }, "no-store", "application/json; charset=utf-8", true],
+        [404, missing, "no-store", "application/json; charset=utf-8", false],
+      ])
+    }
+    for (const path of ["/start", "/disconnect", "/visibility"]) {
+      const route = `${prefix}/x${path}`
+      try same([reply(try get(route)), reply(try get(route, expired)), reply(try get(route, live))], [
+        [401, unsigned, "no-store", "application/json", false],
+        [401, unsigned, "no-store", "application/json", false],
+        [404, missing, "no-store", "application/json", false],
+      ])
+    }
+    try same((try get(`${prefix}/member?login=${actor.login}`)).body, null)
+    try same((try get(`${prefix}/x/profile?actor=${actor.actorId}`)).body, null)
+    try same(try state(), before)
+    try same(before, [{ public: 0, closed_at: null, link_visible: 0, x_id: "721000000001", sessions: 2, flows: 0 }])
+  })
+
   it.effect('Sign in, rename, sign out, revoke, browse the directory, close and reopen an account (spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/points/participation.md, "Stored awards include rows recorded on the cutoff day, which never count")', () => effect {
     const area = try Area
     const octo = try area.signIn("7", "octo")

@@ -1,7 +1,7 @@
 // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Only the configured owner, while a current administrator, gets a seven-day session"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
 import { isoNow } from "@repo/platform/clock"
 import { base64url, randomBytes, sha256Hex } from "@repo/platform/crypto"
-import { bytesBody, handleRaw, json } from "@repo/platform/http"
+import { bytesBody, handleRaw, json, methodNotAllowed } from "@repo/platform/http"
 import { first, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import { Rejected } from "../../../gen/backend__accounts.effect.vibe"
@@ -100,6 +100,11 @@ export effect function presentedSession() {
 
 function sessionRefusal(presented: Presented) {
   return presented.kind === "absent" ? bare(postPointsSignout.notSignedInS401) : bare(postPointsSignout.sessionExpiredNoStore, {}, { "set-cookie": clearedSession })
+}
+
+effect function unsupportedAccountMethod() {
+  const presented = try presentedSession()
+  return presented.kind === "live" ? bare(postPointsSignout.otherMethods.notFoundNoStore) : sessionRefusal(presented)
 }
 
 effect function memberByActor(actor: string) {
@@ -253,5 +258,6 @@ export const MembershipRoutes = Layer.mergeAll(
   handleRaw(pointsRevokeSession, () => pointsAnswer(revokeSession())),
   handleRaw(pointsVisibility, () => pointsAnswer(publishMembership())),
   handleRaw(pointsClose, () => pointsAnswer(closeAccount())),
+  methodNotAllowed([pointsSignOut, pointsRevokeSession, pointsVisibility, pointsClose], pointsAnswer(unsupportedAccountMethod())),
   handleRaw(projectSession, () => currentProjectSession()),
 )
