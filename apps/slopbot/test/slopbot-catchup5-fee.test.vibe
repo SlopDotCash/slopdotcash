@@ -5,7 +5,7 @@ import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
-import { unconfiguredGitHubApp } from "@repo/platform/github/app"
+import { GitHubApp } from "@repo/platform/github/app"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { githubFake } from "@repo/platform/testing/github"
@@ -136,8 +136,14 @@ function servicesOf(fees: Fees, token: string) {
   )
   const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, asFetch(handlerOf(() => fees))))
   const githubLayer = Layer.provide(github({ authority: fees.fake.authority, token: Redacted.make(token), userAgent: "slopbot-fee-journeys" }), http)
+  const githubAppLayer = Layer.succeed(GitHubApp, {
+    appJwt: () => Effect.die(new Error("the fee journeys mint no app jwt")),
+    installationToken: () => Effect.die(new Error("the fee journeys mint no installation token")),
+    installationFor: () => Effect.die(new Error("the fee journeys look up no installation")),
+    asInstallation: () => githubLayer,
+  })
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-journeys-secret", SLOPBOT_APP_USER_ID: String(fees.fake.app.bot.id) })
-  return Layer.mergeAll(d1(fees.db), webCrypto, fees.clock.layer, ports, http, githubLayer, unconfiguredGitHubApp, settings)
+  return Layer.mergeAll(d1(fees.db), webCrypto, fees.clock.layer, ports, http, githubLayer, githubAppLayer, settings)
 }
 
 const World = Layer.effect(FeeWorld, effect {
@@ -512,6 +518,50 @@ layer(World, { timeout: "240 seconds" })((it) => {
         { id: "sd_due_struck", outcome: "kept_due", outcome_reason: "strike", strike_repository_id: repositoryId, strike_pull_number: 99 },
         { id: "sd_due_withdrawn", outcome: "refund_due", outcome_reason: "withdrawn", strike_repository_id: null, strike_pull_number: null },
       ],
+    })
+  })
+
+  it.effect('Standing cover rows with unreadable stored times stay schedulable and heal unreadable strike timestamps into a confirmed strike (spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
+    const { fees } = try FeeWorld
+    const tCheck = Date.parse("2026-11-27T00:00:00.000Z")
+    const badWindowPr = try opened("Bad window start", Date.parse("2026-11-20T00:00:00.000Z"))
+    const badStrikePr = try opened("Bad strike seen", Date.parse("2026-11-20T00:00:00.000Z"))
+    const closedAt = Date.parse("2026-11-25T00:00:00.000Z")
+    try Effect.try(() => { fees.fake.world.pull(repo, badStrikePr).state = "closed" })
+    fees.reports.set(badStrikePr, { state: "closed", merged: false, closed_at: iso(closedAt) })
+    try keepMarked(badStrikePr, closedAt + hour)
+    try Effect.promise(() => fees.db.batch([
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+         VALUES ('sd_bad_window', 9101, 1, ?, '755000000000000000000', '75.4717', '2026-11-19T00:00:00.000Z', '2026-11-19T00:00:00.000Z', 'robinhood-standing', 9101)`,
+      ).bind(`0x${"9101".padStart(64, "0")}`),
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+         VALUES ('sd_bad_strike', 9102, 1, ?, '755000000000000000000', '75.4717', '2026-11-19T00:00:00.000Z', '2026-11-19T00:00:00.000Z', 'robinhood-standing', 9102)`,
+      ).bind(`0x${"9102".padStart(64, "0")}`),
+      fees.db.prepare(
+        `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+         VALUES (?, ?, 'sd_bad_window', 9101, ?, ?, 'ada', 'widgets', '2026-11-20T00:00:00.000Z', 'not-a-date', '2026-11-20T00:00:00.000Z', 'watch', 1, NULL, ?, '2026-11-20T00:00:00.000Z')`,
+      ).bind(repositoryId, badWindowPr, projectId, installationId, iso(tCheck)),
+      fees.db.prepare(
+        `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+         VALUES (?, ?, 'sd_bad_strike', 9102, ?, ?, 'ada', 'widgets', '2026-11-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z', 'pending', 0, 'not-a-date', ?, '2026-11-20T00:00:00.000Z')`,
+      ).bind(repositoryId, badStrikePr, projectId, installationId, iso(tCheck)),
+    ]))
+    const firstPass = try at(tCheck, checkStandingDeposits())
+    const coversAfterFirst = (try Effect.promise(() => fees.db.prepare("SELECT deposit_id, state, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE deposit_id IN ('sd_bad_window', 'sd_bad_strike') ORDER BY deposit_id").all())).results
+    const secondPass = try at(tCheck + 48 * hour, checkStandingDeposits())
+    const coverAfterSecond = (try Effect.promise(() => fees.db.prepare("SELECT state, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE deposit_id = 'sd_bad_strike'").all())).results[0]
+    const depositAfterSecond = (try Effect.promise(() => fees.db.prepare("SELECT outcome, outcome_reason, strike_repository_id, strike_pull_number FROM standing_deposits WHERE id = 'sd_bad_strike'").all())).results[0]
+    try same({ firstPass, coversAfterFirst, secondPass, coverAfterSecond, depositAfterSecond }, {
+      firstPass: { read: 2, decided: 0 },
+      coversAfterFirst: [
+        { deposit_id: "sd_bad_strike", state: "pending", strike_seen_at: iso(tCheck), next_check_at: iso(tCheck + 48 * hour) },
+        { deposit_id: "sd_bad_window", state: "watch", strike_seen_at: null, next_check_at: iso(tCheck + day) },
+      ],
+      secondPass: { read: 2, decided: 1 },
+      coverAfterSecond: { state: "strike", strike_seen_at: iso(tCheck), next_check_at: null },
+      depositAfterSecond: { outcome: "kept_due", outcome_reason: "strike", strike_repository_id: repositoryId, strike_pull_number: badStrikePr },
     })
   })
 })

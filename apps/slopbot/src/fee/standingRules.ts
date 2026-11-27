@@ -14,6 +14,11 @@ export const standingMergedCacheMs = 24 * 60 * 60 * 1000;
 
 const dayMs = 24 * 60 * 60 * 1000;
 const hourMs = 60 * 60 * 1000;
+const maxDateMs = 8_640_000_000_000_000;
+
+function isValidDateMs(ms: number): boolean {
+  return Number.isFinite(ms) && Math.abs(ms) <= maxDateMs;
+}
 
 export type StandingCoverState = "watch" | "pending" | "clear" | "strike";
 export type StandingDepositOutcome = "kept_due" | "refund_due";
@@ -133,7 +138,11 @@ export function coverReading(
   const windowEnds = Date.parse(cover.window_start) + standingDepositStrikeWindowDays * dayMs;
   const closedAt = Date.parse(pull.closed_at ?? "");
   const marked = closed && keepMarked && Number.isFinite(closedAt) && Number.isFinite(windowEnds) && closedAt <= windowEnds;
-  const strikeSeenAt = marked ? (cover.strike_seen_at ?? new Date(nowMillis).toISOString()) : null;
+  const graceMs = standingDepositStrikeGraceHours * hourMs;
+  const storedStrikeMs = cover.strike_seen_at === null ? Number.NaN : Date.parse(cover.strike_seen_at);
+  const validStoredStrike = isValidDateMs(storedStrikeMs) && isValidDateMs(storedStrikeMs + graceMs);
+  const strikeSeenAt = marked ? (validStoredStrike ? cover.strike_seen_at : new Date(nowMillis).toISOString()) : null;
+  const strikeSeenMs = marked ? (validStoredStrike ? storedStrikeMs : nowMillis) : Number.NaN;
   const prOpen: 0 | 1 = open ? 1 : 0;
   if (cover.state === "clear") {
     return {
@@ -156,9 +165,13 @@ export function coverReading(
   );
   let nextCheckAt: string | null = null;
   if (state === "pending" && strikeSeenAt !== null) {
-    nextCheckAt = new Date(Date.parse(strikeSeenAt) + standingDepositStrikeGraceHours * hourMs).toISOString();
+    nextCheckAt = new Date(strikeSeenMs + graceMs).toISOString();
   } else if (state === "watch") {
-    nextCheckAt = new Date(Math.max(nowMillis + 60_000, Math.min(nowMillis + dayMs, windowEnds + 60_000))).toISOString();
+    nextCheckAt = new Date(
+      Number.isFinite(windowEnds)
+        ? Math.max(nowMillis + 60_000, Math.min(nowMillis + dayMs, windowEnds + 60_000))
+        : nowMillis + dayMs,
+    ).toISOString();
   } else if (state === "clear" && open) {
     nextCheckAt = new Date(nowMillis + dayMs).toISOString();
   }
