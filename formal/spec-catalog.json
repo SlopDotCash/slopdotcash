@@ -16468,7 +16468,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "b8628c237ccdd0200d8debc95df7e8bd86c3004bcc522e101535e00c5ee9f771",
+      "sha256": "5e6118f210227df4461682e4d546b3f08b6f3fe357c16a59f6cea0ee3b61ac39",
       "module": "operations__release",
       "stories": [
         {
@@ -16477,7 +16477,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed",
-          "line": 277
+          "line": 282
         }
       ],
       "rules": [
@@ -16549,7 +16549,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / A fresh manual main release may resume discussion reads only through live revalidation",
-          "line": 198,
+          "line": 203,
           "definitions": [
             "CheckpointAttempt",
             "checkpointMaxAgeHours",
@@ -16571,7 +16571,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / Every required check binds the same source and built artifact",
-          "line": 243,
+          "line": 248,
           "definitions": [
             "canBuild",
             "build",
@@ -16588,7 +16588,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / One holder at a time: a release run or another workflow that writes the environment's data",
-          "line": 279,
+          "line": 284,
           "definitions": [
             "lockWorkflow",
             "canWorkflowTakeLock",
@@ -16608,7 +16608,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Production publishes only the current main head; staging publishes a checked ancestor and never rolls back",
-          "line": 326,
+          "line": 331,
           "definitions": [
             "ancestorOrEqual",
             "noRollback",
@@ -16644,7 +16644,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Workers publish before the static site, each only when its own release variable is enabled",
-          "line": 412,
+          "line": 417,
           "definitions": [
             "feeVariable",
             "row",
@@ -16669,7 +16669,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key",
-          "line": 497,
+          "line": 502,
           "definitions": [
             "FeeMode",
             "SubmissionFeeConfig",
@@ -16683,7 +16683,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 549,
+          "line": 554,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16698,7 +16698,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 591,
+          "line": 596,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16718,7 +16718,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 626,
+          "line": 631,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16733,7 +16733,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 654,
+          "line": 659,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16796,12 +16796,16 @@
           "line": 18
         },
         {
+          "target": "../points/journal.md",
+          "line": 156
+        },
+        {
           "target": "./intakeHealth.md",
-          "line": 290
+          "line": 295
         },
         {
           "target": "./escrowQualification.md",
-          "line": 651
+          "line": 656
         }
       ]
     },
@@ -19056,7 +19060,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "ee87e71d8ceae28a63d98ae9074d5313eb061d8fb3752858ee90b6fe1d5f0a41",
+      "sha256": "6d6b5a65db50ab79e590b25b6dbbfc4ceaf348f5c116bdd152fba128b1c834e7",
       "module": "points__journal",
       "stories": [
         {
@@ -19155,8 +19159,18 @@
           ]
         },
         {
-          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score",
           "line": 292,
+          "definitions": [
+            "OmittedReviewWindow",
+            "allocatedBeforeSnapshot",
+            "freshSnapshotMatches",
+            "unseenOmittedReview"
+          ]
+        },
+        {
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "line": 320,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -19168,7 +19182,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 316,
+          "line": 344,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -19177,7 +19191,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 346,
+          "line": 374,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -19187,7 +19201,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 380,
+          "line": 408,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -19195,7 +19209,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 416,
+          "line": 444,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -19208,7 +19222,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 468,
+          "line": 496,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -19222,7 +19236,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 517,
+          "line": 545,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -19233,7 +19247,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 547,
+          "line": 575,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -19262,7 +19276,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 650,
+          "line": 678,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -19293,7 +19307,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 729,
+          "line": 757,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19302,7 +19316,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 759,
+          "line": 787,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19311,7 +19325,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 790,
+          "line": 818,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19325,7 +19339,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 827,
+          "line": 855,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19341,7 +19355,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 855,
+          "line": 883,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19354,7 +19368,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 889,
+          "line": 917,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19382,7 +19396,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 955,
+          "line": 983,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19406,7 +19420,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 981,
+          "line": 1009,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19501,28 +19515,32 @@
           "line": 185
         },
         {
-          "target": "./evaluations.md",
+          "target": "./reviews.md",
           "line": 294
         },
         {
+          "target": "./evaluations.md",
+          "line": 322
+        },
+        {
           "target": "./scoringPolicy.md",
-          "line": 319
+          "line": 347
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 731
+          "line": 759
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 761
+          "line": 789
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 792
+          "line": 820
         },
         {
           "target": "./allocation.md",
-          "line": 798
+          "line": 826
         }
       ]
     },

@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest"
+import { settableClock } from "@repo/platform/testing/clock"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { sha256Of } from "@repo/platform/git/bytes"
@@ -6,20 +7,24 @@ import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type SourceDecision, type ValueCensus, ValueInputs } from "@repo/ports/points"
-import { type HistoricalPin, validateHistoricalSnapshot, validatePublishable, validateSnapshot } from "../src/client/snapshot/validate.vibe"
+import { type HistoricalPin, validateHistoricalSnapshot, validatePaymentSnapshot, validatePublishable, validateSnapshot } from "../src/client/snapshot/validate.vibe"
 import type { LeaderboardSnapshot } from "../src/client/snapshot/schema.vibe"
 import type { PullRequestRecord } from "../src/collect/merged/hydrate.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { type HistoricalEmptyLegacyClosureBinding, mergedHistoricalReplaySnapshot } from "../src/corrections/reviewed/replay/merged.vibe"
 import { latestOf } from "../src/corrections/reviewed/replay/latest.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
-import { repositoriesOf } from "../src/journal/build.vibe"
+import { readSnapshots, repositoriesOf } from "../src/journal/build.vibe"
+import { holdProtected } from "../src/journal/hold.vibe"
 import { finish, openStore } from "../src/journal/ledger.vibe"
-import { applySnapshot } from "../src/journal/snapshot.vibe"
+import { applySnapshot, applySnapshots } from "../src/journal/snapshot.vibe"
+import { november2026 } from "../gen/points__periods.ts"
 import { type Journal, type Revision, journalText } from "../src/kernels/records/canonical.ts"
 import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { assembleSnapshot, createHistoricalSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
+import { extractCollectedData, restoreLocal } from "../src/snapshot/restoreLocal.vibe"
+import { zipOf } from "./support/u3/archive.ts"
 import { acceptedReviewHistoryJson, registryAnswer, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 
@@ -34,14 +39,16 @@ module verified {
 }
 import { githubUserIdFromNodeId } from verified
 
+error LateReviewFixtureMissing { message: string }
+
 const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 
-function layers(world: Seeded, collections: Array<Collection>) {
+function layers(world: Seeded, collections: Array<Collection>, decisions: ReadonlyMap<string, unknown>) {
   const outbound = outboundVia(served(world).fetcher)
   const values = Layer.succeed(ValueInputs, {
     load: (census: ValueCensus) => effect {
       return {
-        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: decisions.get(outcome.id) ?? missing })),
         jointValueDecisions: [],
         valueActors: [],
         retainedCommitCredits: [],
@@ -70,7 +77,7 @@ function message(error: { readonly _tag: string }) {
   return "message" in error && typeof error.message === "string" ? error.message : error._tag
 }
 
-effect function collected(world: Seeded) {
+effect function collected(world: Seeded, cutoffMs = start, decisions: ReadonlyMap<string, unknown> = new Map()) {
   const fs = try FileSystem.FileSystem
   const directory = try fs.makeTempDirectoryScoped()
   try fs.makeDirectory(`${directory}/data`, { recursive: true })
@@ -78,12 +85,12 @@ effect function collected(world: Seeded) {
   try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
   const collections: Array<Collection> = []
   const output = `${directory}/leaderboard.json`
-  const snapshot = try Effect.provide(collectSnapshot({ registryPath: `${directory}/registry.json`, cutoffMs: start, dataRoot: directory, output }), layers(world, collections))
+  const snapshot = try Effect.provide(collectSnapshot({ registryPath: `${directory}/registry.json`, cutoffMs, dataRoot: directory, output }), layers(world, collections, decisions))
   const collection = collections.at(-1)
   if (collection === undefined) throw new Error("the assembly was never asked")
   const text = try fs.readFileString(output)
   const written = try Effect.try(() => JSON.parse(text) as LeaderboardSnapshot)
-  return { snapshot, collection, written }
+  return { snapshot, collection, written, text }
 }
 
 effect function workUnit(claimIds: ReadonlyArray<string>, assessment: unknown) {
@@ -350,5 +357,111 @@ it.live('A verified empty legacy closure earns nothing in the merged replay and 
     const { journal } = try finish(scratch, projected.generatedAt)
     try same(latestOf(journal.revisions).get(kept.award.key), latestOf(existing.revisions).get(kept.award.key))
   })
+  }
+})
+
+
+it.live('A first late generation journals its original review share only from the fresh collection (spec/points/reviews.md, "Pool shares use ten-Point largest remainder and the original review order"; spec/points/journal.md, "Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const clock = settableClock(start + 1000)
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world), clock.layer) {
+    try scoped(effect {
+      const occurredAt = "2026-11-02T10:00:00.000Z"
+      const recordedAt = "2026-12-08T12:30:00.000Z"
+      const acceptedAt = new Date(start - 2 * day).toISOString()
+      const lateCutoff = start + 22 * day
+      const reviewId = try Effect.try(() => {
+        const id = world.fake.world.addReview(repository, world.pulls.paired, { author: "ada", state: "APPROVED", body: "Validated that the accepted change also preserves the migration result.", submittedAt: occurredAt })
+        return `PRR_kwDO${id.toString(36)}`
+      })
+      const pullRequestId = world.ids.paired
+      const assessedAt = new Date(start - day).toISOString()
+      const assessment = {
+        pullRequestNodeId: pullRequestId, repository, headSha: world.commits.shared, occurredAt: acceptedAt,
+        rubricVersion: "slop-value-2026-11-01", model: { reported: "fixture" },
+        assessment: { tier: "small", rationale: "Verified accepted outcomes.", reviews: [{ sourceId: reviewId, tier: "standard", finding: "Confirmed retained behavior.", outcome: "Validation before merge." }] },
+      }
+      const recordJson = JSON.stringify(assessment)
+      const recordDigest = try sha256Hex(recordJson)
+      const decision = { status: "assessed", history: [{ sequence: 1, record_digest: recordDigest, record_json: recordJson, recorded_at: assessedAt }], latestDigest: recordDigest, record: assessment }
+      const decisions = new Map([[pullRequestId, decision]])
+      const timely = try collected(world, start, decisions)
+      clock.set(lateCutoff + 1000)
+      const late = try collected(world, lateCutoff, decisions)
+      const registry = repositoryRegistry(world)
+      const [credit] = late.written.omittedReviewCredits ?? []
+      const ordinary = timely.written.ledger.find((event) => event.source.id === reviewId)
+      if (credit === undefined || ordinary === undefined) throw new LateReviewFixtureMissing({ message: "No matched timely and late review credit" })
+      try same(credit, {
+        id: ordinary.id, reviewId, pullRequestId, pullRequestNumber: ordinary.source.number, repository,
+        reviewer: ordinary.actor, scoreThirds: ordinary.scoreThirds, submittedAt: ordinary.occurredAt, acceptedAt,
+        url: ordinary.source.url, scoreDecisionSourceId: ordinary.scoreDecisionSourceId, scoreDecisionAt: ordinary.scoreDecisionAt, reason: ordinary.reason,
+      })
+      const payment = try validatePaymentSnapshot(late.written, registry)
+      try same({
+        ledger: late.written.ledger.some((event) => event.source.id === reviewId),
+        leader: late.written.leaders.some((entry) => entry.actor.id === ordinary.actor.id),
+        exclusion: late.written.reviewExclusions?.find((entry) => entry.reviewId === reviewId)?.reason,
+        earlyAttachment: timely.written.omittedReviewCredits,
+        paymentAttachment: payment.omittedReviewCredits,
+      }, { ledger: false, leader: false, exclusion: "review-credit-outside-window", earlyAttachment: undefined, paymentAttachment: undefined })
+      const forged = { ...late.written, omittedReviewCredits: [{ ...credit, scoreDecisionSourceId: `value:${"f".repeat(64)}` }] }
+      const badDigest = validateSnapshot(forged, registry) catch (error) => message(error)
+      const outside = validateSnapshot({ ...late.written, omittedReviewCredits: [{ ...credit, acceptedAt: late.written.window.to, submittedAt: "2026-11-01T00:00:00.000Z" }] }, registry) catch (error) => message(error)
+      const wrongReviewer = validateSnapshot({ ...late.written, omittedReviewCredits: [{ ...credit, reviewer: { ...ordinary.actor, id: "U_other_reviewer" } }] }, registry) catch (error) => message(error)
+      const duplicate = validateSnapshot({ ...late.written, omittedReviewCredits: [credit, { ...credit, id: `PR_other:value-review:${reviewId}`, pullRequestId: "PR_other" }] }, registry) catch (error) => message(error)
+      try same([badDigest, outside, wrongReviewer, duplicate], ["Omitted review credit is not bound to its assessment coverage", "Fresh omitted review credit must fall inside its acceptance-anchored allocation window", "snapshot.omittedReviewCredits must match its exclusion's reviewer", "Fresh omitted review credits must contain unique review sources"])
+
+      const timelyInput = try readSnapshots([timely.text], registry)
+      const lateDigest = try sha256Hex(late.text)
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectoryScoped()
+      const archive = `${directory}/source.zip`
+      const encoder = new TextEncoder()
+      const data = [
+        { name: "data/leaderboard.json", content: encoder.encode(late.text), deflated: true },
+        { name: "data/profiles.json", content: encoder.encode("{}"), deflated: true },
+      ]
+      const receipt = { name: "data/leaderboard-fresh.sha256", content: encoder.encode(`${lateDigest}\n`), deflated: false }
+      try fs.writeFile(archive, zipOf([...data, receipt]))
+      try extractCollectedData(archive, `${directory}/collected`)
+      try restoreLocal(`${directory}/collected`, `${directory}/restored.json`)
+      const restoredText = try fs.readFileString(`${directory}/restored.json`)
+      const restoredDigest = (try fs.readFileString(`${directory}/collected/leaderboard-fresh.sha256`)).trim()
+      try same([restoredText, restoredDigest], [late.text, lateDigest])
+      try fs.writeFile(archive, zipOf(data))
+      try extractCollectedData(archive, `${directory}/retained`)
+      try same(try fs.exists(`${directory}/retained/leaderboard-fresh.sha256`), false)
+      try fs.writeFile(archive, zipOf([...data, { ...receipt, content: encoder.encode("x".repeat(65)) }]))
+      const malformed = extractCollectedData(archive, `${directory}/malformed`) catch (error) => error._tag
+      try same(malformed, "CollectedDataRefused")
+      const laterTarget = { ...registry.registered[0], id: "ada/workbench", name: "workbench", githubUrl: "https://github.com/ada/workbench", nodeId: "R_workbench" }
+      const expandedRegistry = { ...registry, registered: [...registry.registered, laterTarget], targets: [...registry.targets, laterTarget] }
+      const lateInput = try readSnapshots([restoredText], expandedRegistry, restoredDigest)
+      const mismatched = readSnapshots([late.text, timely.text], registry, restoredDigest) catch (error) => error._tag
+      try same(mismatched, "FreshSnapshotMismatch")
+      const repositories = repositoriesOf(registry, {})
+      const opening = `${journalText(emptyJournal(occurredAt))}\n`
+      const early = try openStore(opening, null, [])
+      const fresh = try openStore(opening, null, [])
+      const restored = try openStore(opening, null, [])
+      try applySnapshots(early, repositories, timelyInput, recordedAt)
+      try applySnapshots(fresh, repositories, lateInput, recordedAt, lateDigest)
+      try applySnapshots(restored, repositories, lateInput, recordedAt)
+      const rows = (store: typeof early) => store.revisions.filter((row) => row.award.sourceId === reviewId)
+      const [timelyRow] = rows(early)
+      const [lateRow] = rows(fresh)
+      if (timelyRow === undefined || lateRow === undefined) throw new LateReviewFixtureMissing({ message: "The journal did not preserve both proofs of the review share" })
+      try same({ award: lateRow.award, recordedAt: lateRow.recordedAt, decision: lateRow.decision, sourceDigest: lateRow.sourceDigest, restored: rows(restored) }, {
+        award: timelyRow.award, recordedAt, decision: timelyRow.decision, sourceDigest: lateDigest, restored: [],
+      })
+      try same(lateRow.award.occurredAt, occurredAt)
+      try applySnapshots(early, repositories, lateInput, recordedAt, lateDigest)
+      try applySnapshots(fresh, repositories, lateInput, recordedAt, lateDigest)
+      try same([rows(early), rows(fresh)], [[timelyRow], [lateRow]])
+      const unrelated = new Set(fresh.revisions.filter((row) => row.award.sourceId !== reviewId).map((row) => row.id))
+      const held = try holdProtected(fresh, unrelated, { months: [{ project: "widgets", period: november2026 }], everyMonthProjects: [] })
+      try same({ held, surviving: rows(fresh) }, { held: 1, surviving: [] })
+    })
   }
 })

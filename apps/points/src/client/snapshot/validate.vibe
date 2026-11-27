@@ -1,9 +1,11 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/journal.md, "Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
 import { parseRunReceipt } from "@repo/contributor/client"
 import { sha256Hex } from "@repo/platform/crypto"
+import { allocatedBeforeSnapshot } from "../../../gen/points__journal.effect.vibe"
 import { historicalScopePinned } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { mergedPullRequestCredit } from "../../kernels/scoring/legacyV2.ts"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { reviewTierThirds } from "../../kernels/scoring/tiers.ts"
 import {
   type Problem, type Registry, actorCoherence, actorProblem, addThirds, at, compareCodeUnits, exactIdentifier, findRepository, findRepositoryPath,
   has, hasKeys, parsedUrl, iso, isExactProviderModel, isRecord, isScoreThirds, isUnavailableModel, millis,
@@ -377,11 +379,12 @@ function compareOmittedCredits(left: OmittedReviewCredit, right: OmittedReviewCr
 }
 
 function omittedReviewCreditProblem(registry: Registry, credit: OmittedReviewCredit, raw: unknown, path: string, repositoryIds: ReadonlyArray<string>): Problem {
-  const keys = isRecord(raw) ? Object.keys(raw).filter((key) => key !== "scoreDecisionAt").sort().join(",") : ""
+  const keys = isRecord(raw) ? Object.keys(raw).filter((key) => key !== "scoreDecisionAt" && key !== "acceptedAt").sort().join(",") : ""
   if (keys !== "id,pullRequestId,pullRequestNumber,reason,repository,reviewId,reviewer,scoreDecisionSourceId,scoreThirds,submittedAt,url") {
     return `${path} must contain exactly the omitted review credit fields`
   }
   const shape = (credit.scoreDecisionAt === undefined ? undefined : iso(credit.scoreDecisionAt, `${path}.scoreDecisionAt`))
+    ?? (credit.acceptedAt === undefined ? undefined : iso(credit.acceptedAt, `${path}.acceptedAt`))
     ?? nonEmpty(credit.id, `${path}.id`) ?? nonEmpty(credit.pullRequestId, `${path}.pullRequestId`)
     ?? positiveInteger(credit.pullRequestNumber, `${path}.pullRequestNumber`) ?? nonEmpty(credit.reviewId, `${path}.reviewId`)
     ?? actorProblem(credit.reviewer, `${path}.reviewer`) ?? positiveInteger(credit.scoreThirds, `${path}.scoreThirds`)
@@ -398,6 +401,7 @@ function omittedReviewCreditsProblem(registry: Registry, snapshot: LeaderboardSn
   if (credits === undefined) return undefined
   const shape = each(credits, (credit, index) => omittedReviewCreditProblem(registry, credit, at(raw, "omittedReviewCredits", index), `snapshot.omittedReviewCredits[${index}]`, repositoryIds))
     ?? (unique(credits, (credit) => credit.id) ? undefined : "snapshot.omittedReviewCredits must contain unique IDs")
+    ?? (unique(credits.filter((credit) => credit.acceptedAt !== undefined), (credit) => credit.reviewId) ? undefined : "Fresh omitted review credits must contain unique review sources")
     ?? (sorted(credits, compareOmittedCredits) ? undefined : "snapshot.omittedReviewCredits must be ordered by pull request and review ID")
   if (shape !== undefined) return shape
   const outsideWindow = new Map(
@@ -407,6 +411,7 @@ function omittedReviewCreditsProblem(registry: Registry, snapshot: LeaderboardSn
   )
   const ledgerIds = new Set(snapshot.ledger.map((event) => event.id))
   const windowFrom = millis(snapshot.window.from)
+  const windowTo = millis(snapshot.window.to)
   const earliest = windowFrom - scoreWindowDays * dayMillis
   const policyFrom = snapshot.valuePolicyEffectiveAt === undefined ? undefined : millis(snapshot.valuePolicyEffectiveAt)
   for (const credit of credits) {
@@ -418,6 +423,13 @@ function omittedReviewCreditsProblem(registry: Registry, snapshot: LeaderboardSn
     if (policyFrom !== undefined && submitted < policyFrom) return "snapshot.omittedReviewCredits must not predate the value policy"
     if (submitted >= windowFrom) return "snapshot.omittedReviewCredits must predate the scoring window"
     if (submitted < earliest) return "snapshot.omittedReviewCredits predates the earliest possible allocation window"
+    if (credit.acceptedAt === undefined) continue
+    if (credit.reviewer.kind !== "User" || exclusion.reviewer?.id !== credit.reviewer.id || credit.scoreThirds > reviewTierThirds("specialist") || credit.scoreDecisionAt === undefined) {
+      return "Fresh omitted review credit requires its human reviewer, positive share, and assessment time"
+    }
+    if (policyFrom === undefined || !allocatedBeforeSnapshot({ reviewAt: submitted, outcomeAt: millis(credit.acceptedAt), from: windowFrom, to: windowTo, policyAt: policyFrom })) {
+      return "Fresh omitted review credit must fall inside its acceptance-anchored allocation window"
+    }
   }
   return undefined
 }
@@ -1025,9 +1037,9 @@ function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actor
     }
   }
   for (const credit of snapshot.omittedReviewCredits ?? []) {
-    const row = coverageFor(credit.id)
+    const row = rows.get(credit.pullRequestId)?.row
     const assessedDigest = row?.status === "assessed" || row?.status === "human-ratified" ? row.recordDigest : row?.reviewAssessmentDigest
-    if (typeof assessedDigest !== "string" || !digest.test(assessedDigest) || `value:${assessedDigest}` !== credit.scoreDecisionSourceId) {
+    if (row?.repository !== credit.repository || row.pullRequestNumber !== credit.pullRequestNumber || typeof assessedDigest !== "string" || !digest.test(assessedDigest) || `value:${assessedDigest}` !== credit.scoreDecisionSourceId) {
       return "Omitted review credit is not bound to its assessment coverage"
     }
   }
@@ -1176,7 +1188,7 @@ function paymentView(snapshot: LeaderboardSnapshot, raw: Json): PaymentView {
     if (omitted === undefined) return refusedView(basisRequired)
     const omission = omissionProblem(snapshot, raw)
     if (omission !== undefined) return refusedView(omission)
-    const { paymentReviewBasisOmitted: _omitted, ...rest } = raw
+    const { paymentReviewBasisOmitted: _omitted, omittedReviewCredits: _credits, ...rest } = raw
     return { kind: "view", snapshot: rest }
   }
   if (!isRecord(basis) || basis.policy !== paymentReviewPolicy || basis.effectiveAt !== paymentReviewPolicyAt) return refusedView(basisRequired)
@@ -1188,7 +1200,7 @@ function paymentView(snapshot: LeaderboardSnapshot, raw: Json): PaymentView {
   const ledger = applyRecords(raw.ledger, basis.ledger, basis.removedEventIds)
   if (typeof ledger === "string") return refusedView(ledger)
   const ordered = [...ledger].sort((left, right) => Number(right.points) - Number(left.points) || Number(at(left, "source", "number")) - Number(at(right, "source", "number")) || String(left.id).localeCompare(String(right.id)))
-  const { paymentReviewBasis: _basis, paymentReviewBasisOmitted: _marker, ...rest } = raw
+  const { paymentReviewBasis: _basis, paymentReviewBasisOmitted: _marker, omittedReviewCredits: _credits, ...rest } = raw
   return {
     kind: "view",
     snapshot: {

@@ -6,15 +6,17 @@ import { validateSnapshot } from "../client/snapshot/validate.vibe"
 import type { Repositories } from "./ledger.vibe"
 
 export error SnapshotUnreadable { digest: string }
+export error FreshSnapshotMismatch { expected: string; actual: string }
 
 export function repositoriesOf(registry: RepositoryRegistry, countsFrom: Readonly<Record<string, string>>): Repositories {
   return { registry: registryOf(registry), countsFrom: new Map(Object.entries(countsFrom)) }
 }
 
-export effect function readSnapshots(texts: ReadonlyArray<string>, registry: RepositoryRegistry) {
+export effect function readSnapshots(texts: ReadonlyArray<string>, registry: RepositoryRegistry, freshDigest?: string) {
   const read = []
-  for (const text of texts) {
+  for (const [index, text] of texts.entries()) {
     const digest = try sha256Hex(text)
+    if (index === texts.length - 1 && freshDigest !== undefined && freshDigest !== digest) throw new FreshSnapshotMismatch({ expected: freshDigest, actual: digest })
     const raw = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new SnapshotUnreadable({ digest }) })
     read.push({ snapshot: try validateSnapshot(raw, registry), digest })
   }

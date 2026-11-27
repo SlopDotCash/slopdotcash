@@ -248,14 +248,16 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     const omittedValidated = Effect.provide(validateSnapshot(omittedSnapshot, registry), decemberClock) catch (error) => `${error._tag}:${error.message}`
     const omittedBad = Effect.provide(validateSnapshot({ ...omittedSnapshot, reviewExclusions: [] }, registry), decemberClock) catch (error) => error._tag
     const omittedStore = try storeOf("2026-11-01T00:00:00.000Z", [], [])
-    try applySnapshots(omittedStore, repositories, [{ snapshot: omittedSnapshot, digest: try sha256Hex(JSON.stringify(omittedSnapshot)) }], "2026-12-10T00:00:00.000Z")
+    const omittedDigest = try sha256Hex(JSON.stringify(omittedSnapshot))
+    try applySnapshots(omittedStore, repositories, [{ snapshot: omittedSnapshot, digest: omittedDigest }], "2026-12-10T00:00:00.000Z", omittedDigest)
     const materialized = [...omittedStore.latest.values()].find((entry) => entry.award.sourceId === "PRR_early_review")
     const reissuedSnapshot: LeaderboardSnapshot = {
       ...omittedSnapshot,
       generatedAt: "2026-12-10T00:01:00.000Z",
       ...(omittedCredit === undefined ? {} : { omittedReviewCredits: [{ ...omittedCredit, scoreThirds: omittedCredit.scoreThirds + 3 }] }),
     }
-    try applySnapshots(omittedStore, repositories, [{ snapshot: reissuedSnapshot, digest: try sha256Hex(JSON.stringify(reissuedSnapshot)) }], "2026-12-10T00:01:00.000Z")
+    const reissuedDigest = try sha256Hex(JSON.stringify(reissuedSnapshot))
+    try applySnapshots(omittedStore, repositories, [{ snapshot: reissuedSnapshot, digest: reissuedDigest }], "2026-12-10T00:01:00.000Z", reissuedDigest)
     const afterReissue = omittedStore.latest.get(materialized?.award.key ?? "")
 
     const soloMergeEvent: ScoreEvent = {

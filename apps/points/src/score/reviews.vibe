@@ -188,6 +188,7 @@ effect function allocateValueReviews(pull: Source, acceptedAt: number, candidate
     const reason = `Provisional ${source.valued.value.tier} review value; reviewer ${index + 1} of ${record.reviewers.length} credited, ${shareThirds} of ${poolThirds} review-credit thirds: ${source.valued.value.finding} ${source.valued.value.outcome}`
     if (source.at < context.windowFrom) {
       exclude(source.review, "review-credit-outside-window")
+      if (source.actor.kind !== "User" || source.valued.recordedAt === "") continue
       omitted.push({
         id: `${pull.id}:value-review:${source.review.id}`,
         reviewId: source.review.id,
@@ -197,9 +198,10 @@ effect function allocateValueReviews(pull: Source, acceptedAt: number, candidate
         reviewer: source.actor,
         scoreThirds: shareThirds,
         submittedAt: source.submittedAt,
+        acceptedAt: "mergedAt" in pull ? pull.mergedAt : pull.closedAt,
         url: source.review.url,
         scoreDecisionSourceId: `value:${source.valued.digest}`,
-        ...(source.valued.recordedAt === "" ? {} : { scoreDecisionAt: source.valued.recordedAt }),
+        scoreDecisionAt: source.valued.recordedAt,
         reason,
       })
       continue
