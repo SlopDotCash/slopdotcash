@@ -1328,9 +1328,10 @@ interface Asked {
 function replying(replies: Array<{ readonly status?: number; readonly body: unknown }>) {
   const asked: Asked[] = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    const text = input instanceof Request ? await input.clone().text() : typeof init?.body === "string" ? init.body : "";
-    asked.push({ method: (input instanceof Request ? input.method : init?.method) ?? "GET", path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    const text = await request.text();
+    asked.push({ method: request.method, path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
     const reply = replies.shift() ?? { status: 500, body: { error: "unexpected", message: "Unexpected" } };
     return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
   };
@@ -1361,9 +1362,10 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       const plan = { kind: "evmRelease" as const, planId: ready.planId, call: { kind: "evmCall" as const, from: "0x0000000000000000000000000000000000000b0b", chainId: quantity(BigInt(chainId)), to: vault, data: "0x01", value: "0x0" } };
       yield* monthly.submit("Release", (beforePrompt) => Effect.as(beforePrompt(plan), hash("e")));
       const pending = yield* checkSavedRelease();
+      const pendingPhase = (yield* monthly.machine.get()).release.phase;
       const kept = sessionStorage.length > 0;
       const finalized = yield* checkSavedRelease();
-      return { held, approved: approved.kind, pending: [pending.status, (yield* monthly.machine.get()).release.phase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
+      return { held, approved: approved.kind, pending: [pending.status, pendingPhase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
     }));
     expect({ ...result, checks: asked.slice(3).map((entry) => entry.body) }).toEqual({
       held: { kind: "held", message: "Total correct. Nothing to release." },
