@@ -491,12 +491,13 @@ describe("Owner vault registration", () => {
     expect(result).toEqual({ refused: lockedFundsText, saved: null, phase: "Reviewed", prompts: 0 });
   });
 
+  // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
   it.each([
     ["runtime", { code: "0x6081" }, "Escrow factory code does not match reviewed deployment"],
     ["implementation slot", { slot: `0x${"0".repeat(64)}` }, "Escrow implementation does not match reviewed deployment"],
     ["implementation runtime", { implementationCode: "0x6081" }, "Escrow implementation does not match reviewed deployment"],
     ["registrar", { registrar: factoryImplementation }, "Escrow asset, factory or registrar does not match reviewed deployment"],
-  ] as const)('a changed factory %s refuses before saving or asking the owner wallet (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', async (_name, factoryObservation, message) => {
+  ] as const)("a changed factory %s refuses before saving or asking the owner wallet", async (_name, factoryObservation, message) => {
     const chain = fakeChain({ atomic: false, send: "mine", factoryObservation });
     const result = await started().runPromise(Effect.gen(function* () {
       announce("f327a18b-2e62-4beb-9c1d-c4a94c6aab21", chain.provider);
