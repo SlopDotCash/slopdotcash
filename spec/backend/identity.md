@@ -233,7 +233,8 @@ poll cannot recreate the token after it was issued and purged. The stored
 row must be unconsumed and unexpired. A separate conditional update then
 marks the flow issued, and only the poll whose update wins returns the
 assertion. A local poll returns the identity to the local backend once and
-creates no assertion.
+creates no assertion. Every issued or locally delivered flow identifier is a
+positive flow ID no greater than `lastFlow`.
 
 ```quint
 type PollOutcome = PollUnavailable | PollWrongMode | PollBrowserMismatch | PollPending | PollCallbackFailed | PollConsumed | PollReady
@@ -273,8 +274,8 @@ pure def pollLocal(s: Identity, client: int, flowId: int, capability: int): Iden
   { ...s, windows: countRequest(s, client, PollScope), flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }),
     localDelivered: s.localDelivered.append(flowId) }
 pure def alwaysIssuedOnce(s: Identity): bool =
-  s.issued.every(id => s.issued.select(x => x == id).length() == 1 and not(s.localDelivered.includes(id)))
-    and s.localDelivered.every(id => s.localDelivered.select(x => x == id).length() == 1)
+  s.issued.every(id => id > 0 and id <= s.lastFlow and s.issued.select(x => x == id).length() == 1 and not(s.localDelivered.includes(id)))
+    and s.localDelivered.every(id => id > 0 and id <= s.lastFlow and s.localDelivered.select(x => x == id).length() == 1)
 pure def alwaysIssuedFlowsClosed(s: Identity): bool = s.flows.every(f =>
   (s.issued.includes(f.id) or s.localDelivered.includes(f.id)) iff f.status == AssertionIssued)
 pure def alwaysOneAssertionPerFlow(s: Identity): bool = s.assertions.every(a =>

@@ -1317,7 +1317,7 @@
     },
     {
       "path": "spec/backend/identity.md",
-      "sha256": "e7fb397080bd98c02be14e404993ae3274d4c60676d0376e59c5058d15472fb8",
+      "sha256": "2ec32df8f6d49f1c622c46cb0c92db2345ccbebaf5a88636f3cc4fd18d25cfd0",
       "module": "backend__identity",
       "stories": [
         {
@@ -1426,7 +1426,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / The assertion is consumed atomically by its own audience before it expires",
-          "line": 294,
+          "line": 295,
           "definitions": [
             "ConsumeOutcome",
             "consumeOutcome",
@@ -1441,7 +1441,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / Time advances and the hourly job removes only expired rows",
-          "line": 324,
+          "line": 325,
           "definitions": [
             "canAdvanceTime",
             "advanceTime",
@@ -1456,7 +1456,7 @@
         },
         {
           "heading": "Story: Start and complete a GitHub sign-in flow / Every sign-in outcome is reachable",
-          "line": 355,
+          "line": 356,
           "definitions": [
             "sometimesIssued",
             "sometimesConsumed",
@@ -26865,7 +26865,7 @@
     },
     {
       "path": "spec/settlement/evmScan.md",
-      "sha256": "a62d2d4291012d9ce0d809e7ab24ec9dd466b8ea6b74922b7a8af8c158441cc5",
+      "sha256": "da6e23cca34fa9cdd9e54e55a2e53ab39a8a9b799bfef94d76bfec5240f288ef",
       "module": "settlement__evmScan",
       "stories": [
         {
@@ -26973,7 +26973,7 @@
         },
         {
           "heading": "Story: Coverage advanced before the chain check needs an audit / Simulation samples",
-          "line": 158,
+          "line": 165,
           "definitions": [
             "chainIdValues",
             "pageBlocksValues",
