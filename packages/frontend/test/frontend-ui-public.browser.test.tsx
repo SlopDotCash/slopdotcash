@@ -902,7 +902,7 @@ describe("Every part reads the same published fee terms", () => {
   it("How it works answers whether maintainers are paid", async () => {
     await opened("/how-it-works#faq", "How Slop works");
     const faq = named("region", "Questions");
-    for (const question of ["Can maintainers be paid?", "Is there a fee to open a pull request?", "Is there a deposit to file a security report?"])
+    for (const question of ["Can maintainers be paid?", "Is there a fee to open a pull request?", "Is there a deposit to file a security report?", "What is a Point worth?", "Who decides how big my work is?", "How do I receive an award?"])
       await shown(named("heading", question, { level: 3, within: faq })).toMatchObject({ visible: true });
     const answers = [
       "when a project sets a maintainer share",
@@ -918,6 +918,12 @@ describe("Every part reads the same published fee terms", () => {
       "never closed for that reason",
       "The report is stored at once and screened once the deposit is recorded",
       "A report is never closed or deleted for an unpaid deposit.",
+      "divided by all Points on that project in that UTC month",
+      "The 2% fee comes off the share.",
+      "Slop does not convert it or give it a dollar value",
+      "Slopbot sizes each merged pull request",
+      "then press Authorize on the award in",
+      "it never lapses for a missing wallet",
     ];
     for (const answer of answers) await shown({ text: answer, within: faq }).toMatchObject({ visible: true });
   });
