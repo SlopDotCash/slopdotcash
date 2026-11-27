@@ -1,6 +1,6 @@
 # Slop specification migration
 
-The `vibestack` branch starts a new Git history from the Slop Vibestack template.
+The `develop` branch (originally created as `vibestack`) starts a new Git history from the Slop Vibestack template.
 The initial commit carries that template, the pinned Slop requirements, formal
 models and migration evidence. Git requires a commit before a branch can be
 pushed. The old application remains on its existing branches.
@@ -45,7 +45,7 @@ These local patches differ from that commit:
 | Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps signer custody, frozen-source exclusions, package exports and UI-driver rules. Upstream's comment and effect rules allow only the inventoried existing counts; new violations fail |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
 | Native setup | `.github/actions/setup/action.yml`, `.github/workflows/ci.yml` | Keep the reviewed validator image; install libcurl headers and the SHA-pinned Agave program builder without shadowing that validator |
-| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
+| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `develop`, `development` and `main`, and the nightly fuzz run targets the default branch (`develop`); the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
 `AGENTS.md` includes the Slop specification migration section, which names
 `lucide-react` as the single icon library and keeps pull-request narratives

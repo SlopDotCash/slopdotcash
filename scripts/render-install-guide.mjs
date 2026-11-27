@@ -7,7 +7,29 @@
 
 import { createInstallCommand } from "../src/lib/install-command.ts";
 
-const CLIENTS = new Set(["claude-code", "codex", "manual"]);
+const CLIENTS = new Set(["claude-code", "codex", "cursor", "hermes", "manual"]);
+const CLIENT_CONFIG = {
+  "claude-code": {
+    skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`,
+    clientName: "Claude Code",
+  },
+  codex: {
+    skillsRoot: `\${HOME}/.agents/skills`,
+    clientName: "Codex",
+  },
+  cursor: {
+    skillsRoot: `\${HOME}/.cursor/skills`,
+    clientName: "Cursor",
+  },
+  hermes: {
+    skillsRoot: `\${HERMES_HOME:-\${HOME}/.hermes}/skills`,
+    clientName: "Hermes Agent",
+  },
+  manual: {
+    skillsRoot: `\${HOME}/.agents/skills`,
+    clientName: "any agent",
+  },
+};
 const ORIGIN_PATTERN = /^https:\/\/slop\.cash\/projects\/[a-z0-9-]+$/u;
 const SKILL_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 
@@ -22,7 +44,7 @@ export function renderInstallGuide({
   skillRepositoryPath,
 }) {
   if (!CLIENTS.has(client)) {
-    fail("client must be codex, claude-code, or manual");
+    fail("client must be codex, claude-code, cursor, hermes, or manual");
   }
   if (!SKILL_PATTERN.test(skillName)) fail("skill name is invalid");
   // A generated project skill names its canonical template; the installer
@@ -38,15 +60,7 @@ export function renderInstallGuide({
   if (!ORIGIN_PATTERN.test(artifactOrigin)) {
     fail("artifact origin must be a canonical slop.cash project URL");
   }
-  const isClaude = client === "claude-code";
-  const skillsRoot = isClaude
-    ? `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`
-    : `\${HOME}/.agents/skills`;
-  const clientName = isClaude
-    ? "Claude Code"
-    : client === "codex"
-      ? "Codex"
-      : "any agent";
+  const { skillsRoot, clientName } = CLIENT_CONFIG[client];
   return `# Install ${skillName} for ${clientName}
 
 Install or update the complete skill archive. The authenticated installer
@@ -88,7 +102,7 @@ function parseArguments(args) {
       values.has(name)
     ) {
       fail(
-        "usage: render-install-guide.mjs --artifact-origin <url> --client <codex|claude-code|manual> --skill <name> --source <skills/name>",
+        "usage: render-install-guide.mjs --artifact-origin <url> --client <codex|claude-code|cursor|hermes|manual> --skill <name> --source <skills/name>",
       );
     }
     values.set(name, value);

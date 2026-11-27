@@ -5,8 +5,8 @@ import { outboundVia } from "@repo/platform/http"
 import { settableClock } from "@repo/platform/testing/clock"
 import { type OpenReference, collectOpen, identities } from "../src/census/collect.vibe"
 import { collectedTargets, fetchRegistry, registeredProjects, registryAnswer } from "../src/census/projects.vibe"
-import { assertReviewCensusStable, collectReviewCensus, recollectedOnce } from "../src/census/reviews.vibe"
-import { Graphql, graphqlClient } from "../src/ingestion/graphql.vibe"
+import { type RecollectionCause, assertReviewCensusStable, collectReviewCensus, recollectedOnce } from "../src/census/reviews.vibe"
+import { Graphql, SourceNodeUnavailable, graphqlClient } from "../src/ingestion/graphql.vibe"
 import { atomicWrite } from "../src/snapshot/files.vibe"
 import { type WindowBounds, publishRefresh, startWindow, observe, windowBounds, windowRun } from "../src/window/window.vibe"
 import { type GitHubFake } from "@repo/platform/testing/github"
@@ -191,6 +191,7 @@ it.live('A changed review census recollects every source once and a second chang
   provide githubLayer(world) {
     try (try Graphql).execute("query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }")
     const attempts: number[] = []
+    const causes: RecollectionCause[] = []
     const settled = try recollectedOnce((recollection) => effect {
       attempts.push(recollection.attempt)
       const before = try collectReviewCensus([pull])
@@ -198,7 +199,16 @@ it.live('A changed review census recollects every source once and a second chang
       const after = try collectReviewCensus([pull])
       try assertReviewCensusStable(before, after)
       return { attempt: recollection.attempt, reviews: after.get(pull.id)?.reviewCount, holds: recollection.allowJointHolds }
-    })
+    }, (cause) => sync(() => {
+      causes.push(cause)
+    }))
+    const unavailableCauses: RecollectionCause[] = []
+    const unavailableSettled = try recollectedOnce((recollection) => effect {
+      if (recollection.attempt === 1) throw new SourceNodeUnavailable({ message: "gone", sources: [{ nodeId: "PR_gone", reason: "NOT_FOUND" }] })
+      return { attempt: recollection.attempt, holds: recollection.allowJointHolds, unavailable: recollection.unavailableSources.map((source) => source.nodeId) }
+    }, (cause) => sync(() => {
+      unavailableCauses.push(cause)
+    }))
     const churned: number[] = []
     const stopped = recollectedOnce((recollection) => effect {
       churned.push(recollection.attempt)
@@ -206,9 +216,12 @@ it.live('A changed review census recollects every source once and a second chang
       try Effect.try(() => world.fake.world.addReview(repository, 4, { author: "linus", state: "CHANGES_REQUESTED", body: "Please split the change into two parts." }))
       try assertReviewCensusStable(before, try collectReviewCensus([pull]))
     }) catch (error) => error._tag
-    try same({ settled, attempts, stopped, churned }, {
+    try same({ settled, attempts, causes, unavailableSettled, unavailableCauses, stopped, churned }, {
       settled: { attempt: 2, reviews: 1, holds: true },
       attempts: [1, 2],
+      causes: ["ReviewCensusChanged"],
+      unavailableSettled: { attempt: 2, holds: true, unavailable: ["PR_gone"] },
+      unavailableCauses: ["SourceNodeUnavailable"],
       stopped: "ReviewCensusChanged",
       churned: [1, 2],
     })

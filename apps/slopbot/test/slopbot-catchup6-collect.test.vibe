@@ -1,4 +1,4 @@
-// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
+// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead beside the loop within a bounded window and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { webCrypto } from "@repo/platform/crypto"
@@ -201,14 +201,37 @@ effect function historiesAt(world: Seeded, concurrency: number, failing: Readonl
   }
 }
 
-describe('Recover complete history at a fixed sequence boundary (spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself")', () => {
-  it.live("one read at a time keeps the sequential order, and six at a time return the same decisions with never more than six in flight", () => effect {
+describe('Recover complete history at a fixed sequence boundary (spec/slopbot/historyReadAhead.md, "First history pages may be read ahead beside the loop within a bounded window and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself")', () => {
+  it.live("one read at a time keeps the sequential order, and bounded concurrency runs beside the loop within 2 * concurrency", () => effect {
     const world = try seeded()
     const sequential = try historiesAt(world, 1)
     const expected = Array.from({ length: 8 }, (_, index) => [`joint:${index + 1}`, `single:${index + 1}`]).flat()
     try same({ kind: sequential.result.kind, asked: sequential.asked, peak: sequential.peak }, { kind: "loaded", asked: expected, peak: 1 })
-    const ahead = try historiesAt(world, 6)
-    try same({ result: ahead.result, asked: [...ahead.asked].sort(), withinLimit: ahead.peak <= 6 }, { result: sequential.result, asked: [...expected].sort(), withinLimit: true })
+    const ahead = try historiesAt(world, 2)
+    try same({ result: ahead.result, asked: [...ahead.asked].sort(), withinLimit: ahead.peak <= 2 }, { result: sequential.result, asked: [...expected].sort(), withinLimit: true })
+  })
+
+  it.live("slow attribution timing and memo reuse counts are reported when the attribution phase ends", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      const reads = widgetsReads(world)
+      const outcome = try attributionOutcome(world)
+      const lines: string[] = []
+      const opened = try memoFrom("", `${directory}/timed.json`)
+      const cutoffAt = try cutoffWhere(outcome.id, false)
+      provide inputsOver(reads, feedOf(), { memo: { session: opened.session, cutoffAt, log: { thresholdMs: 0, write: (line) => { lines.push(line) } } } }) {
+        try loaded({ value: [], attribution: [outcome] })
+      }
+      try same(
+        {
+          namedSlow: lines.some((line) => line.includes(`[slop.cash] slow attribution: ${repository}#1 took `) && line.includes("computed live")),
+          reportedStats: lines.some((line) => line.includes("[slop.cash] collection memo:") && line.includes("1 computed live")),
+        },
+        { namedSlow: true, reportedStats: true },
+      )
+    }
   })
 
   it.live("a failed read-ahead page is read again by the loop, and a lasting failure surfaces from the loop as it does in order", () => effect {

@@ -2,13 +2,16 @@ import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
 
 const marks = {
+  "Claude Code": new URL("../assets/agent-logos/claude-code.svg", import.meta.url).href,
+  Codex: new URL("../assets/agent-logos/codex.svg", import.meta.url).href,
   Cursor: new URL("../assets/agent-logos/cursor.svg", import.meta.url).href,
-  Claude: new URL("../assets/agent-logos/claude.svg", import.meta.url).href,
-  ChatGPT: new URL("../assets/agent-logos/chatgpt.svg", import.meta.url).href,
-  Grok: new URL("../assets/agent-logos/grok.svg", import.meta.url).href,
-  "Meta AI (Muse Spark)": new URL("../assets/agent-logos/meta-ai.svg", import.meta.url).href,
+  Antigravity: new URL("../assets/agent-logos/antigravity.svg", import.meta.url).href,
   OpenClaw: new URL("../assets/agent-logos/openclaw.svg", import.meta.url).href,
   "Hermes Agent": new URL("../assets/agent-logos/hermes-agent.svg", import.meta.url).href,
+  "GitHub Copilot": new URL("../assets/agent-logos/github-copilot.svg", import.meta.url).href,
+  "Grok Bot": new URL("../assets/agent-logos/grok-bot.svg", import.meta.url).href,
+  "Meta Muse": new URL("../assets/agent-logos/meta-muse.svg", import.meta.url).href,
+  OpenCode: new URL("../assets/agent-logos/opencode.svg", import.meta.url).href,
 };
 
 export type AgentMarkProps = Omit<ComponentProps<"span">, "children"> & {

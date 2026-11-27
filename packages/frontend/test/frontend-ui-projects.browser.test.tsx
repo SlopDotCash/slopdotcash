@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
 import type { Target } from "./support/ui/protocol.ts";
@@ -237,18 +238,31 @@ describe('Live project maintenance', () => {
 
     await site.fill(field("Website (optional)"), "elizaos.example");
     await site.fill(field("X account (optional)"), "https://twitter.com/elizaOS_ai");
+    const changes = named("region", "Changes");
+    await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ count: 2 });
+    await shown({ text: "Rescan", within: changes }).toMatchObject({ count: 0 });
     await site.click(publish);
     await shown(text("Rev 2", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
     expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ visible: true, href: "https://x.com/elizaOS_ai" });
 
     await manage(id);
     await openGroup("Project listing");
     await site.fill(field("X account (optional)"), "");
     await site.click(publish);
     await shown(text("Rev 3", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
     expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ count: 0 });
   });
 
   it('ready label defaults 1/400/20, refuses 11, publishes 2, keeps numbers when disabled', async () => {

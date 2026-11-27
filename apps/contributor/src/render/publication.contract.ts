@@ -88,12 +88,14 @@ const GuideRecord = Schema.Struct({
 
 const SkillManifest = Schema.Struct({
   archive: Schema.Struct({ sha256: Schema.String }),
-  guides: Schema.Struct({ codex: GuideRecord, claude: GuideRecord, manual: GuideRecord }),
+  guides: Schema.Struct({ codex: GuideRecord, claude: GuideRecord, cursor: GuideRecord, hermes: GuideRecord, manual: GuideRecord }),
 });
 
 const guideFiles = [
   ["codex", "codex.md"],
   ["claude", "claude.md"],
+  ["cursor", "cursor.md"],
+  ["hermes", "hermes.md"],
   ["manual", "manual.md"],
 ] as const;
 
@@ -112,6 +114,8 @@ const publishedPaths = (projectId: string) =>
       `${prefix}codex.md`,
       `${prefix}claude.md`,
       `${prefix}claude-code.md`,
+      `${prefix}cursor.md`,
+      `${prefix}hermes.md`,
       `${prefix}manual.md`,
       `${prefix}skill-manifest.json`,
       `downloads/${name}.skill`,

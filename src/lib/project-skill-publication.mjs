@@ -220,7 +220,7 @@ async function publishRole({
     .map((path) => decoder.decode(rendered[path]));
   const skillText = decoder.decode(skillBytes);
   const guides = {};
-  for (const client of ["codex", "claude-code", "manual"])
+  for (const client of ["codex", "claude-code", "cursor", "hermes", "manual"])
     guides[client] = renderInstallGuide({
       artifactOrigin,
       client,
@@ -259,6 +259,8 @@ async function publishRole({
         template,
         guideInput("claude-code", "claude.md"),
       ),
+      cursor: await guideRecord(template, guideInput("cursor", "cursor.md")),
+      hermes: await guideRecord(template, guideInput("hermes", "hermes.md")),
       manual: await guideRecord(template, guideInput("manual", "manual.md")),
     },
     authority: {
@@ -304,6 +306,8 @@ async function publishRole({
       [`${prefix}codex.md`]: markdown(guides.codex),
       [`${prefix}claude.md`]: markdown(guides["claude-code"]),
       [`${prefix}claude-code.md`]: markdown(guides["claude-code"]),
+      [`${prefix}cursor.md`]: markdown(guides.cursor),
+      [`${prefix}hermes.md`]: markdown(guides.hermes),
       [`${prefix}manual.md`]: markdown(guides.manual),
       [`${prefix}skill-manifest.json`]: json(manifest),
       [`downloads/${name}.skill`]: archive,

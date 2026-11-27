@@ -658,6 +658,12 @@ jobs:
           fi
           node apps/points/dist/programs/main.js snapshot pack "$BUNDLE/site/data/leaderboard.json"
 
+      - name: Build the public record
+        env:
+          SLOP_RECORD_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+          SLOP_RECORD_GITHUB_TOKEN: ${{ github.event_name != 'pull_request' && github.token || '' }}
+        run: node apps/operations/dist/programs/main.js release record "$BUNDLE/site" "$BUNDLE/site/data/leaderboard.json"
+
       - name: Assemble the release bundle
         run: |
           set -euo pipefail

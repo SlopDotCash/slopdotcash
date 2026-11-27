@@ -89,7 +89,8 @@ linked from GitHub writes its owner notice only when it does not wait
 (`recordPrivateReports` and `createCase` in `backend/security/handler.ts`).
 Once the deposit no longer holds, the deposit sweep writes for such a receipt
 exactly the notice its receipt would have written, keyed by the receipt event
-(`submit`, `submit-direct`, `receive` or `verify-link`), so a repeated sweep
+(`submit`, `submit-direct`, `receive` or `verify-link`, or `claim` for a
+reporter's claim that GitHub has not confirmed yet), so a repeated sweep
 writes it once (`ownerNotice` in `backend/security/report-deposit.ts`).
 
 ```quint

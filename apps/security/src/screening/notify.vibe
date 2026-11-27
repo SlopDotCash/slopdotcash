@@ -8,7 +8,12 @@ import { type RoutingContext, routed, screeningAt } from "./store.vibe"
 
 schema Candidate { github_id: string }
 
-const unchecked: RoutingContext = { checked: false, recipients: [], actingTechnicalApprover: false }
+interface OwnerRouting extends RoutingContext {
+  readonly authorityUnavailable: boolean
+}
+
+const unchecked: OwnerRouting = { checked: false, recipients: [], actingTechnicalApprover: false, authorityUnavailable: false }
+const unavailable = "unavailable"
 
 effect function registryApprovers(projectId: string) {
   const project = try (try Registry).project(projectId)
@@ -20,7 +25,7 @@ effect function registryApprovers(projectId: string) {
   const technical: string[] = []
   for (const candidate of candidates) {
     const read = try authority.repository({ actorGithubId: candidate, repositoryId: first.id })
-    if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return undefined
+    if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return unavailable
     if (read.installation === "Installed" && (candidate === project.stewardGithubId || read.permission === "PermissionVerified")) technical.push(candidate)
   }
   return technical
@@ -37,9 +42,10 @@ effect function technicalApprovers(projectId: string) {
 export effect function routingContext(read: { readonly caseId: string; readonly projectId: string; readonly reporterGithubId: string; readonly actorGithubId?: string }) {
   const technical = try technicalApprovers(read.projectId)
   if (technical === undefined) return unchecked
+  if (technical === unavailable) return { ...unchecked, authorityUnavailable: true } satisfies OwnerRouting
   const triagers = (try activeTriagers(read.caseId)).map(String)
   const recipients = [...new Set([...technical, ...triagers])].filter((id) => id !== read.actorGithubId && id !== read.reporterGithubId)
-  return { checked: true, recipients, actingTechnicalApprover: read.actorGithubId !== undefined && technical.includes(read.actorGithubId) } satisfies RoutingContext
+  return { checked: true, recipients, actingTechnicalApprover: read.actorGithubId !== undefined && technical.includes(read.actorGithubId), authorityUnavailable: false } satisfies OwnerRouting
 }
 
 export effect function routeQualified(submissionId: string, projectId: string, actorGithubId?: string) {

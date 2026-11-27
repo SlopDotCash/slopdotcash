@@ -24,24 +24,27 @@ export function AgentPrompt({ prompt, origin, onCopy, openIn = false, skillPath 
     <div className="w-full min-w-0 max-w-220">
       <CommandBlock layout="inline" command={prompt} label="Agent prompt" copyLabel="Copy agent prompt" copyLabels={copyLabels} restAfter={1600} onCopy={onCopy} />
       {openIn ? (
-        <div className="mt-4.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-copy leading-page text-muted-foreground">
-          <span>Open in</span>
-          <ul className="flex flex-wrap gap-1.5">
-            {agentLinks(prompt, origin, skillPath).map((link) => (
-              <li key={link.agent}>
-                <a
-                  href={link.href}
-                  title={link.agent}
-                  target={link.newTab ? "_blank" : undefined}
-                  rel={link.newTab ? "noreferrer" : undefined}
-                  onClick={copyOnOpen}
-                  className={cn(focusRing, target, "grid size-10 place-items-center rounded-lg border border-foreground/22 text-foreground hover:border-primary hover:text-primary focus-visible:border-primary focus-visible:text-primary motion-safe:transition-colors motion-safe:duration-fast")}
-                >
-                  <AgentMark agent={link.agent} />
-                </a>
-              </li>
-            ))}
-          </ul>
+        <div className="mt-4.5">
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 text-copy leading-page text-muted-foreground">
+            <span>Open in</span>
+            <ul className="flex flex-wrap gap-1.5">
+              {agentLinks(prompt, origin, skillPath).map((link) => (
+                <li key={link.agent}>
+                  <a
+                    href={link.href}
+                    title={link.agent}
+                    target={link.newTab ? "_blank" : undefined}
+                    rel={link.newTab ? "noreferrer" : undefined}
+                    onClick={copyOnOpen}
+                    className={cn(focusRing, target, "grid size-10 place-items-center rounded-lg border border-foreground/22 text-foreground hover:border-primary hover:text-primary focus-visible:border-primary focus-visible:text-primary motion-safe:transition-colors motion-safe:duration-fast")}
+                  >
+                    <AgentMark agent={link.agent} />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="mt-2.5 text-sm leading-page text-muted-foreground">Needs a desktop coding agent with a terminal and the GitHub CLI.</p>
         </div>
       ) : null}
     </div>

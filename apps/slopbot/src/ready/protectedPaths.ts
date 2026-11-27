@@ -100,7 +100,7 @@ export function defaultPathReason(path: string): string | null {
   const segments = path.split("/");
   const name = (segments.at(-1) ?? "").toLowerCase();
   const directories = segments.slice(0, -1);
-  const root = rootDirectories.get(directories[0] ?? "");
+  const root = rootDirectories.get((directories[0] ?? "").toLowerCase());
   if (root !== undefined) return root;
   const directory = directories.map((segment) => anyDirectories.get(segment.toLowerCase())).find((reason) => reason !== undefined);
   if (directory !== undefined) return directory;

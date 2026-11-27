@@ -1,6 +1,6 @@
 // spec/backend/accounts.md, "Every account outcome is reachable from the launch state"
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime, Redacted } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";

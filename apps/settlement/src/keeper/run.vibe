@@ -1,7 +1,7 @@
 // spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"
 import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
 import { jsonRpc } from "@repo/platform/chain/rpc"
-import { D1 } from "@repo/platform/d1"
+import { type D1 } from "@repo/platform/d1"
 import type { Journal } from "@repo/platform/journal"
 import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
 import type { KeeperMode } from "../../gen/settlement__keeperLifecycle.effect.vibe"

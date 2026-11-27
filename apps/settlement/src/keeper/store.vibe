@@ -1,6 +1,6 @@
 // spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"
 import { D1, type Statement, classified, decoded, sql } from "@repo/platform/d1"
-import { Journal, JournalFailure, type SqlTx } from "@repo/platform/journal"
+import { Journal, type JournalFailure, type SqlTx } from "@repo/platform/journal"
 
 export error RecordInvalid { key: string }
 

@@ -56,6 +56,7 @@ export interface GraphqlOptions {
   readonly requestTimeoutMs?: number
   readonly retryBaseDelayMs?: number
   readonly sleep?: (millis: number) => void!!
+  readonly onBudgetWait?: (message: string) => void!!
 }
 
 export error GraphqlFailed { message: string }
@@ -203,8 +204,8 @@ export effect function estimateReviewFirstPageDetailCost(pullRequestCount: numbe
 
 export effect function ensureEstimatedBudget(estimate: number, reservedCost = 0) {
   const client = try Graphql
-  const rateLimit = try client.rateLimit()
-  const available = Math.min(maxGenerationCost - rateLimit.consumedDuringRun, rateLimit.remaining - rateLimitReserve)
+  try client.rateLimit()
+  const available = try client.availableBudget()
   if (estimate + reservedCost > available) try client.ensureBudget(estimate + reservedCost)
 }
 
@@ -254,6 +255,7 @@ export function graphqlClient(options: GraphqlOptions) {
     const token = Redacted.make(Redacted.value(options.token).trim())
     const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
     const sleeping = options.sleep ?? ((millis: number) => sleep(Duration.millis(millis)))
+    const onBudgetWait = options.onBudgetWait ?? ((message: string) => Console.error(`[slop.cash] ${message}`))
     const client = try HttpClient.HttpClient
     let requests = 0
     let rateLimit: RateLimitSnapshot | undefined = undefined
@@ -294,8 +296,10 @@ export function graphqlClient(options: GraphqlOptions) {
       }
       if (!Number.isFinite(resetAt)) throw new GraphqlFailed({ message: "GitHub GraphQL returned an invalid rate-limit resetAt" })
       const now = try Clock.currentTimeMillis
+      const waitMs = Math.max(0, resetAt - now + 1_000)
       waitedResetAt = resetAt
-      try sleeping(Math.max(0, resetAt - now + 1_000))
+      try onBudgetWait(`waiting ${waitMs} ms for the GitHub GraphQL budget reset at ${current.resetAt}; required ${requiredCost} points (${summary})`)
+      try sleeping(waitMs)
       windowConsumedCost = 0
       startingRemaining = undefined
       rateLimit = { ...current, cost: 0, consumedDuringRun: consumedCost, remaining: current.limit }

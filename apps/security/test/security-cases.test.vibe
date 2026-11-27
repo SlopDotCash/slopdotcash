@@ -64,6 +64,8 @@ const Started = Layer.effect(Cases, effect {
   const github = try orDie(Effect.try(() => githubFake({ now: () => Date.now() })))
   try orDie(Effect.try(() => {
     github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addUser({ id: Number(triager), login: "triager" })
+    github.world.addUser({ id: 704, login: "stranger" })
     for (const id of [recordedReporter, importedReporter, secondImported, claimant, mismatched]) github.world.addUser({ id: Number(id), login: loginOf(id) })
     github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
     github.world.addInstallation({ id: 4401, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
@@ -291,6 +293,12 @@ effect function revokedAndBanned(cases: Cases.Shape) {
   const noCommitment = try promise(() => rows(world, "SELECT award_state FROM security_cases WHERE id=?", banned))
 
   const revoked = try submit(world, reporter, paid, "Oracle update skips the heartbeat check")
+  const identityMismatch = try act(maintainer, revoked, "assign-triager", { githubId: "704", githubLogin: "trusted-name" })
+  const identityMissing = try act(maintainer, revoked, "assign-triager", { githubId: "799", githubLogin: "ghost" })
+  try orDie(Effect.try(() => cases.github.failNext("GET /user/704", { status: 500 })))
+  const identityDown = try act(maintainer, revoked, "assign-triager", { githubId: "704", githubLogin: "stranger" })
+  const canonicalTriager = stateOf(try act(maintainer, revoked, "assign-triager", { githubId: "704", githubLogin: "Stranger" }))
+  const storedCanonical = try promise(() => rows(world, "SELECT github_id, github_login FROM security_case_members WHERE case_id=? AND github_id='704'", revoked))
   const assigned = stateOf(try act(maintainer, revoked, "assign-triager", { githubId: triager, githubLogin: "triager" }))
   const triagerRead = (try read(triager, revoked)).value?.case as Readonly<Record<string, unknown>> | undefined
   const observed = try observedCase(revoked, triager, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
@@ -300,11 +308,21 @@ effect function revokedAndBanned(cases: Cases.Shape) {
   try act(maintainer, revoked, "revoke-triager", { githubId: triager })
   const late: Outcome<number> = prepared === undefined ? { refused: ["unplanned"] } : try outcome(committed({ observed, actor: actor(triager), change: prepared.change, idempotencyKey: `cases-action-key-${keys}`.padEnd(20, "0"), at }))
   const afterRevocation = try read(triager, revoked)
-  const members = try promise(() => rows(world, "SELECT github_id, revoked_at IS NOT NULL AS revoked FROM security_case_members WHERE case_id=?", revoked))
-  try same({ bannedReporter: bannedReporter.refused, bannedDecider: bannedDecider.refused, noCommitment, assigned: assigned.receipt, triagerRoles: triagerRead?.viewerRoles, late: late.refused ?? "committed", afterRevocation: afterRevocation.refused, members }, {
+  const members = try promise(() => rows(world, "SELECT github_id, revoked_at IS NOT NULL AS revoked FROM security_case_members WHERE case_id=? AND github_id=?", revoked, triager))
+  try same({
+    bannedReporter: bannedReporter.refused, bannedDecider: bannedDecider.refused, noCommitment,
+    identityMismatch: identityMismatch.refused, identityMissing: identityMissing.refused, identityDown: identityDown.refused,
+    canonicalTriager: canonicalTriager.receipt, storedCanonical,
+    assigned: assigned.receipt, triagerRoles: triagerRead?.viewerRoles, late: late.refused ?? "committed", afterRevocation: afterRevocation.refused, members,
+  }, {
     bannedReporter: [403, "participation_banned", "A banned account cannot approve or receive a new Slop award. Funded awards and appeals remain available."],
     bannedDecider: [403, "participation_banned", "A banned account cannot approve or receive a new Slop award. Funded awards and appeals remain available."],
     noCommitment: [{ award_state: "pending" }],
+    identityMismatch: [409, "identity_mismatch", "GitHub id 704 is @stranger, not @trusted-name"],
+    identityMissing: [404, "account_not_found", "GitHub has no account with this id"],
+    identityDown: [502, "github_unavailable", "GitHub is unavailable"],
+    canonicalTriager: "received",
+    storedCanonical: [{ github_id: "704", github_login: "stranger" }],
     assigned: "received",
     triagerRoles: ["triager"],
     late: [409, "stale_revision", "The case changed since you loaded it"],

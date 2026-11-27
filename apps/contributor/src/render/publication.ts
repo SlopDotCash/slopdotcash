@@ -79,9 +79,13 @@ function guidesFor(request: Omit<GuideRequest, "client">): Guides {
   if (codex.kind === "refused") return codex;
   const claude = renderInstallGuide({ ...request, client: "claude-code" });
   if (claude.kind === "refused") return claude;
+  const cursor = renderInstallGuide({ ...request, client: "cursor" });
+  if (cursor.kind === "refused") return cursor;
+  const hermes = renderInstallGuide({ ...request, client: "hermes" });
+  if (hermes.kind === "refused") return hermes;
   const manual = renderInstallGuide({ ...request, client: "manual" });
   if (manual.kind === "refused") return manual;
-  return { kind: "guides", texts: { codex: codex.text, "claude-code": claude.text, manual: manual.text } };
+  return { kind: "guides", texts: { codex: codex.text, "claude-code": claude.text, cursor: cursor.text, hermes: hermes.text, manual: manual.text } };
 }
 
 function publishRole(input: PublicationInput, role: Role, binding: Binding): RolePublication {
@@ -133,6 +137,8 @@ function publishRole(input: PublicationInput, role: Role, binding: Binding): Rol
   const guideBytes: Readonly<Record<InstallClient, Uint8Array>> = {
     codex: encoder.encode(guides.texts.codex),
     "claude-code": encoder.encode(guides.texts["claude-code"]),
+    cursor: encoder.encode(guides.texts.cursor),
+    hermes: encoder.encode(guides.texts.hermes),
     manual: encoder.encode(guides.texts.manual),
   };
   const guideRecord = (client: InstallClient, file: string) => ({
@@ -168,6 +174,8 @@ function publishRole(input: PublicationInput, role: Role, binding: Binding): Rol
     guides: {
       codex: guideRecord("codex", "codex.md"),
       claude: guideRecord("claude-code", "claude.md"),
+      cursor: guideRecord("cursor", "cursor.md"),
+      hermes: guideRecord("hermes", "hermes.md"),
       manual: guideRecord("manual", "manual.md"),
     },
     authority: {
@@ -190,6 +198,8 @@ function publishRole(input: PublicationInput, role: Role, binding: Binding): Rol
       { path: `${prefix}codex.md`, bytes: guideBytes.codex },
       { path: `${prefix}claude.md`, bytes: guideBytes["claude-code"] },
       { path: `${prefix}claude-code.md`, bytes: guideBytes["claude-code"] },
+      { path: `${prefix}cursor.md`, bytes: guideBytes.cursor },
+      { path: `${prefix}hermes.md`, bytes: guideBytes.hermes },
       { path: `${prefix}manual.md`, bytes: guideBytes.manual },
       { path: `${prefix}skill-manifest.json`, bytes: json(manifest) },
       { path: `downloads/${name}.skill`, bytes: archive },

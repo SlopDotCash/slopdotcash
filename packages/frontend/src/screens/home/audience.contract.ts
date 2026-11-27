@@ -23,10 +23,32 @@ export const choosingAJourneyChangesOnlyTheAudienceParameter = vectors<[string, 
   [["https://slop.cash/?audience=invalid", "Contributor"], "https://slop.cash/"],
 ], ([href, journey]) => journeyAddress(at(href), journey).href);
 
-export const thePromptAndEveryShortcutNameTheJourneysSkill = vectors<"Contributor" | "Maintainer", [string, string | undefined]>([
-  ["Contributor", ["Read https://slop.cash/contribute/SKILL.md and follow it.", `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}`]],
-  ["Maintainer", ["Read https://slop.cash/maintain/SKILL.md and follow it.", `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/maintain/SKILL.md")}`]],
+export const thePromptAndEveryShortcutNameTheJourneysSkill = vectors<"Contributor" | "Maintainer", readonly [string, string | undefined, string | undefined, string | undefined]>([
+  [
+    "Contributor",
+    [
+      "Read https://slop.cash/contribute/SKILL.md and follow it.",
+      `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}`,
+      `claude://code/new?q=${encodeURIComponent("Read https://slop.cash/contribute/SKILL.md and follow it.")}`,
+      `codex://new?prompt=${encodeURIComponent("Read https://slop.cash/contribute/SKILL.md and follow it.")}`,
+    ],
+  ],
+  [
+    "Maintainer",
+    [
+      "Read https://slop.cash/maintain/SKILL.md and follow it.",
+      `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/maintain/SKILL.md")}`,
+      `claude://code/new?q=${encodeURIComponent("Read https://slop.cash/maintain/SKILL.md and follow it.")}`,
+      `codex://new?prompt=${encodeURIComponent("Read https://slop.cash/maintain/SKILL.md and follow it.")}`,
+    ],
+  ],
 ], (journey) => {
   const prompt = bootstrapPrompt("https://slop.cash/", skillPath(journey));
-  return [prompt, agentLinks(prompt, "https://slop.cash/", skillPath(journey)).find((link) => link.agent === "Hermes Agent")?.href];
+  const links = agentLinks(prompt, "https://slop.cash/", skillPath(journey));
+  return [
+    prompt,
+    links.find((link) => link.agent === "Hermes Agent")?.href,
+    links.find((link) => link.agent === "Claude Code")?.href,
+    links.find((link) => link.agent === "Codex")?.href,
+  ];
 });

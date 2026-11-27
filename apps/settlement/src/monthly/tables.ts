@@ -4,6 +4,7 @@ export const writes = [
   "monthly_reward_bases",
   "monthly_reward_base_rows",
   "monthly_maintainer_shares",
+  "monthly_maintainer_share_parts",
   "monthly_maintainer_share_rows",
   "monthly_allocation_changes",
   "monthly_allocation_cut_reasons",

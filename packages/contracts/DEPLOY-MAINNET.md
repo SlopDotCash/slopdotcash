@@ -155,6 +155,84 @@ and kept fees. On that day no project had the setting on, the record-only
 period had recorded no deposit and no fee row, and the first SLOP rate had
 been published (effective 20 November 2026 23:00 UTC).
 
+### Submission fee deposit program on Solana (26 November 2026)
+
+`slop-submission-deposits`
+(`contracts/solana/programs/slop-submission-deposits`, separate from the
+escrow) was deployed on Solana mainnet on 26 November 2026 by the steps in
+[`docs/submission-deposits-solana-deploy-runbook.md`](../docs/submission-deposits-solana-deploy-runbook.md)
+(operator decision, 26 November 2026). Its upgrade authority was removed in the
+same sitting, so the program is not upgradeable and cannot be closed.
+
+| Fact                     | Value                                                              |
+| ------------------------ | ------------------------------------------------------------------ |
+| Program id               | `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`                     |
+| ProgramData address      | `DfcXUzeAxvfar3xvsg1E5KM5mDE9ZG4MNa4pHWrucDff`                     |
+| Deployed in slot         | 474210854                                                          |
+| Data length              | 435,048 bytes                                                      |
+| SHA-256 of the program   | `389b857fb05f9be1d24bdc41ad52d48801c5272bdf5ee8a7e69758674eba2444` |
+| Source commit            | `88d35f1bc50c747411a41c4b0f89b2c6274c20cb`                         |
+| Upgrade authority        | none (removed with `--final`)                                      |
+
+The SHA-256 equals that of the `solana-verifiable` artifact of
+`escrow-tests.yml` run 45839767536 at that commit (pinned image, build attempt
+1). That run's `solana` job ran the submission deposit suite on those bytes on
+a rerun attempt. The run as a whole is red only on the later, unrelated step
+"Load deployed public ledger for browser checks". The independent
+`solana-verify` public verification (runbook step 11, optional) was not done.
+
+The deployer and temporary upgrade authority was the throwaway key
+`26ZBDreb88gQA1XXQszPTeb5CpGQQ3AyeQCMWWKM7Hp1`. It holds no role.
+
+| Step         | Transaction signature                                                                      | Slot      |
+| ------------ | ------------------------------------------------------------------------------------------ | --------- |
+| Deploy       | `2HUxox8KZngEZ9L5VU38ziNaLT5dtHYsWVrubeacGG1eNKPM2JxMy81DgZkdEqTR9i342f4Ev7GWx6q66k7s6Fmh` | 474210854 |
+| `initialize` | `2cfx6Vm5NWWkFCR15yjtyD9Qt28Zocx66oWyUNN1QAu22NijAa4JqPS5Yv2QFf3dscjHmcCujQqr8YEAPsZqRky7` | 474211652 |
+| `open_vault` | `3ta3zWbyXyu9Pzx4M9vNvAVztkuvRb4KmUxEPorWPc51MTCSe2p2sFRMpetjiTwiz4gcQnBJ3vVdfQQ5HKBu6pCm` | not recorded here |
+
+The slot of `initialize`, 474211652, is the start slot.
+
+| Account          | Address                                        |
+| ---------------- | ---------------------------------------------- |
+| Config           | `E7MdQ3sFJXDmNqrbTgGjDWWeTfLHXg4wUD8npN8m22nD` |
+| Owner            | `9G6ipHDLRPXpNWnBog6poarvZLjucXfwTBNtd1BGerAG` |
+| Resolver         | `CuAMc2TYgLdzXRHEWSikzvdQQhWLyUBRbnGizQE2Xsxv` |
+| USDC mint        | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| USDC ledger      | `9WLPLtUBiah7Jv9v9P7EjafG9STVYywEgPK7v8GWdWqt` |
+| USDC vault       | `CJjoopm359oTrmRXz57oJhkN1uya5FWJ2VYKJacWpEXj` |
+| Fee wallet       | `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY` |
+| Fee wallet USDC  | `7FtdCr5vMJvKfs7DmdkDpWb6sdJvaouwrFyh3zo8LfET` |
+
+The reclaim delay is 2,592,000 seconds (30 days). The fee wallet's USDC token
+account, where a kept fee goes, existed before the deployment. The resolver can
+only mark an open deposit refunded to its payer or kept at the destination
+fixed at deposit time.
+
+Smoke test on mainnet with the real resolver, before the upgrade authority was
+removed (runbook step 9): two deposits of 1 base unit of USDC at nonce 1, which
+used the same deposit address `8xEzpt7VmDRwvQo4da1UB3ENvZEM4ipf463s4EeZnAcW`
+one after the other and received ids 1 and 2. Each was refunded. Afterwards the
+deposit count was 2, the vault's open total 0 and its balance 0. A kept (not
+refunded) deposit has not been exercised on mainnet.
+
+| Id  | Deposit                                                                                    | Resolve (refund)                                                                           |
+| --- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| 1   | `5BtBcpaN9VabW4og6YFYxSQjvSLqviyYK85gjHA4AT4MTmTtEFvibCdkHt6pYDq7TdGkqK85JCiS2yWBAhFt5FzQ` | `pQN1G8wq4HNQTbvkdPrfzbm59rbLWe7ufRZWsDdNkMME5BizHqwE9qkE7DZLhCrMZe6boaouucrjWBLHNyKPLRc`  |
+| 2   | `2mVfiDHfLbMjhSfMSpsBpEV4TgPzcsAYSM1CH9FoDef6mBMKLcpZ8L5DzGv2yXwq39E3WpU7Q7xx2r7qGPLqMbQD` | `3YjcmuryaSHA7k1wFfo1C5ixQQkufpDUFVc8LX4M8MzuND4LxKhoSqa8LDKeywApS1dByzUJPciMRxc1HjF5fsen` |
+
+After the smoke test the upgrade authority was removed and
+`solana program show` reads "Authority: none".
+
+A deployment collects no fee, and this one switches nothing on. The program id
+and start slot are in `src/lib/submission-fee.mjs`, but the fee is still off on
+Solana: `SUBMISSION_FEE_SOLANA_MODE` in `workers/submission-fee/wrangler.toml`
+is `off` and `SUBMISSION_FEE_SOLANA_SWITCHED_ON` is false, so no page, comment
+or API lists Solana and the Worker reads and sends nothing there. The Worker's
+endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` and resolver secret
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` are not set yet. Switching Solana to
+`dry_run` and then `live` are separate reviewed changes
+(`workers/submission-fee/README.md`, "Solana").
+
 ### Standing deposit contract (24 November 2026)
 
 A second `SubmissionDeposits` (`contracts/evm/src/SubmissionDeposits.sol`,
@@ -530,8 +608,9 @@ services do not receive the payer or upgrade key. The plan builders in
 `contracts/solana/scripts/` read chain state and produce unsigned transactions.
 
 Since 20 November 2026 the same Cargo workspace also holds
-`slop-submission-deposits`, a separate program that is not deployed and has its
-own runbook (`docs/submission-deposits-solana-deploy-runbook.md`). This section
+`slop-submission-deposits`, a separate program with its own runbook
+(`docs/submission-deposits-solana-deploy-runbook.md`), deployed on 26 November
+2026 ("Submission fee deposit program on Solana" above). This section
 concerns `slop-escrow` only. `anchor build --verifiable` without a program name
 builds every program of the workspace; the reviewed file is still
 `target/verifiable/slop_escrow.so`. The step 2 command has not been rerun since
