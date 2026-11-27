@@ -223,15 +223,19 @@ refunded) deposit has not been exercised on mainnet.
 After the smoke test the upgrade authority was removed and
 `solana program show` reads "Authority: none".
 
-A deployment collects no fee, and this one switches nothing on. The program id
-and start slot are in `src/lib/submission-fee.mjs`, but the fee is still off on
-Solana: `SUBMISSION_FEE_SOLANA_MODE` in `workers/submission-fee/wrangler.toml`
-is `off` and `SUBMISSION_FEE_SOLANA_SWITCHED_ON` is false, so no page, comment
-or API lists Solana and the Worker reads and sends nothing there. The Worker's
-endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` and resolver secret
-`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` are not set yet. Switching Solana to
-`dry_run` and then `live` are separate reviewed changes
-(`workers/submission-fee/README.md`, "Solana").
+A deployment collects no fee, and this one switched nothing on. The fee was
+switched on for Solana on 26 November 2026 (operator decision), in its own
+reviewed change: `SUBMISSION_FEE_SOLANA_MODE` in
+`workers/submission-fee/wrangler.toml` is `live` and
+`SUBMISSION_FEE_SOLANA_SWITCHED_ON` in `src/lib/submission-fee.mjs` is true, so
+the pay page, Slopbot's comment and the public reads list USDC on Solana, and
+the Worker reads the program and sends the resolver's transactions. SLOP stays
+payable on Robinhood Chain only. The Worker's endpoint secret
+`RPC_URL_SUBMISSION_FEE_SOLANA` and resolver secret
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` are set, and a record-only pass against
+mainnet from Cloudflare read the program without error on 26 November 2026. A
+kept (not refunded) deposit and a real pull request payment have not yet been
+exercised on mainnet (`workers/submission-fee/README.md`, "Solana").
 
 ### Standing deposit contract (24 November 2026)
 

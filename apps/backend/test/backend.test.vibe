@@ -1007,6 +1007,29 @@ layer(feeStarted("backend-catchup5-fee"), { excludeTestServices: true, timeout: 
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-19T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "250000000000000000000", keptTo: burn })
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-21T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "300000000000000000000", keptTo: burn })
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-17T11:59:59.999Z"), null)
+      const defaultOptions = submissionFeeOptions("2000000", stored, "2026-11-19T00:00:00.000Z")
+      assert.deepStrictEqual(defaultOptions.map((option) => [option.network, option.symbol, option.chainId]), [
+        ["base-mainnet", "USDC", 8453],
+        ["robinhood-mainnet", "USDG", 4663],
+        ["robinhood-mainnet", "SLOP", 4663],
+        ["solana-mainnet", "USDC", null],
+      ])
+      assert.deepStrictEqual(defaultOptions.filter((option) => option.network === "solana-mainnet"), [{
+        network: "solana-mainnet",
+        chainId: null,
+        contract: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        symbol: "USDC",
+        decimals: 6,
+        amount: "2000000",
+        minimumAccepted: "2000000",
+        keptTo: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+      }])
+      assert.deepStrictEqual(submissionFeeOptions("2000000", [], day(19), { solanaOn: false }).map((option) => [option.network, option.symbol]), [
+        ["base-mainnet", "USDC"],
+        ["robinhood-mainnet", "USDG"],
+      ])
+      assert.deepStrictEqual(submissionFeeOptions("2000000", [], day(19), { solanaProgramId: null }).some((option) => option.network === "solana-mainnet"), false)
     }
   })
 

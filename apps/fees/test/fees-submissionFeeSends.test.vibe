@@ -392,7 +392,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     }))
   })
 
-  it.effect('Solana publishes its mainnet program id while staying off, isolates Solana config errors from EVM, journals sends, falls back to single sends after on-chain failure, parks failed singles and settles closed deposits from finalized chain proofs (spec/fees/submissionFeeSends.md, "A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last"; spec/fees/submissionFeeSends.md, "A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers")', () => effect {
+  it.effect('Solana publishes its mainnet program id and is switched on, isolates Solana config errors from EVM, journals sends, falls back to single sends after on-chain failure, parks failed singles and settles closed deposits from finalized chain proofs (spec/fees/submissionFeeSends.md, "A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last"; spec/fees/submissionFeeSends.md, "A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers")', () => effect {
     const world = try World
     const { solana } = world
     const ataX = associatedUsdcAccount(solanaPayerX, SOLANA_SUBMISSION_FEE_MINT) ?? ""
@@ -509,7 +509,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
         searchDone,
       ],
     }, {
-      published: ["4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7", 474211652, false, { mode: "off", ledger: null }],
+      published: ["4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7", 474211652, true, { mode: "off", ledger: null }],
       isolated: ["ran", "ran", true],
       unset: [SOLANA_SUBMISSION_FEE_NETWORK],
       dry: [3, 3, "recorded", "unchanged", 1, "recorded"],

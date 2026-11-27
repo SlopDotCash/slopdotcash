@@ -71,7 +71,7 @@ export const publishedSolanaTerms: SolanaFeeTerms = {
   symbol: "USDC",
   decimals: 6,
   keptTo: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
-  switchedOn: false,
+  switchedOn: true,
 };
 
 export const publishedTerms: FeeTerms = { networks: feeNetworks, feeWallet, burn: burnAddress, solana: publishedSolanaTerms };

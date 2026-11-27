@@ -21,7 +21,7 @@ import { FeeSetup, type FeePay, type PayAddress, openPayPage } from "../src/scre
 import { formatMonth } from "../src/screens/projects/summary.ts";
 import { WalletChoice, walletChoiceServices } from "../src/wallets/core/discovery.vibe";
 import { sessionSlots } from "../src/wallets/core/slots.ts";
-import { depositedKey, feeDepositKey, publishedTerms } from "../src/wallets/fee/feeCalls.ts";
+import { depositedKey, feeDepositKey, publishedSolanaTerms, publishedSolanaWay, publishedTerms } from "../src/wallets/fee/feeCalls.ts";
 import type { LeaderboardTransport, PublishedActor, Target } from "./support/ui/protocol.ts";
 import { accessible, at, named, shown, signIn, site } from "./support/ui/browser.ts";
 
@@ -911,7 +911,7 @@ describe("Every part reads the same published fee terms", () => {
       "starts with the next UTC month",
       "the whole amount stays with contributors",
       "Only on a project whose owner turned on the refundable submission fee",
-      "2 USDC on Base or 2 USDG on Robinhood Chain",
+      "2 USDC on Base or Solana, or 2 USDG on Robinhood Chain",
       "in SLOP on Robinhood Chain at half",
       "a merge sends it back, and so do 14 days without a maintainer decision",
       "closed without a merge for 7 days",
@@ -1138,8 +1138,8 @@ function announce(uuid: string, provider: unknown) {
   window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info: { uuid, name: "Payer wallet", rdns: "test.payer", icon: "data:image/svg+xml,<svg/>" }, provider }) }));
 }
 
-function started(fetch: typeof globalThis.fetch, switches: { submissionFee: boolean; reportDeposit: boolean } = { submissionFee: true, reportDeposit: true }) {
-  const setup = Layer.succeed(FeeSetup, { ...switches, terms: publishedTerms });
+function started(fetch: typeof globalThis.fetch, switches: { submissionFee: boolean; reportDeposit: boolean } = { submissionFee: true, reportDeposit: true }, terms = publishedTerms) {
+  const setup = Layer.succeed(FeeSetup, { ...switches, terms });
   const runtime = ManagedRuntime.make(Layer.mergeAll(walletChoiceServices, webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch), setup));
   cleanups.push(() => void runtime.dispose());
   return runtime;
@@ -1153,18 +1153,35 @@ const walletId = Effect.gen(function* () {
 const shownPage = (pay: FeePay) => Effect.gen(function* () {
   const state = yield* pay.machine.get();
   const shown = yield* pay.shown();
-  return { page: state.page, dueWays: state.dueWays, due: shown.record?.due.map((way) => way.symbol) ?? [], withheld: shown.record?.slopWithheld ?? false, paid: shown.record?.paid?.depositId ?? 0, refused: shown.message !== "" };
+  return { page: state.page, dueWays: state.dueWays, due: shown.record?.due.map((way) => way.symbol) ?? [], solana: shown.record?.solana?.programId ?? null, withheld: shown.record?.slopWithheld ?? false, paid: shown.record?.paid?.depositId ?? 0, refused: shown.message !== "" };
 });
 
 // spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"
 describe("Pay a refundable deposit for a pull request or a", () => {
   it("a switched-off build offers nothing and still shows", async () => {
-    const opened = async (address: PayAddress, held: Partial<Api>, switches?: { submissionFee: boolean; reportDeposit: boolean }) => {
-      const runtime = started(api(held).fetch, switches);
+    const opened = async (address: PayAddress, held: Partial<Api>, switches?: { submissionFee: boolean; reportDeposit: boolean }, terms = publishedTerms) => {
+      const runtime = started(api(held).fetch, switches, terms);
       return runtime.runPromise(Effect.flatMap(openPayPage(address, sessionSlots()), shownPage));
     };
+    const solanaEntry = (overrides: Record<string, unknown> = {}) => ({
+      network: publishedSolanaTerms.network,
+      chainId: null,
+      contract: publishedSolanaTerms.programId,
+      token: publishedSolanaTerms.token,
+      symbol: publishedSolanaTerms.symbol,
+      decimals: publishedSolanaTerms.decimals,
+      amount: stableMinor,
+      minimumAccepted: stableMinor,
+      keptTo: publishedSolanaTerms.keptTo,
+      ...overrides,
+    });
+    const solanaOffTerms = { ...publishedTerms, solana: { ...publishedSolanaTerms, switchedOn: false } };
     const dueBoth = pullRecord([stableWay(), slopWay(slopAmount)]);
+    const dueWithSolana = pullRecord([stableWay(), slopWay(slopAmount), solanaEntry()]);
     const result = {
+      solanaSwitchedOn: publishedSolanaTerms.switchedOn,
+      solanaPublishedProgram: publishedSolanaWay(publishedTerms, stableMinor)?.programId ?? null,
+      solanaOffWay: publishedSolanaWay(solanaOffTerms, stableMinor),
       switchedOff: await opened(pullAddress, { item: dueBoth }, { submissionFee: false, reportDeposit: false }),
       reportSwitchedOff: await opened(reportAddress, { report: reportRecord([slopWay(reportAmount)]) }, { submissionFee: false, reportDeposit: false }),
       recordedWhileOff: await opened(pullAddress, { item: pullRecord([], { paid: paid("base-mainnet", usdc.address, stableMinor, false), outcome: "refund_due" }) }, { submissionFee: false, reportDeposit: false }),
@@ -1174,6 +1191,9 @@ describe("Pay a refundable deposit for a pull request or a", () => {
       noFee: await opened(pullAddress, {}),
       noDeposit: await opened(reportAddress, {}),
       due: await opened(pullAddress, { item: dueBoth }),
+      dueWithSolana: await opened(pullAddress, { item: dueWithSolana }),
+      dueSolanaOff: await opened(pullAddress, { item: dueWithSolana }, undefined, solanaOffTerms),
+      otherSolanaProgram: await opened(pullAddress, { item: pullRecord([stableWay(), solanaEntry({ contract: "11111111111111111111111111111111" })]) }),
       otherContract: await opened(pullAddress, { item: pullRecord([stableWay({ contract: `0x${"1".repeat(40)}` })]) }),
       otherDestination: await opened(pullAddress, { item: pullRecord([stableWay({ keptTo: publishedTerms.burn })]) }),
       otherNetwork: await opened(pullAddress, { item: pullRecord([stableWay({ chainId: 1 })]) }),
@@ -1184,6 +1204,9 @@ describe("Pay a refundable deposit for a pull request or a", () => {
     };
     const nothing = { dueWays: 0, due: [] };
     expect(result).toMatchObject({
+      solanaSwitchedOn: true,
+      solanaPublishedProgram: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+      solanaOffWay: null,
       switchedOff: { page: "SwitchedOff", ...nothing },
       reportSwitchedOff: { page: "SwitchedOff", dueWays: 0 },
       recordedWhileOff: { page: "Recorded", dueWays: 0, paid: 1 },
@@ -1192,7 +1215,10 @@ describe("Pay a refundable deposit for a pull request or a", () => {
       unlisted: { page: "NotRegistered", ...nothing },
       noFee: { page: "NothingAsked", ...nothing },
       noDeposit: { page: "NothingAsked", ...nothing },
-      due: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], withheld: false },
+      due: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], solana: null, withheld: false },
+      dueWithSolana: { page: "Due", dueWays: 3, due: ["USDC", "SLOP"], solana: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7", withheld: false },
+      dueSolanaOff: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], solana: null, withheld: false },
+      otherSolanaProgram: { page: "Failed", ...nothing, refused: true },
       otherContract: { page: "Failed", ...nothing, refused: true },
       otherDestination: { page: "Failed", ...nothing, refused: true },
       otherNetwork: { page: "Failed", ...nothing, refused: true },

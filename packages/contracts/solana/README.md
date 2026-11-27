@@ -687,12 +687,15 @@ program's SHA-256 is
 `389b857fb05f9be1d24bdc41ad52d48801c5272bdf5ee8a7e69758674eba2444`. The
 transactions, accounts, read-back and smoke test are in
 [`../DEPLOY-MAINNET.md`](../DEPLOY-MAINNET.md) ("Submission fee deposit program
-on Solana"). **The fee is still switched off on Solana.**
-`src/lib/submission-fee.mjs` publishes the program id and the slot of its
-`initialize` transaction, but `SUBMISSION_FEE_SOLANA_MODE` is `off` and
-`SUBMISSION_FEE_SOLANA_SWITCHED_ON` is false: no Slop service reads the program,
-the pay page does not offer it, and the Worker's Solana endpoint and resolver
-secret are not set.
+on Solana"). **The fee is switched on for Solana since 26 November 2026**
+(operator decision). `src/lib/submission-fee.mjs` publishes the program id and
+the slot of its `initialize` transaction, `SUBMISSION_FEE_SOLANA_MODE` is
+`live` and `SUBMISSION_FEE_SOLANA_SWITCHED_ON` is true: the pay page offers
+USDC on Solana and the submission-fee Worker reads the program and sends the
+resolver's transactions. The Worker's Solana endpoint and resolver secrets are
+set, and a record-only pass against mainnet from Cloudflare read the program
+without error on 26 November 2026. A kept (not refunded) deposit and a real
+pull request payment have not yet been exercised on mainnet.
 It shares nothing with `slop-escrow`: its own id, its own accounts, no call
 between the two. It uses the escrow's two crates at the same versions and adds
 none, and the escrow's program bytes are unchanged by its presence in the

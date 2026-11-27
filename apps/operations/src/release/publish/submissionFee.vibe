@@ -43,7 +43,7 @@ const httpsUrl = /^https:\/\/[^\s]+$/u
 const wholeUnits = /^[1-9][0-9]{0,18}$/u
 
 export const defaultSolanaReleaseTerms: SolanaReleaseTerms = {
-  switchedOn: false,
+  switchedOn: true,
   programId: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
   startSlot: 474211652,
 }

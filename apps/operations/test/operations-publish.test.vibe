@@ -372,39 +372,41 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         const outcome = Effect.provide(publishSubmissionFee(worker, pages, publication, { slopbot, solana }), env) catch (error) => described(error)
         return { outcome, uploads: (api.state.versions[feeWorker] ?? []).length - before }
       }
+      const solanaOff = { ...defaultSolanaReleaseTerms, switchedOn: false }
       const live = { SUBMISSION_FEE_MODE: "live" }
       const keyedBase = "https://base.rpc.example/journey-key"
       const feeOrder = publishing.order.indexOf("SubmissionFee") - publishing.order.indexOf("Referral")
       try existingWorker(served, feeWorker)
-      const liveWithoutKey = try feeRelease(live)
-      const slopbotParityMismatch = try feeRelease(live, {}, undefined, "off")
+      const liveWithoutKey = try feeRelease(live, {}, undefined, "live", solanaOff)
+      const slopbotParityMismatch = try feeRelease(live, {}, undefined, "off", solanaOff)
       const solanaUnknownMode = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "on" })
-      const solanaSwitchMismatch = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" })
-      const solanaKeyInVars = try feeRelease({ SUBMISSION_FEE_SOLANA_RESOLVER_SEED: "secret" })
+      const solanaSwitchMismatch = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "off" })
+      const solanaSwitchMismatchLive = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" }, {}, undefined, "live", solanaOff)
+      const solanaKeyInVars = try feeRelease({ SUBMISSION_FEE_SOLANA_RESOLVER_SEED: "secret" }, {}, undefined, "live", solanaOff)
       const solanaMissingProgram = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "dry_run" }, {}, undefined, "live", { switchedOn: false, programId: null, startSlot: null })
-      const solanaDryRunNoEndpoint = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "dry_run" })
-      const dryRun = try feeRelease({})
-      const otherDatabase = try feeRelease(live, { d1_databases: [{ binding: "SUBMISSION_FEE_DB", database_name: "slop-private", database_id: stagingDatabase }] })
-      const routedFee = try feeRelease({}, { routes: [{ pattern: "fees.slop.cash/*" }] })
-      const oneCron = try feeRelease({}, { triggers: { crons: ["*/5 * * * *"] } })
-      const keyInVars = try feeRelease({ RPC_URL_SUBMISSION_FEE_BASE: keyedBase })
-      const unknownMode = try feeRelease({ SUBMISSION_FEE_MODE: "on" })
-      const notJson = try feeRelease({}, {}, `{"base-mainnet": ${keyedBase}`)
-      const notObject = try feeRelease({}, {}, JSON.stringify([keyedBase]))
-      const plainHttp = try feeRelease({}, {}, JSON.stringify({ "base-mainnet": "http://base.rpc.example/journey-key" }))
+      const solanaDryRunNoEndpoint = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "dry_run" }, {}, undefined, "live", solanaOff)
+      const dryRun = try feeRelease({}, {}, undefined, "live", solanaOff)
+      const otherDatabase = try feeRelease(live, { d1_databases: [{ binding: "SUBMISSION_FEE_DB", database_name: "slop-private", database_id: stagingDatabase }] }, undefined, "live", solanaOff)
+      const routedFee = try feeRelease({}, { routes: [{ pattern: "fees.slop.cash/*" }] }, undefined, "live", solanaOff)
+      const oneCron = try feeRelease({}, { triggers: { crons: ["*/5 * * * *"] } }, undefined, "live", solanaOff)
+      const keyInVars = try feeRelease({ RPC_URL_SUBMISSION_FEE_BASE: keyedBase }, {}, undefined, "live", solanaOff)
+      const unknownMode = try feeRelease({ SUBMISSION_FEE_MODE: "on" }, {}, undefined, "live", solanaOff)
+      const notJson = try feeRelease({}, {}, `{"base-mainnet": ${keyedBase}`, "live", solanaOff)
+      const notObject = try feeRelease({}, {}, JSON.stringify([keyedBase]), "live", solanaOff)
+      const plainHttp = try feeRelease({}, {}, JSON.stringify({ "base-mainnet": "http://base.rpc.example/journey-key" }), "live", solanaOff)
       try secret(served, "PUT", "SUBMISSION_FEE_RESOLVER_KEY", feeWorker)
       try secret(served, "PUT", "RPC_URL_SUBMISSION_FEE_SOLANA", feeWorker)
-      const solanaDryRunReady = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "dry_run" })
-      const solanaLiveWithoutSeed = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" }, {}, undefined, "live", { ...defaultSolanaReleaseTerms, switchedOn: true })
+      const solanaDryRunReady = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "dry_run" }, {}, undefined, "live", solanaOff)
+      const solanaLiveWithoutSeed = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" })
       try secret(served, "PUT", "SUBMISSION_FEE_SOLANA_RESOLVER_SEED", feeWorker)
-      const solanaLiveReady = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" }, {}, undefined, "live", { ...defaultSolanaReleaseTerms, switchedOn: true })
-      const liveKeyed = try feeRelease(live, {}, JSON.stringify({ "base-mainnet": keyedBase }))
+      const solanaLiveReady = try feeRelease({ SUBMISSION_FEE_SOLANA_MODE: "live" })
+      const liveKeyed = try feeRelease({ ...live, SUBMISSION_FEE_SOLANA_MODE: "live" }, {}, JSON.stringify({ "base-mainnet": keyedBase }))
       const feeSecrets = [...api.state.secrets[feeWorker] ?? []].sort()
       const [feeServing] = api.state.deployments[feeWorker]?.at(-1)?.versions ?? []
       const feeVersion = (api.state.versions[feeWorker] ?? []).find((candidate) => candidate.id === feeServing?.versionId)
       try secret(served, "PUT", "STRAY_SECRET", feeWorker)
-      const liveStray = try feeRelease(live)
-      const submissionFee = { feeOrder, liveWithoutKey, slopbotParityMismatch, solanaUnknownMode, solanaSwitchMismatch, solanaKeyInVars, solanaMissingProgram, solanaDryRunNoEndpoint, dryRun, otherDatabase, routedFee, oneCron, keyInVars, unknownMode, notJson, notObject, plainHttp, solanaDryRunReady, solanaLiveWithoutSeed, solanaLiveReady, liveKeyed, feeSecrets, feeServing: { percentage: feeServing?.percentage, tag: feeVersion?.tag }, schedules: [...api.state.schedules[feeWorker] ?? []].sort(), liveStray }
+      const liveStray = try feeRelease(live, {}, undefined, "live", solanaOff)
+      const submissionFee = { feeOrder, defaultSolanaSwitchedOn: defaultSolanaReleaseTerms.switchedOn, liveWithoutKey, slopbotParityMismatch, solanaUnknownMode, solanaSwitchMismatch, solanaSwitchMismatchLive, solanaKeyInVars, solanaMissingProgram, solanaDryRunNoEndpoint, dryRun, otherDatabase, routedFee, oneCron, keyInVars, unknownMode, notJson, notObject, plainHttp, solanaDryRunReady, solanaLiveWithoutSeed, solanaLiveReady, liveKeyed, feeSecrets, feeServing: { percentage: feeServing?.percentage, tag: feeVersion?.tag }, schedules: [...api.state.schedules[feeWorker] ?? []].sort(), liveStray }
       const spent = { status: 429 }
       const exhausted = { status: 403, headers: { "x-ratelimit-remaining": "0" } }
       const forbidden = { status: 403 }
@@ -474,10 +476,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       },
       submissionFee: {
         feeOrder: 1,
+        defaultSolanaSwitchedOn: true,
         liveWithoutKey: { outcome: "Submission fee resolver secret inventory is not ready", uploads: 0 },
         slopbotParityMismatch: { outcome: "SUBMISSION_FEE_MODE live in Slopbot and switchedOn in submission fee terms must change together", uploads: 0 },
         solanaUnknownMode: { outcome: "SUBMISSION_FEE_SOLANA_MODE must be off, dry_run or live", uploads: 0 },
         solanaSwitchMismatch: { outcome: "SUBMISSION_FEE_SOLANA_MODE live and SUBMISSION_FEE_SOLANA_SWITCHED_ON change together", uploads: 0 },
+        solanaSwitchMismatchLive: { outcome: "SUBMISSION_FEE_SOLANA_MODE live and SUBMISSION_FEE_SOLANA_SWITCHED_ON change together", uploads: 0 },
         solanaKeyInVars: { outcome: "Submission fee secrets must not be in wrangler.toml", uploads: 0 },
         solanaMissingProgram: { outcome: "Submission fee Solana mode needs the program id and its start slot", uploads: 0 },
         solanaDryRunNoEndpoint: { outcome: "Submission fee Solana secret inventory is not ready", uploads: 0 },

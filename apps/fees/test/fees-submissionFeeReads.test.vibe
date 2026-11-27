@@ -15,7 +15,7 @@ import { burnAddress, feeWallet, networkTerms, noToken } from "../gen/backend__s
 import { submissionFeeApi } from "../src/client/submissionFee.vibe"
 import { SubmissionFeeRoutes } from "../src/submissionFee/routes.vibe"
 import { type SolanaPayEnv, type SolanaPayOverrides, solanaSubmissionFeeDeployment } from "../src/submissionFee/solanaPay.vibe"
-import { SOLANA_SUBMISSION_FEE_MINT, associatedUsdcAccount } from "../src/submissionFee/solanaProgram.ts"
+import { SOLANA_SUBMISSION_FEE_KEPT_TO, SOLANA_SUBMISSION_FEE_MINT, SOLANA_SUBMISSION_FEE_NETWORK, SOLANA_SUBMISSION_FEE_PROGRAM_ID, SOLANA_SUBMISSION_FEE_SWITCHED_ON, associatedUsdcAccount } from "../src/submissionFee/solanaProgram.ts"
 import { createFakeSolanaLedger, solanaAddressFromHex, solanaFeeRpc } from "./support/solanaFeeFake.ts"
 import { journalDatabase } from "./support/journal.ts"
 import { same } from "./support/checks.vibe"
@@ -147,12 +147,23 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "180 seconds" })((it) =
     for (const path of refusedPaths) refused.push(try ask(world, path))
     const write = try ask(world, "/api/v1/submission-fee/rate", "POST")
     const head = try ask(world, "/api/v1/submission-fee/items/4242/7", "HEAD")
+    const solanaWay = {
+      network: SOLANA_SUBMISSION_FEE_NETWORK,
+      chainId: null,
+      contract: SOLANA_SUBMISSION_FEE_PROGRAM_ID,
+      token: SOLANA_SUBMISSION_FEE_MINT,
+      symbol: "USDC",
+      decimals: 6,
+      amount: "3000000",
+      minimumAccepted: "3000000",
+      keptTo: SOLANA_SUBMISSION_FEE_KEPT_TO,
+    }
     const stable = [way("base-mainnet", "USDC", "3000000"), way("robinhood-mainnet", "USDG", "3000000")]
     try same(
       { beforeRate, atRate, paid, refused, write, head: { status: head.status, cache: head.cache, body: head.body } },
       {
-        beforeRate: { status: 200, cache: served, body: { ...unpaid, due: stable } },
-        atRate: { status: 200, cache: served, body: { ...unpaid, due: [...stable, way("robinhood-mainnet", "SLOP", "110000000000000000000")] } },
+        beforeRate: { status: 200, cache: served, body: { ...unpaid, due: [...stable, solanaWay] } },
+        atRate: { status: 200, cache: served, body: { ...unpaid, due: [...stable, way("robinhood-mainnet", "SLOP", "110000000000000000000"), solanaWay] } },
         paid: {
           status: 200,
           cache: served,
@@ -212,7 +223,7 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "180 seconds" })((it) =
     )
   }))
 
-  it.effect('POST /api/v1/submission-fee/solana stays 404 while switched off and prepares/checks Solana deposits when enabled via its deployment Layer (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it")', () => Effect.scoped(effect {
+  it.effect('POST /api/v1/submission-fee/solana is live by default when its deployment Layer has an endpoint, stays 404 when unconfigured or overridden off, and prepares/checks Solana deposits (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it")', () => Effect.scoped(effect {
     const world = try opened("fees-submission-fee-reads-solana")
     const owner = solanaAddressFromHex("55".repeat(32))
     const resolver = solanaAddressFromHex("66".repeat(32))
@@ -246,24 +257,26 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "180 seconds" })((it) =
       return { status: response.status, body: parsed }
     }
     const offDefault = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1" })
-    const offLayer = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url })
-    const alreadyPaid = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 2, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
-    const review = try postSolana({ step: "review", repositoryId: "5150", pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
+    const offOverride = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: false })
+    const alreadyPaid = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 2, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url })
+    const review = try postSolana({ step: "review", repositoryId: "5150", pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url })
     const checkSig = "4".repeat(87)
     ledger.statuses.set(checkSig, { slot: ledger.slot, confirmationStatus: "finalized", err: null })
-    const check = try postSolana({ step: "check", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1", blockhash: ledger.blockhash, transactionId: checkSig }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
+    const check = try postSolana({ step: "check", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1", blockhash: ledger.blockhash, transactionId: checkSig }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url })
     const reviewPlan = typeof review.body === "object" && review.body !== null && "plan" in review.body ? (review.body as { readonly plan: { readonly amount: string; readonly wallet: string; readonly nonce: string } }).plan : null
     try same(
       {
+        switchedOn: SOLANA_SUBMISSION_FEE_SWITCHED_ON,
         offDefault: offDefault.status,
-        offLayer: offLayer.status,
+        offOverride: offOverride.status,
         alreadyPaid: [alreadyPaid.status, typeof alreadyPaid.body === "object" && alreadyPaid.body !== null && "error" in alreadyPaid.body ? (alreadyPaid.body as { readonly error: string }).error : null],
         review: [review.status, reviewPlan?.amount, reviewPlan?.wallet, reviewPlan?.nonce],
         check: [check.status, check.body],
       },
       {
+        switchedOn: true,
         offDefault: 404,
-        offLayer: 404,
+        offOverride: 404,
         alreadyPaid: [422, "fee_already_paid"],
         review: [200, "2000000", payer, "1"],
         check: [200, { status: "finalized" }],

@@ -60,7 +60,7 @@ const networkNames: Readonly<Record<string, string>> = {
 };
 
 const defaultSolanaContracts: Readonly<Record<string, string | null>> = {
-  "solana-mainnet": null,
+  "solana-mainnet": "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
 };
 
 const standingDepositStrikeWindowDays = 21;
@@ -69,7 +69,7 @@ const standingDepositStrikeGraceHours = 48;
 /** @throws {never} */
 export function solanaFeeOffered(
   contracts: Readonly<Record<string, string | null>> = defaultSolanaContracts,
-  switchedOn: boolean = false,
+  switchedOn: boolean = true,
 ): boolean {
   return switchedOn && typeof contracts["solana-mainnet"] === "string";
 }

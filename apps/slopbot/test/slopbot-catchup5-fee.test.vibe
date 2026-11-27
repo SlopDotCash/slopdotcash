@@ -13,6 +13,7 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { IntakePause, type ProjectView, Registry, RegistryManifests, Restrictions, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
+import { feeNeededComment, solanaFeeOffered } from "../src/fee/comments.ts"
 import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
 import { gateSubmissionFee } from "../src/fee/gate.vibe"
 import { reopenKeptFee } from "../src/fee/items.vibe"
@@ -278,6 +279,15 @@ layer(World, { timeout: "240 seconds" })((it) => {
     const waits = try gated(first, t0)
     const again = try gated(first, t0 + 1000)
     const asked = try seen(first)
+    const firstCommentBody = try Effect.try(() => fees.fake.world.pull(repo, first).comments.find((comment) => comment.author.login === fees.fake.app.bot.login)?.body ?? "")
+    const solanaOffComment = try Effect.try(() => feeNeededComment({ owner: "ada", repo: "widgets", number: first, repositoryId, item: `0x${"1".repeat(64)}`, stableMinor: "2000000", ways: [], solana: false }))
+    const solanaChecks = {
+      defaultOffered: solanaFeeOffered(),
+      switchedOff: solanaFeeOffered(undefined, false),
+      missingProgram: solanaFeeOffered({ "solana-mainnet": null }, true),
+      askedMentionsSolana: firstCommentBody.includes("The pay page also takes 2 USDC on Solana."),
+      offOmitsSolana: !solanaOffComment.includes("Solana"),
+    }
     const flaky = try opened("Label write fails", t0 - 1000)
     fees.failLabels = true
     const failed = try gated(flaky, t0)
@@ -292,10 +302,11 @@ layer(World, { timeout: "240 seconds" })((it) => {
     fees.manifest = settingOn(false)
     const releasedWaits = try gated(first, t0 + 2000)
     fees.manifest = settingOn(true)
-    try same({ waits, again, asked, failed, retried, flaky: try seen(flaky), olderWaits, older: try seen(older), recordWaits, recorded: try seen(recorded), releasedWaits, released: try seen(first) }, {
+    try same({ waits, again, asked, solanaChecks, failed, retried, flaky: try seen(flaky), olderWaits, older: try seen(older), recordWaits, recorded: try seen(recorded), releasedWaits, released: try seen(first) }, {
       waits: true,
       again: true,
       asked: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
+      solanaChecks: { defaultOffered: true, switchedOff: false, missingProgram: false, askedMentionsSolana: true, offOmitsSolana: true },
       failed: "failed",
       retried: true,
       flaky: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
