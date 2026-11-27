@@ -189,8 +189,8 @@ applied manifest is `Replayed` and appends nothing. A batch
 whose receipt (`correctionBatchRecorded`) is already present is a replay and
 appends nothing. Existing approved, funded, scheduled and paid terms never
 change through this correction flow. A manifest that changes no share of an
-ordinary pool is not committed: it is applied as unchanged (below). This
-instance stays bound to its October Eliza source identity and occurrence.
+ordinary pool is not committed: it is applied as unchanged (below). Only an
+October replacement records October replacement work.
 
 ```quint
 pure def canCommit(c: Correction, recipientBanned: bool, by: Actor): bool = c.phase == Prepared and by == TrustedWorkflow
@@ -199,11 +199,10 @@ pure def commit(c: Correction, recipientBanned: bool, by: Actor): Correction =
   if (classify(c, c.staged) != Prepared) { ...c, phase: classify(c, c.staged), staged: emptyManifest }
   else if (recipientBanned) { ...c, phase: Banned, staged: emptyManifest }
   else { ...c, phase: Applied, staged: emptyManifest, applied: c.applied.append(c.staged.digest),
-    appliedWork: c.staged.work,
+    appliedWork: if (c.staged.kind == OctoberReplacement) c.staged.work else List(),
     history: c.history.append({ source: c.source, occurredAt: c.occurredAt,
       shares: A::allocatePoints(c.pool, c.staged.recipients) }) }
-pure def alwaysSourceHistory(c: Correction): bool = c.project == "eliza" and c.occurredAt == octoberAt and
-  c.history.every(row => row.source == c.source
+pure def alwaysSourceHistory(c: Correction): bool = c.history.every(row => row.source == c.source
   and row.occurredAt == c.occurredAt and A::pointTotal(row.shares) == c.pool)
 pure def alwaysOctoberOnlyInScope(c: Correction): bool = c.appliedWork.length() > 0 implies octoberScope(c)
 pure def stepNoHistoryGrowthAfterProtection(before: Correction, after: Correction): bool =

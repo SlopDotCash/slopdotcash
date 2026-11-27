@@ -264,7 +264,7 @@ describe("Open every product route at its existing address", () => {
         await expect.poll(() => site.scrollY(), { timeout: journeyMs }).not.toBe(before);
         await scrollSettled();
       }
-      const destination = named("link", "Payouts", { within: { text: "Track it in" } });
+      const destination = named("link", "Payouts", { within: { text: "Authorize on the award in" } });
       await site.reveal(destination);
       const reading = await scrollSettled();
       expect(await paymentsTop()).toBeLessThan(-100);

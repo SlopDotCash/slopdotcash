@@ -96,7 +96,7 @@ export const project = ({ root, tests = TESTS, plugins = [] }: Project): ReturnT
               fileParallelism: false,
               browser: {
                 enabled: true, provider: (await import("@vitest/browser-playwright")).playwright(), headless: true,
-                instances: [{ browser: "chromium" as const }], screenshotFailures: true, trace: "retain-on-failure" as const,
+                instances: [{ browser: "chromium" as const, fileParallelism: false }], screenshotFailures: true, trace: "retain-on-failure" as const,
               },
             },
           }] : [],
