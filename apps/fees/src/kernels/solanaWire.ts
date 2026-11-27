@@ -186,7 +186,7 @@ export function scanLookups(bytes: Uint8Array, start: number, count: number): Wi
 
 export function accountsBelow(bytes: Uint8Array, instructions: readonly WireInstruction[], total: number): boolean {
   //@ type bytes number[]
-  //@ requires forall(i, 0 <= i && i < instructions.length ==> spanWithin(instructions[i].accounts, bytes.length))
+  //@ requires forall(i, 0 <= i && i < instructions.length ==> 0 <= instructions[i].accounts.start && instructions[i].accounts.start <= instructions[i].accounts.end && instructions[i].accounts.end <= bytes.length)
   //@ ensures \result <==> forall(i, 0 <= i && i < instructions.length ==> forall(k, instructions[i].accounts.start <= k && k < instructions[i].accounts.end ==> bytes[k] < total))
   let i = 0;
   while (i < instructions.length) {

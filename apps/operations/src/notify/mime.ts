@@ -82,8 +82,14 @@ export function utf8(text: string): number[] {
       bytes.push(191);
       bytes.push(189);
       i = i + 1;
-    } else {
+    } else if (unit < 65536) {
       bytes.push(224 + Math.floor(unit / 4096));
+      bytes.push(128 + (Math.floor(unit / 64) % 64));
+      bytes.push(128 + (unit % 64));
+      i = i + 1;
+    } else {
+      bytes.push(240 + Math.floor(unit / 262144));
+      bytes.push(128 + (Math.floor(unit / 4096) % 64));
       bytes.push(128 + (Math.floor(unit / 64) % 64));
       bytes.push(128 + (unit % 64));
       i = i + 1;

@@ -80,6 +80,37 @@ lemma rescaleInput_ensures(amount: int, remaining: int, quotedOut: int)
   }
 }
 
+lemma priceImpactCeiling_ensures(inputValue: int, outputValue: int)
+  requires (inputValue > 0)
+  requires (outputValue >= 0)
+  ensures (0 <= priceImpactCeiling(inputValue, outputValue))
+  ensures (priceImpactCeiling(inputValue, outputValue) <= 10000)
+  ensures ((outputValue >= inputValue) ==> (priceImpactCeiling(inputValue, outputValue) == 0))
+  ensures ((outputValue < inputValue) ==> ((((priceImpactCeiling(inputValue, outputValue) - 1) * inputValue) < ((inputValue - outputValue) * 10000)) && (((inputValue - outputValue) * 10000) <= (priceImpactCeiling(inputValue, outputValue) * inputValue))))
+{
+  if inputValue > outputValue {
+    var loss := inputValue - outputValue;
+    var adjusted := loss * 10000 + inputValue - 1;
+    assert 0 < loss <= inputValue;
+    assert adjusted >= 0;
+    DivisionBounds(adjusted, inputValue);
+    var quotient := adjusted / inputValue;
+    var remainder := adjusted % inputValue;
+    assert 0 <= remainder < inputValue;
+    assert adjusted == quotient * inputValue + remainder;
+    assert priceImpactCeiling(inputValue, outputValue) == quotient;
+    assert (quotient - 1) * inputValue == quotient * inputValue - inputValue;
+    assert adjusted <= inputValue * 10000 + inputValue - 1;
+    assert inputValue * 10000 + inputValue == 10001 * inputValue;
+    assert adjusted < 10001 * inputValue;
+    if quotient > 10000 {
+      MultiplyMonotone(10001, quotient, inputValue);
+      assert quotient * inputValue >= 10001 * inputValue;
+      assert false;
+    }
+  }
+}
+
 lemma MultiplyMonotone(lower: int, upper: int, factor: int)
   requires lower <= upper
   requires factor >= 0

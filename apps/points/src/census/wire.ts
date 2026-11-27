@@ -53,6 +53,21 @@ export function unstated(reasons: Reason[]): number {
   return -1;
 }
 
+function findWire(reasons: Reason[], wire: number): number {
+  //@ ensures -1 <= \result && \result < reasons.length
+  //@ ensures \result >= 0 ==> wireOf(reasons[\result]) === wire
+  //@ ensures \result === -1 ==> forall(j, 0 <= j && j < reasons.length ==> wireOf(reasons[j]) !== wire)
+  let j = 0;
+  while (j < reasons.length) {
+    //@ invariant 0 <= j && j <= reasons.length
+    //@ invariant forall(i, 0 <= i && i < j ==> wireOf(reasons[i]) !== wire)
+    //@ decreases reasons.length - j
+    if (wireOf(reasons[j]) === wire) return j;
+    j = j + 1;
+  }
+  return -1;
+}
+
 export function wireReasons(reasons: Reason[]): number[] {
   //@ ensures forall(k, 0 <= k && k < \result.length ==> 0 <= \result[k] && \result[k] < wireCount)
   //@ ensures forall(k, 0 < k && k < \result.length ==> \result[k - 1] < \result[k])
@@ -61,17 +76,39 @@ export function wireReasons(reasons: Reason[]): number[] {
   //@ ensures exists(j, 0 <= j && j < reasons.length && wireOf(reasons[j]) === draftWire) ==> forall(k, 0 <= k && k < \result.length ==> \result[k] !== blockedWire)
   const hideBlocked = hasWire(reasons, draftWire);
   const named: number[] = [];
+  //@ ghost let sources: number[] = []
+  //@ ghost let positions: number[] = []
   let w = 0;
   while (w < wireCount) {
     //@ invariant 0 <= w && w <= wireCount
+    //@ invariant named.length <= w
+    //@ invariant sources.length === named.length
+    //@ invariant positions.length === w
     //@ invariant forall(k, 0 <= k && k < named.length ==> 0 <= named[k] && named[k] < w)
     //@ invariant forall(k, 0 < k && k < named.length ==> named[k - 1] < named[k])
-    //@ invariant forall(k, 0 <= k && k < named.length ==> exists(j, 0 <= j && j < reasons.length && wireOf(reasons[j]) === named[k]))
-    //@ invariant forall(j, 0 <= j && j < reasons.length && 0 <= wireOf(reasons[j]) && wireOf(reasons[j]) < w && wireOf(reasons[j]) !== blockedWire ==> exists(k, 0 <= k && k < named.length && named[k] === wireOf(reasons[j])))
+    //@ invariant forall(k, 0 <= k && k < named.length ==> 0 <= sources[k] && sources[k] < reasons.length && wireOf(reasons[sources[k]]) === named[k])
+    //@ invariant forall(v, 0 <= v && v < w ==> -1 <= positions[v] && positions[v] < named.length && (positions[v] >= 0 ==> named[positions[v]] === v))
+    //@ invariant forall(j, 0 <= j && j < reasons.length && 0 <= wireOf(reasons[j]) && wireOf(reasons[j]) < w && wireOf(reasons[j]) !== blockedWire ==> positions[wireOf(reasons[j])] >= 0)
     //@ invariant hideBlocked ==> forall(k, 0 <= k && k < named.length ==> named[k] !== blockedWire)
     //@ decreases wireCount - w
-    if (hasWire(reasons, w) && !(w === blockedWire && hideBlocked)) named.push(w);
+    const found = findWire(reasons, w);
+    const include = found >= 0 && !(w === blockedWire && hideBlocked);
+    //@ ghost positions = positions.concat([include ? named.length : -1])
+    if (include) {
+      named.push(w);
+      //@ ghost sources = sources.concat([found])
+    }
     w = w + 1;
   }
+  //@ assert 0 < named.length ==> wireOf(reasons[sources[0]]) === named[0]
+  //@ assert 1 < named.length ==> wireOf(reasons[sources[1]]) === named[1]
+  //@ assert 2 < named.length ==> wireOf(reasons[sources[2]]) === named[2]
+  //@ assert 3 < named.length ==> wireOf(reasons[sources[3]]) === named[3]
+  //@ assert 4 < named.length ==> wireOf(reasons[sources[4]]) === named[4]
+  //@ assert 5 < named.length ==> wireOf(reasons[sources[5]]) === named[5]
+  //@ assert 6 < named.length ==> wireOf(reasons[sources[6]]) === named[6]
+  //@ assert 7 < named.length ==> wireOf(reasons[sources[7]]) === named[7]
+  //@ assert 8 < named.length ==> wireOf(reasons[sources[8]]) === named[8]
+  //@ assert 9 < named.length ==> wireOf(reasons[sources[9]]) === named[9]
   return named;
 }
