@@ -50,12 +50,11 @@ effect function unless(holds: boolean) {
   if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
 }
 
-effect function integrationTip(root: string, branch: string, expected?: string) {
+effect function integrationTip(root: string, branch: string) {
   const github = try GitHub
   const tip = fields(try github.json(`${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`, Schema.Unknown))
   const object = fields(tip.object)
-  try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" &&
-    sha.test(object.sha) && (expected === undefined || object.sha === expected))
+  try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" && sha.test(object.sha))
   return String(object.sha)
 }
 
@@ -80,8 +79,9 @@ effect function verifyRemovedMergeAncestry(root: string, branch: string, mergeSh
     return undefined
   }
   if (tip !== undefined && (try integrationAncestry(root, mergeSha, tip, slopCutover && branch === "develop"))) return
-  const archive = try integrationTip(root, "develop-old", slopDevelopmentArchive)
-  try integrationAncestry(root, mergeSha, archive)
+  const archiveTip = try integrationTip(root, "develop-old")
+  if (archiveTip !== slopDevelopmentArchive) try unless(try integrationAncestry(root, slopDevelopmentArchive, archiveTip, true))
+  try integrationAncestry(root, mergeSha, slopDevelopmentArchive)
 }
 
 effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
