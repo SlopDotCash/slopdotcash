@@ -71,7 +71,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       ...identity,
       GITHUB_ACTIONS: "true",
       GITHUB_EVENT_NAME: "workflow_dispatch",
-      GITHUB_REF: "refs/heads/development",
+      GITHUB_REF: "refs/heads/staging",
       GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
       GITHUB_WORKFLOW_REF: protectedWorkflow,
       GITHUB_SHA: source,
@@ -95,8 +95,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try same({ misused, production, unprotected, firstRun, untouched }, {
       misused: "RecoveryRefused: usage: qualify recovery [--mode plan|execute]",
       production: "RecoveryRefused: Recovery qualification executes only in slop-staging; it never touches a production resource",
-      unprotected: "RecoveryRefused: Exact protected development qualification is required",
-      firstRun: "RecoveryRefused: Exact protected development qualification is required",
+      unprotected: "RecoveryRefused: Exact protected staging qualification is required",
+      firstRun: "RecoveryRefused: Exact protected staging qualification is required",
       untouched: 0,
     })
     try same(adopted, "RecoveryFailed")

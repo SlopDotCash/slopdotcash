@@ -147,7 +147,7 @@ it.live('A long collection renews the App token at first use and from fifty minu
     return [first, later]
   })
   const withoutSettings = try workflowToken(() => ({}))
-  const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/development"))
+  const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/staging"))
   try same({ withoutSettings, staging }, {
     withoutSettings: [[fetched("original")], [fetched("original")]],
     staging: [[fetched("original")], [fetched("original")]],

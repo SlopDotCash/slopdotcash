@@ -16390,7 +16390,7 @@
     },
     {
       "path": "spec/operations/publicationLock.md",
-      "sha256": "23665be516cf19e683b1190cc8816a05809ba47db15f047a83d2a20d351a889e",
+      "sha256": "ff489769fcb5b7872dbe51b7226115a4cb690900d729bdf5c56000d868663444",
       "module": "operations__publicationLock",
       "stories": [
         {
@@ -16513,7 +16513,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "e2f4db90e22987d2336088e8253c7a8269393a4854402a49a17e5441b5137ad7",
+      "sha256": "466fbfc208e80170ca3575ef4e0edceff761c97e964f8a37b8bfeadb3f815710",
       "module": "operations__release",
       "stories": [
         {
@@ -16868,7 +16868,7 @@
     },
     {
       "path": "spec/operations/releaseCoverage.md",
-      "sha256": "0d19182291c9b25fc0ce3caeaca5ed92e2fb8bcd482f78b9f4c18267b22b0ac3",
+      "sha256": "2e30afc0bc38cdbc3fb5e1511b3f77747404d4a9db9db95f4f3f2ef6567adff3",
       "module": "operations__releaseCoverage",
       "stories": [
         {
@@ -17326,7 +17326,7 @@
     },
     {
       "path": "spec/operations/stagingOrder.md",
-      "sha256": "06e437b11210f7c6daad6dcb383d29e44c4f286dfb157b40eb52b5abc1b2dbad",
+      "sha256": "9ed93d19f102d5c5f59323c11eb45cd604eb81ac8aadd49198f5bbd5aad001cc",
       "module": "operations__stagingOrder",
       "stories": [
         {

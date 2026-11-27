@@ -7,6 +7,8 @@ module stagedGitHub {
 
   export interface StagedRecord {
     readonly sha: string
+    readonly ref?: string
+    readonly createdAt?: string
     readonly workflow?: string
     readonly productionEnvironment?: boolean
   }
@@ -20,7 +22,13 @@ module stagedGitHub {
   export function stagedHistory(fake: GitHubFake, repository: string, records: ReadonlyArray<StagedRecord>): void {
     fake.world.repo(repository).deployments.splice(0)
     for (const record of records) {
-      const deployment = fake.world.addDeployment(repository, { sha: record.sha, ref: "development", environment: "slop-staging", productionEnvironment: record.productionEnvironment ?? false })
+      const deployment = fake.world.addDeployment(repository, {
+        sha: record.sha,
+        ref: record.ref ?? "staging",
+        environment: "slop-staging",
+        productionEnvironment: record.productionEnvironment ?? false,
+        ...(record.createdAt === undefined ? {} : { createdAt: record.createdAt }),
+      })
       if (record.workflow === undefined) continue
       const run = fake.world.addWorkflowRun(repository, { headSha: record.sha, path: record.workflow })
       fake.world.addDeploymentStatus(repository, deployment.id, { state: "success", logUrl: `https://github.com/${repository}/actions/runs/${run.id}/job/1` })
@@ -487,7 +495,7 @@ mkdir -p "$BUNDLE/github"
       retryThatCannotFitFallsBack: { ref: "main", hosted: true, setupTime: 500, firstRunTime: 19140 },
       setupExhaustsBudget: { ref: "main", hosted: true, setupTime: 20820, firstRunTime: 0 },
       collectorRunnerWindow: { ref: "main", hosted: false, setupTime: 500, firstRunTime: 700 },
-      stagingUnwrapped: { ref: "development", hosted: false, setupTime: 500, firstRunTime: 700 },
+      stagingUnwrapped: { ref: "staging", hosted: false, setupTime: 500, firstRunTime: 700 },
     }
     return {
       prepareNeedsMemo: (prepare.needs ?? []).includes("restore_memo"),
@@ -496,7 +504,7 @@ mkdir -p "$BUNDLE/github"
         freshHosted: lane({ ref: "main", event: "push" }),
         retained: lane({ ref: "main", event: "workflow_dispatch", inputs: { use_published_data: true, parallel_collection: false }, collectorRunner: "slop-collector" }),
         parallel: lane({ ref: "main", event: "workflow_dispatch", inputs: { use_published_data: false, parallel_collection: true }, collectorRunner: "slop-collector" }),
-        staging: lane({ ref: "development", event: "push", collectorRunner: "slop-collector" }),
+        staging: lane({ ref: "staging", event: "push", collectorRunner: "slop-collector" }),
       },
       deadlines: Object.fromEntries(Object.entries(deadlines).map(([name, scenario]) => [name, deadline(prepare, scenario)])),
       daily: {
@@ -508,7 +516,7 @@ mkdir -p "$BUNDLE/github"
         forkRelease: dispatch({ event: "workflow_run", workflowRun: { id: 901, head_branch: "main", head_repository: { id: 7 }, event: "push" } }),
         pullRequestRelease: dispatch({ event: "workflow_run", workflowRun: { id: 902, head_branch: "main", head_repository: { id: 100 }, event: "pull_request" } }),
         manualOnDevelop: dispatch({ ref: "develop", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
-        development: dispatch({ ref: "development", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        staging: dispatch({ ref: "staging", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
         checkouts: { schedule: checkout(start, scheduled), manualStart: checkout(start, manualStart), followUp: checkout(followUp, completedRelease), manualFollowUp: checkout(followUp, manualFollowUp) },
         startCommand: recorded(stepOf(start, "Dispatch a fresh collection unless one is running"), {}),
         followUpCommands: [followUpCommand(completedRelease), followUpCommand(manualFollowUp)],
@@ -857,7 +865,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     })
     const stagingManifested = try attempt(["manifest", "staging", stagingBundle])
     const stagingReceipts = try receipts("staging-receipts", [...fullGates, "BrowserSmoke"], try sha256Hex(try fs.readFile(files.join(stagingBundle, "release-manifest.json"))))
-    try git(origin, ["branch", "development", tested])
+    try git(origin, ["branch", "staging", tested])
     const divergent = try git(origin, ["commit-tree", `${initial}^{tree}`, "-p", initial, "-m", "divergent"])
     const newer = try git(root, ["commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "newer attempt"])
     const controller = ".github/workflows/vetting-controller.yml"
@@ -870,8 +878,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       const from = fake.requests.length
       const deadline: Readonly<Record<string, string>> = headroomSeconds === "unset" ? {} : { STAGING_ORDER_RETRY_UNTIL: String(nowSeconds + headroomSeconds) }
       const outcome = try publishing("Staging", stagingReceipts, {
-        GITHUB_REF: "refs/heads/development",
-        GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
+        GITHUB_REF: "refs/heads/staging",
+        GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/staging`,
         GITHUB_JOB: "staging",
         SLOP_GITHUB_ENVIRONMENT: "slop-staging",
         ...deadline,
@@ -885,6 +893,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
 
     const stagedInOrder = try staged(inOrder)
     const stagedSkipped = try staged([{ sha: tested }, { sha: newer, workflow: controller }])
+    const stagedLegacyPreCutover = try staged([{ sha: tested }, { sha: divergent, ref: "development", createdAt: "2026-11-24T12:00:00Z" }])
+    const stagedLegacyPostCutover = try staged([{ sha: tested }, { sha: divergent, ref: "development", createdAt: "2026-11-27T00:00:00Z" }])
     const stagedNewer = try staged([{ sha: tested }, { sha: newer, workflow: ".github/workflows/deploy.yml" }])
     const quotaReset = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }))
     const quotaAtStatuses = try staged([{ sha: tested }, { sha: newer, workflow: controller }], () => refuseNext(fake, repository, "/statuses", 429, { "retry-after": "0" }, { history: provenanceChanged }))
@@ -899,8 +909,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
     })
-    const forcePushed = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" }, { branch: { origin, name: "development", sha: divergent } }))
-    try git(origin, ["branch", "-f", "development", tested])
+    const forcePushed = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" }, { branch: { origin, name: "staging", sha: divergent } }))
+    try git(origin, ["branch", "-f", "staging", tested])
     const withoutJobDeadline = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }), "unset")
     const retryAtDeadline = try staged(inOrder, () => {
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
@@ -922,17 +932,17 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     })
     const retainedManifested = try attempt(["manifest", "staging", retainedBundle])
     const retainedReceipts = try receipts("retained-receipts", [...fullGates, "BrowserSmoke"], try sha256Hex(try fs.readFile(files.join(retainedBundle, "release-manifest.json"))))
-    const developmentRun: Readonly<Record<string, string>> = {
-      GITHUB_REF: "refs/heads/development",
-      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
+    const stagingRun: Readonly<Record<string, string>> = {
+      GITHUB_REF: "refs/heads/staging",
+      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/staging`,
       GITHUB_JOB: "staging",
       SLOP_GITHUB_ENVIRONMENT: "slop-staging",
       STAGING_ORDER_RETRY_UNTIL: String(Math.floor((try Clock.currentTimeMillis) / 1_000) + 120),
     }
     try Effect.try(() => stagedHistory(fake, repository, inOrder))
-    const retainedPush = try publishing("Staging", retainedReceipts, developmentRun, initial, retainedBundle)
+    const retainedPush = try publishing("Staging", retainedReceipts, stagingRun, initial, retainedBundle)
     try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true } }))
-    const dispatched = { ...developmentRun, GITHUB_EVENT_NAME: "workflow_dispatch" }
+    const dispatched = { ...stagingRun, GITHUB_EVENT_NAME: "workflow_dispatch" }
     const retainedCoverage = try attempt(["coverage", "staging"], dispatched)
     try Effect.try(() => stagedHistory(fake, repository, inOrder))
     const retainedManual = try publishing("Staging", retainedReceipts, dispatched, initial, retainedBundle)
@@ -997,6 +1007,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       stagingManifested,
       stagedInOrder: stagedInOrder.step,
       stagedSkipped: stagedSkipped.step,
+      stagedLegacyPreCutover: stagedLegacyPreCutover.step,
+      stagedLegacyPostCutover: stagedLegacyPostCutover.step,
       stagedNewer: stagedNewer.step,
       quotaReset: quotaReset.step,
       quotaResetWaited: quotaReset.waitedMillis >= 1_000,
@@ -1034,7 +1046,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       const pullEvent = files.join(directory, `pull-${after}.json`)
       const outputs = files.join(directory, `outputs-${after}`)
       const side = (ref: string, sha: string) => ({ ref, sha, repo: { full_name: repository } })
-      try written(pullEvent, JSON.stringify({ repository: { full_name: repository }, pull_request: { head: side("feature", after), base: side("development", before) } }))
+      try written(pullEvent, JSON.stringify({ repository: { full_name: repository }, pull_request: { head: side("feature", after), base: side("staging", before) } }))
       const selected = try attempt(["scope", origin], { GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: pullEvent, GITHUB_REF: "refs/pull/9/merge", GITHUB_SHA: after, GITHUB_OUTPUT: outputs })
       const lines = selected === "ok" ? (try fs.readFileString(outputs)).split("\n") : [selected]
       return lines.find((line) => line.startsWith("pages=")) ?? lines.join("; ")
@@ -1098,6 +1110,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         stagingManifested: "ok",
         stagedInOrder: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history"], calls: ["prepare"], rereadSamePage: false },
         stagedSkipped: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history", "statuses", "run"], calls: ["prepare"], rereadSamePage: false },
+        stagedLegacyPreCutover: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history"], calls: ["prepare"], rereadSamePage: false },
+        stagedLegacyPostCutover: { outcome: "StagingHistoryRefused: Unknown staging deployment provenance; require human review", reads: ["history"], calls: [], rereadSamePage: false },
         stagedNewer: { outcome: "ReleaseStopped:Superseded", reads: ["history", "statuses", "run"], calls: [], rereadSamePage: false },
         quotaReset: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history", "history"], calls: ["prepare"], rereadSamePage: true },
         quotaResetWaited: true,
@@ -1144,7 +1158,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       retained: try followed(actionRun(1), { collect: "skipped" }, []),
       unknownStep: try followed(actionRun(1), { collect: null }, []),
       pullRequest: try followed(actionRun(1, { event: "pull_request" }), {}),
-      otherBranch: try followed(actionRun(1, { head_branch: "development" }), {}),
+      otherBranch: try followed(actionRun(1, { head_branch: "staging" }), {}),
       fork: try followed(actionRun(1, { head_repository: { full_name: "someone/slopdotcash" } }), {}),
       otherWorkflow: try followed(actionRun(1, { path: ".github/workflows/formal.yml" }), {}),
       running: try followed(actionRun(1, { status: "in_progress" }), {}),
@@ -1230,7 +1244,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
           freshHosted: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-collect", timeout: "360", deadline: "19200", reserves: true, restoresMemo: true },
           retained: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-retained", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
           parallel: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-collect-parallel", timeout: "360", deadline: "19200", reserves: true, restoresMemo: true },
-          staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/development-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
+          staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/staging-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
         },
         deadlines: {
           hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
@@ -1249,7 +1263,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
           forkRelease: { start: false, followUp: false },
           pullRequestRelease: { start: false, followUp: false },
           manualOnDevelop: { start: false, followUp: false },
-          development: { start: false, followUp: false },
+          staging: { start: false, followUp: false },
           checkouts: { schedule: "refs/heads/main", manualStart: "a".repeat(40), followUp: "refs/heads/main", manualFollowUp: "a".repeat(40) },
           startCommand: ["apps/operations/dist/programs/main.js release daily start"],
           followUpCommands: [["apps/operations/dist/programs/main.js release daily follow-up 900"], ["apps/operations/dist/programs/main.js release daily follow-up 900"]],

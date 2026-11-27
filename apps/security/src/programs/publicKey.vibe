@@ -22,7 +22,7 @@ export effect function publicScannerKey(key: Redacted.Redacted<string>, target: 
   return { schema: "slop-scanner-public-key-v1", target, sourceSha, publicKey: Base64.encode(pair.publicKey), sha256: try sha256Hex(pair.publicKey) } satisfies PublicScannerKey
 }
 
-const releases: Readonly<Record<KeyTarget, string>> = { staging: "development", production: "main" }
+const releases: Readonly<Record<KeyTarget, string>> = { staging: "staging", production: "main" }
 
 export effect function publicKey(args: ReadonlyArray<string>) {
   const [target, ...rest] = args

@@ -2,10 +2,10 @@
 
 PRD sections 9 and 12 at main `21663f12cd276dfc7b4c913e3b9fbe34c153f99a`
 allow two independent options for an explicit manual release to main or
-development. `skip_proofs` omits the state-model run and static proof run.
+staging. `skip_proofs` omits the state-model run and static proof run.
 `skip_browser_tests` requires the browser smoke lane against the built bundle.
 Both default to false. They are distinct from the two data options:
-`use_published_data`, for a manual main or development release, retains the
+`use_published_data`, for a manual main or staging release, retains the
 last snapshot that environment published, and `discussion_resume_run`, for a
 manual main release only, resumes public PR discussion reads from a recent
 trusted main release attempt; the two exclude each other. `data_from_run`,
@@ -162,7 +162,7 @@ pure def lawSmokeNeedsItsOwnReceipt(request: Requests, receipts: CheckReceipts):
 A normal PR selects affected UI and API lanes, contract/sandbox/installer
 checks, state models and static proofs. Coverage comes from reviewed Git
 inputs and affected source dependencies. A workflow or model-tool change can
-require every model. A same-repository development promotion into main runs
+require every model. A same-repository staging or develop promotion into main runs
 all state models and static proofs. The deploying push supplies full browser
 and other release checks. A PR without a selected browser lane still runs
 smoke. Both inventories always run. Independently scheduled checks run all

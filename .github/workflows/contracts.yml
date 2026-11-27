@@ -2,7 +2,7 @@ name: Escrow and submission deposit contracts
 
 on:
   pull_request:
-    branches: [develop, development, main]
+    branches: [develop, staging, main]
     paths:
       - "packages/contracts/**"
       - "packages/platform/src/testing/chains/**"
@@ -10,7 +10,7 @@ on:
       - ".github/actions/setup/action.yml"
       - "pnpm-lock.yaml"
   push:
-    branches: [develop, development, main]
+    branches: [develop, staging, main]
     paths:
       - "packages/contracts/**"
       - "packages/platform/src/testing/chains/**"

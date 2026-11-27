@@ -599,7 +599,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
 
     const insecure = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: "http://candidate-rpc.test/v1/journey" }, robinhood, robinhood)
     const reference = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: `${referenceRpc}/` }, robinhood, robinhood)
-    const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/development" }, robinhood, robinhood)
+    const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/staging" }, robinhood, robinhood)
     const pushed = try rotate({ ...environment, GITHUB_EVENT_NAME: "push" }, robinhood, robinhood)
     const disabled = try rotate({ ...environment, SLOP_FEE_CONVERTER_RELEASE: "" }, robinhood, robinhood)
     const qualified = try rotate(environment, robinhood, robinhood)
@@ -740,7 +740,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       { SLOP_SLOPBOT_PRIOR_PROOF_RUN: "never-export" },
       { SLOP_SLOPBOT_EXPECTED_SOURCE: "a" },
       { SLOP_SLOPBOT_EXPECTED_SOURCE: "A".repeat(40) },
-      { GITHUB_REF: "refs/heads/development" },
+      { GITHUB_REF: "refs/heads/staging" },
     ]
     const selections: Array<{ readonly outcome: string; readonly calls: number; readonly report: boolean }> = []
     for (const changed of mixed) {
@@ -868,7 +868,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const wrongGrant = try witnessed(run, { refusal: "grant" })
     const foreign = try witnessed({ ...run, SLOP_QUOTA_COMMIT_WITNESS: "slop367", GITHUB_REPOSITORY: "sample/other" }, { commit: quotaCommits.slop367 })
     const unreviewed = try witnessed({ ...run, SLOP_QUOTA_COMMIT_WITNESS: "f".repeat(40) })
-    const development = try witnessed({ ...run, GITHUB_REF: "refs/heads/development" })
+    const staging = try witnessed({ ...run, GITHUB_REF: "refs/heads/staging" })
     const otherApp = try witnessed({ ...run, SLOPBOT_APP_ID: "44" })
     const staleManifest = try witnessed({ ...run, SLOP_QUOTA_MANIFEST_SHA256: "b".repeat(64) })
     const secondRepository = try witnessed(run, { refusal: "repository" })
@@ -889,7 +889,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       wrongGrant: { ...revokedWithout(wrongGrant), readQuota: readQuota(wrongGrant) },
       foreign: nothing(foreign),
       unreviewed: nothing(unreviewed),
-      development: nothing(development),
+      staging: nothing(staging),
       otherApp: nothing(otherApp),
       staleManifest: nothing(staleManifest),
       secondRepository: revokedWithout(secondRepository),
@@ -938,7 +938,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       wrongGrant: { outcome: refused, last: "DELETE /installation/token", written: false, readQuota: false },
       foreign: { outcome: refused, calls: ["GET /api/v1/projects/example"], written: false },
       unreviewed: { outcome: refused, calls: [], written: false },
-      development: { outcome: refused, calls: [], written: false },
+      staging: { outcome: refused, calls: [], written: false },
       otherApp: { outcome: refused, calls: [], written: false },
       staleManifest: { outcome: refused, calls: ["GET /api/v1/projects/example"], written: false },
       secondRepository: { outcome: refused, last: "DELETE /installation/token", written: false },
