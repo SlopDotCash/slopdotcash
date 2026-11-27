@@ -18117,7 +18117,7 @@
     },
     {
       "path": "spec/points/collectionMemo.md",
-      "sha256": "c0abb206dd56fd0cdf983e18ef9525c026cee88ee1363cea789c1f4c4b6b381d",
+      "sha256": "267f5aa9d09fa22cd3af549df9ee144494fecd842478575160cc7da9333f11f7",
       "module": "points__collectionMemo",
       "stories": [
         {
@@ -18197,6 +18197,8 @@
             "answered",
             "candidate",
             "priorResult",
+            "priorHeld",
+            "priorOf",
             "recordedOf",
             "withAnswer",
             "canAudit",
@@ -18213,12 +18215,13 @@
             "lawSampledEveryFiftieth",
             "sometimesAuditMismatchDiscardsReuse",
             "sometimesReusedAfterCleanAudit",
+            "sometimesHoldReused",
             "sometimesExpiredNotReused"
           ]
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / The next memo records exactly the live version of every fenced answer and is written only after the snapshot",
-          "line": 229,
+          "line": 234,
           "definitions": [
             "canComputeLive",
             "computeLive",
@@ -18229,19 +18232,20 @@
             "canFailMemoWrite",
             "failMemoWrite",
             "alwaysNextMemoIsRecorded",
-            "alwaysHoldNeverRecorded",
+            "alwaysReusedStaysRecorded",
             "alwaysFullRunRestartsWeek",
             "alwaysLastFullNotAfterOpen",
             "alwaysNothingAnsweredUnopened",
             "stepMemoOnlyAfterSnapshot",
             "sometimesReusedAndWritten",
-            "sometimesHoldNotRecorded",
+            "sometimesHoldRecorded",
+            "sometimesUnfencedNotRecorded",
             "sometimesMemoNotWritten"
           ]
         },
         {
-          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo",
-          "line": 276,
+          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo, and a held earlier answer",
+          "line": 284,
           "definitions": [
             "matchingMemo",
             "expiredMemo",
@@ -18263,7 +18267,9 @@
             "eval_witness_sometimesChangedCodeIncremental",
             "eval_witness_sometimesExpiredNotReused",
             "eval_witness_sometimesUntrustedRunFails",
-            "eval_witness_sometimesHoldNotRecorded",
+            "eval_witness_sometimesHoldRecorded",
+            "eval_witness_sometimesUnfencedNotRecorded",
+            "eval_witness_sometimesHoldReused",
             "eval_witness_sometimesMemoNotWritten"
           ]
         }

@@ -346,7 +346,7 @@ function attributionFence(outcome: CensusOutcome, headRefOid: string, mergedAt: 
 }
 
 function memoResult(answer: AttributionAnswer): AttributionMemoResult | null {
-  if (answer.kind === "hold") return null
+  if (answer.kind === "hold") return answer.limitations.includes(retainedDeferred) ? null : { kind: "hold", limitations: answer.limitations }
   return answer.kind === "none" ? { kind: "none" } : { kind: "authors", authors: answer.rows }
 }
 
@@ -418,6 +418,7 @@ effect function liveAttribution(run: Run, outcome: CensusOutcome, eligible: Read
 effect function reusedAttribution(run: Run, outcome: CensusOutcome, entry: AttributionMemoEntry) {
   const result = entry.result
   if (result.kind === "none") return noAttribution
+  if (result.kind === "hold") return held(result.limitations)
   try hydrateActors(run, result.authors.map((row) => row[1]))
   const credits: RetainedCommitCredit[] = []
   for (const [commitSha, actorNodeId, originalPullRequestId, originalPullRequestUrl, originalCommitSha] of result.authors) {

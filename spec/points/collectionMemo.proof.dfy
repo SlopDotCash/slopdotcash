@@ -9,7 +9,7 @@ lemma PriorDistinctView(r: MemoRun)
 }
 
 lemma RecordedFilterView(answers: seq<Answer>)
-  ensures recordedOf(answers) == (var s_map := ProofLib.Filter((a: Answer) => a.recorded, answers); seq(|s_map|, i_map requires 0 <= i_map < |s_map| => var a := s_map[i_map]; PriorAnswer(a.outcomeId, a.version, a.result, false)))
+  ensures recordedOf(answers) == (var s_map := ProofLib.Filter((a: Answer) => a.recorded, answers); seq(|s_map|, i_map requires 0 <= i_map < |s_map| => var a := s_map[i_map]; priorOf(a)))
 {
 }
 
@@ -88,6 +88,26 @@ lemma FoldLeftPrior(xs: seq<PriorAnswer>, outcomeId: int, expected: int, acc: in
   }
 }
 
+lemma FoldLeftPriorHeld(xs: seq<PriorAnswer>, outcomeId: int, expected: bool, acc: bool)
+  requires exists p :: p in xs && p.outcomeId == outcomeId && p.held == expected
+  requires forall q :: q in xs && q.outcomeId == outcomeId ==> q.held == expected
+  ensures Std.Collections.Seq.FoldLeft((acc: bool, p: PriorAnswer) => (if (p.outcomeId == outcomeId) then p.held else acc), acc, xs) == expected
+  decreases |xs|
+{
+  var f := (acc: bool, p: PriorAnswer) => (if (p.outcomeId == outcomeId) then p.held else acc);
+  var init := xs[..|xs| - 1];
+  var last := xs[|xs| - 1];
+  assert xs == init + [last];
+  ProofLib.FoldLeftAppend(f, acc, init, last);
+  if last.outcomeId == outcomeId {
+    assert last.held == expected;
+  } else {
+    var p :| p in xs && p.outcomeId == outcomeId && p.held == expected;
+    assert p in init;
+    FoldLeftPriorHeld(init, outcomeId, expected, acc);
+  }
+}
+
 lemma reuse_ensures(r: MemoRun, outcomeId: int, version: int, sample: int)
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysRefusedOnlyWithReason(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysFullNeverReuses(reuse(r, outcomeId, version, sample)))
@@ -96,11 +116,11 @@ lemma reuse_ensures(r: MemoRun, outcomeId: int, version: int, sample: int)
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysReuseWithinFence(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysAuditsPrecedeReuse(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysAuditedIsRecomputed(reuse(r, outcomeId, version, sample)))
-  ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysNextMemoIsRecorded(reuse(r, outcomeId, version, sample)))
-  ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysHoldNeverRecorded(reuse(r, outcomeId, version, sample)))
+  ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysReusedStaysRecorded(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysFullRunRestartsWeek(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysLastFullNotAfterOpen(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysNothingAnsweredUnopened(reuse(r, outcomeId, version, sample)))
+  ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> alwaysNextMemoIsRecorded(reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> stepRefusalIsFinal(r, reuse(r, outcomeId, version, sample)))
   ensures (inv(r) ==> canReuse(r, outcomeId, version, sample) ==> stepMemoOnlyAfterSnapshot(r, reuse(r, outcomeId, version, sample)))
 {
@@ -108,13 +128,15 @@ lemma reuse_ensures(r: MemoRun, outcomeId: int, version: int, sample: int)
     PriorDistinctView(r);
     var p :| p in r.prior && p.outcomeId == outcomeId && p.version == version && !p.expired;
     forall q | q in r.prior && q.outcomeId == outcomeId
-      ensures q.result == p.result
+      ensures q.result == p.result && q.held == p.held
     {
       UniquePriorMatch(r.prior, p, q);
     }
     FoldLeftPrior(r.prior, outcomeId, p.result, -1);
+    FoldLeftPriorHeld(r.prior, outcomeId, p.held, false);
     assert priorResult(r, outcomeId) == p.result;
-    var a := Answer(outcomeId, version, priorResult(r, outcomeId), false, true, false, true);
+    assert priorHeld(r, outcomeId) == p.held;
+    var a := Answer(outcomeId, version, priorResult(r, outcomeId), priorHeld(r, outcomeId), true, false, true);
     WithAnswerKeeps(r, a);
   }
 }
@@ -127,18 +149,18 @@ lemma audit_ensures(r: MemoRun, outcomeId: int, version: int, sample: int, resul
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysReuseWithinFence(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysAuditsPrecedeReuse(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysAuditedIsRecomputed(audit(r, outcomeId, version, sample, result, held, fenced)))
-  ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysNextMemoIsRecorded(audit(r, outcomeId, version, sample, result, held, fenced)))
-  ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysHoldNeverRecorded(audit(r, outcomeId, version, sample, result, held, fenced)))
+  ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysReusedStaysRecorded(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysFullRunRestartsWeek(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysLastFullNotAfterOpen(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysNothingAnsweredUnopened(audit(r, outcomeId, version, sample, result, held, fenced)))
+  ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> alwaysNextMemoIsRecorded(audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> stepRefusalIsFinal(r, audit(r, outcomeId, version, sample, result, held, fenced)))
   ensures (inv(r) ==> canAudit(r, outcomeId, version, sample, result, held, fenced) ==> stepMemoOnlyAfterSnapshot(r, audit(r, outcomeId, version, sample, result, held, fenced)))
 {
   if inv(r) && canAudit(r, outcomeId, version, sample, result, held, fenced) {
     PriorDistinctView(r);
     var p :| p in r.prior && p.outcomeId == outcomeId && p.version == version && !p.expired;
-    var a := Answer(outcomeId, version, result, held, false, true, fenced && !held);
+    var a := Answer(outcomeId, version, result, held, false, true, fenced);
     WithAnswerKeeps(r, a);
   }
 }
@@ -151,16 +173,16 @@ lemma computeLive_ensures(r: MemoRun, outcomeId: int, version: int, result: int,
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysReuseWithinFence(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysAuditsPrecedeReuse(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysAuditedIsRecomputed(computeLive(r, outcomeId, version, result, held, fenced)))
-  ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysNextMemoIsRecorded(computeLive(r, outcomeId, version, result, held, fenced)))
-  ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysHoldNeverRecorded(computeLive(r, outcomeId, version, result, held, fenced)))
+  ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysReusedStaysRecorded(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysFullRunRestartsWeek(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysLastFullNotAfterOpen(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysNothingAnsweredUnopened(computeLive(r, outcomeId, version, result, held, fenced)))
+  ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> alwaysNextMemoIsRecorded(computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> stepRefusalIsFinal(r, computeLive(r, outcomeId, version, result, held, fenced)))
   ensures (inv(r) ==> canComputeLive(r, outcomeId, version, result, held, fenced) ==> stepMemoOnlyAfterSnapshot(r, computeLive(r, outcomeId, version, result, held, fenced)))
 {
   if inv(r) && canComputeLive(r, outcomeId, version, result, held, fenced) {
-    var a := Answer(outcomeId, version, result, held, false, false, fenced && !held);
+    var a := Answer(outcomeId, version, result, held, false, false, fenced);
     WithAnswerKeeps(r, a);
   }
 }

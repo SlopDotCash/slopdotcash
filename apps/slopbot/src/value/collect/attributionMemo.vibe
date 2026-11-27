@@ -178,7 +178,7 @@ export function attributionRecorder(spellings: ReadonlyArray<string>, repository
       refuse("a read failed")
     },
     entry(outcomeId: string, fence: AttributionMemoFence, result: AttributionMemoResult | null) {
-      if (result === null) refuse("the result is a hold")
+      if (result === null) refuse("the attribution was deferred for this collection")
       if (incoming === undefined) refuse("incoming references were not read")
       for (const number of subresources) if (!pullNumbers.has(number)) refuse("a pull request's discussion was read without its version")
       if (reasons.length > 0 || result === null || incoming === undefined) return undefined
