@@ -64,7 +64,7 @@ const pendingFrame = "{\"status\":\"pending\"}\n"
 type Terminal = typeof ImportTerminalFrame.Type
 
 function respond(status: number, body: unknown) {
-  return json(body, status, privateNoStore)
+  return HttpServerResponse.setHeader(json(body, status, privateNoStore), "content-type", "application/json")
 }
 
 function refused(row: RefusalRow) {

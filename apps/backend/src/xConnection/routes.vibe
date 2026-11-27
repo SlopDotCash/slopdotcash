@@ -70,6 +70,8 @@ effect function xSession() {
   return row === undefined ? undefined : { actor: row.actor_id, sender: { kind: "session", hash } satisfies Sender }
 }
 
+const plainJson = HttpServerResponse.setHeader("content-type", "application/json")
+
 function signedOut() {
   return bare(postPointsXStart.notSignedInNoStore)
 }
@@ -181,9 +183,9 @@ effect function publishLink() {
 }
 
 export const XRoutes = Layer.mergeAll(
-  handleRaw(xProfile, (input) => pointsAnswer(profile(input.query))),
+  handleRaw(xProfile, (input) => pointsAnswer(Effect.map(profile(input.query), plainJson))),
   handleRaw(xCallbackRoute, (input) => pointsAnswer(callback(input.query))),
-  handleRaw(xMe, () => pointsAnswer(account())),
+  handleRaw(xMe, () => pointsAnswer(Effect.map(account(), plainJson))),
   handleRaw(xStart, () => pointsAnswer(start())),
   handleRaw(xDisconnect, () => pointsAnswer(disconnect())),
   handleRaw(xVisibility, () => pointsAnswer(publishLink())),
