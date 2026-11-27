@@ -13,6 +13,7 @@ import { storageKeys } from "../../../platform/storage.vibe";
 import type { SlotStorage } from "../../../wallets/core/slots.ts";
 import { readText } from "../../../wallets/owner/flowSlots.ts";
 import type { OwnerPlan } from "../../../wallets/owner/ownerPlans.schema.ts";
+import type { FundingReward } from "../vault/project.schema.ts";
 
 export type Presentation = StatusProps["presentation"];
 
@@ -33,6 +34,7 @@ export interface SavedAward {
 const monthFormat = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC", year: "numeric" });
 const zeroAmount = /^0*(\.0*)?$/u;
 const wholeBaseUnits = /^[1-9][0-9]{0,19}$/u;
+const elizaOctober = "2026-10";
 
 /** @throws {never} */
 export function monthText(period: string): string {
@@ -51,8 +53,8 @@ export function shiftMonth(period: string, months: number): string {
   }
 }
 
-/** The months an owner may review: from the first monthly period, or an older public month, to the last reachable month. @throws {never} */
-export function monthBounds(projectId: string, publicMonths: ReadonlyArray<string>, nowMs: number): MonthBounds {
+/** The monthly award navigator also honors the recorded Eliza October cap when public history is empty. @throws {never} */
+export function monthBounds(projectId: string, publicMonths: ReadonlyArray<string>, nowMs: number, cycleCaps?: FundingReward["cycleCaps"]): MonthBounds {
   const months = [...new Set(publicMonths.filter((month) => parsePeriod(month) !== undefined))].sort();
   const firstPeriod = formatPeriod(FIRST_PERIOD);
   const earliest = months[0];
@@ -61,8 +63,10 @@ export function monthBounds(projectId: string, publicMonths: ReadonlyArray<strin
   const lastClosed = current === undefined ? firstPeriod : shiftMonth(formatPeriod(current), -1);
   const reachable = lastReachableMonth(projectId, Math.floor(nowMs / 1000), parsePeriod(lastClosed) ?? FIRST_PERIOD);
   const last = isPeriod(reachable) ? formatPeriod(reachable) : lastClosed;
+  const first = earliest !== undefined && earliest < firstPeriod ? earliest : firstPeriod;
+  const recordedElizaOctober = projectId === "eliza" && lastClosed >= elizaOctober && cycleCaps?.some(({ cycleId }) => cycleId === elizaOctober) === true;
   return {
-    first: earliest !== undefined && earliest < firstPeriod ? earliest : firstPeriod,
+    first: recordedElizaOctober && elizaOctober < first ? elizaOctober : first,
     last,
     start: latest !== undefined && latest > last ? latest : last,
   };

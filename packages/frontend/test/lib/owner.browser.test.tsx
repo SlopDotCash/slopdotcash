@@ -17,7 +17,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, erc20Abi, pad, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { editorOpen } from "../../gen/frontend__ownerMonthly.ts";
 import type { Route } from "../../gen/app.ts";
 import { actor as actorOf, visitor } from "../../gen/frontend__ownerVault.ts";
@@ -27,6 +27,7 @@ import { Machine as ReadMachine } from "../../gen/frontend__requests.effect.vibe
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { type FundingVault, unreadLocks } from "../../src/kernels/poolFunding.ts";
 import { monthBounds } from "../../src/screens/funding/awards/month.ts";
+import { OwnerAwards } from "../../src/screens/funding/awards/OwnerAwards.tsx";
 import { type PageRuntime, pageRuntime } from "../../src/app/runtime.vibe";
 import { EscrowFunding, publicCoverage } from "../../src/screens/funding/vault/EscrowFunding.tsx";
 import { lockProject, usdcSnapshot } from "../../src/screens/funding/vault/fixtures.ts";
@@ -1229,6 +1230,52 @@ describe("ASI November closeout", () => {
       closeout: { first: "2026-11", last: "2026-11", start: "2026-11" },
       other: "2026-10",
       asked: [["GET", monthPath, null], ["POST", `${monthPath}/finalize`, { expectedSequence: 0 }]],
+    });
+  });
+});
+
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"
+describe("Monthly award navigation", () => {
+  it("keeps Eliza October reachable in December", async () => {
+    const december = Date.parse("2026-12-01T00:00:00.000Z");
+    const octoberEntry = [{ cycleId: "2026-10", monthlyCapMinor: "0" }];
+    const project: FundingProject = { ...lockProject, id: "eliza", slug: "eliza", reward: { ...lockProject.reward, cycleCaps: octoberEntry } };
+    const route: Route = { kind: "Project", projectId: project.id, cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" };
+    const runtime = pageRuntime(route);
+    const container = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(container);
+    const hostedClock = vi.spyOn(Date, "now").mockReturnValue(december);
+    answering = (path) => path === "/api/v1/project-session"
+      ? new Response(JSON.stringify({ session: null }), { headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
+    cleanups.push(() => {
+      hostedClock.mockRestore();
+      answering = undefined;
+      void act(() => root.unmount());
+      void runtime.dispose();
+    });
+    await act(() => Promise.resolve(root.render(<OwnerAwards runtime={runtime} project={project} awardMonths={[]} networkPays={() => true} />)));
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Open");
+    expect(open).toBeDefined();
+    await act(() => Promise.resolve(open?.click()));
+    const nav = container.querySelector('[aria-label="Contribution month"]');
+    const previous = nav?.querySelector<HTMLButtonElement>('[aria-label="Previous award month"]');
+    expect({ month: nav?.textContent?.trim(), disabled: previous?.disabled }).toEqual({ month: "November 2026", disabled: false });
+    await act(() => Promise.resolve(previous?.click()));
+    expect({ month: nav?.textContent?.trim(), disabled: previous?.disabled }).toEqual({ month: "October 2026", disabled: true });
+    const decemberBounds = { first: "2026-11", last: "2026-11", start: "2026-11" };
+    expect({
+      eliza: monthBounds("eliza", [], december, octoberEntry),
+      beforeClose: monthBounds("eliza", [], Date.parse("2026-10-31T23:59:59.999Z"), octoberEntry),
+      withoutRecord: monthBounds("eliza", [], december),
+      unrelatedProject: monthBounds("slopdotcash", [], december, octoberEntry),
+      earlierPublicCycle: monthBounds("eliza", ["2026-09"], december, octoberEntry),
+    }).toEqual({
+      eliza: { ...decemberBounds, first: "2026-10" },
+      beforeClose: { first: "2026-11", last: "2026-09", start: "2026-09" },
+      withoutRecord: decemberBounds,
+      unrelatedProject: decemberBounds,
+      earlierPublicCycle: { ...decemberBounds, first: "2026-09" },
     });
   });
 });
