@@ -912,6 +912,7 @@ const fixedGeneratedAt = "2026-11-16T00:00:00.000Z"
 const gitAuthor = ["-c", "user.name=Slop Site", "-c", "user.email=site@slop.invalid", "-c", "commit.gpgsign=false"]
 
 const copiedSources = [
+  ".gitattributes",
   "skills",
   "scripts/render-install-guide.mjs",
   "src/lib/install-command.ts",
@@ -977,6 +978,7 @@ const SiteBuilt = Layer.effect(SiteProgram, effect {
   try fs.makeDirectory(path.join(repository, "docs"), { recursive: true })
   try fs.writeFileString(path.join(repository, "docs/slop-product-requirements.md"), requirements)
   try git(repository, ["-c", "init.defaultBranch=main", "init", "-q"])
+  try git(repository, ["config", "--local", "core.autocrlf", "true"])
   try git(repository, ["add", "-A"])
   try git(repository, [...gitAuthor, "commit", "-q", "-m", "Site fixture"])
   return { program: path.join(scratch, "dist/programs/main.js"), repository, out: path.join(scratch, "site") }
