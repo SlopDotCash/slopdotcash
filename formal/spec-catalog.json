@@ -18012,7 +18012,7 @@
     },
     {
       "path": "spec/points/census.md",
-      "sha256": "450e043e55263e5336adaf487d33d5078ff7f34f5956e3c601e905235e370f41",
+      "sha256": "06c6af798d0bce09c0200b29decb9ad0428ee6d882023c62f669ff82e6fec657",
       "module": "points__census",
       "stories": [
         {
@@ -18021,7 +18021,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only",
-          "line": 434
+          "line": 445
         }
       ],
       "rules": [
@@ -18063,7 +18063,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Every retained item has a deterministic, fail-closed selection decision with all its reasons",
-          "line": 98,
+          "line": 109,
           "definitions": [
             "Reason",
             "Status",
@@ -18088,7 +18088,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Only a complete census is ready for publication",
-          "line": 152,
+          "line": 163,
           "definitions": [
             "alwaysItemsDistinct",
             "alwaysCursorsDistinct",
@@ -18101,7 +18101,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days",
-          "line": 166,
+          "line": 177,
           "definitions": [
             "claimMaxAgeMs",
             "ClaimSource",
@@ -18124,7 +18124,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget",
-          "line": 228,
+          "line": 239,
           "definitions": [
             "maxGenerationCost",
             "rateLimitReserve",
@@ -18155,7 +18155,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A split Search range whose children disagree with the parent count is repeated once",
-          "line": 306,
+          "line": 317,
           "definitions": [
             "searchSafeResultLimit",
             "minimumSearchSliceMs",
@@ -18176,7 +18176,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / An optional discussion probe starts only with two available points and never waits for quota to probe",
-          "line": 347,
+          "line": 358,
           "definitions": [
             "probeCost",
             "ProbeAnswer",
@@ -18195,7 +18195,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Simulation samples include repeated cursors, count changes and blocked items",
-          "line": 387,
+          "line": 398,
           "definitions": [
             "human",
             "emptyPage",
@@ -18213,7 +18213,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only / The band reapplication touches only eligible unpaid work from 1 September through 31 October 2026",
-          "line": 440,
+          "line": 451,
           "definitions": [
             "AwardStage",
             "BandedWork",
@@ -18251,7 +18251,7 @@
         },
         {
           "target": "./ingestion.md",
-          "line": 256
+          "line": 267
         }
       ]
     },

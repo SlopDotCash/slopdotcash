@@ -2,8 +2,9 @@
 import { confirmationDelayMs, confirmationProbes, holdsJointMember } from "../../../gen/points__census.effect.vibe"
 import { type Recollection, type ReviewCensus, assertReviewCensusStable, collectReviewCensus, reconcileReviewCensus } from "../../census/reviews.vibe"
 import { Graphql, type UnavailableSource, ensureEstimatedBudget, estimateFirstPageDetailCost, estimateReviewFirstPageDetailCost, executeNodeBatch, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
+import type { AuditedSource } from "../../corrections/reviewed/packet.vibe"
 import type { SearchStats } from "../../ingestion/search.vibe"
-import { type HydrationCandidate, type HydrationPlan, type Preflight, collectSearchReferences, countSearchResults, planMergedPullRequestHydration, preflightRepository } from "./census.vibe"
+import { type HydrationCandidate, type HydrationPlan, type Preflight, collectSearchReferences, completeReviewedMergedReferences, countSearchResults, planMergedPullRequestHydration, preflightRepository } from "./census.vibe"
 import { type CommitLineLoader, commitLineLoader } from "./commits.vibe"
 import { type IssueRecord, type PullRequestRecord, type ReviewRecord, hydrateIssues, hydratePullRequests, hydrateReviewedPullRequests } from "./hydrate.vibe"
 import { MergedRecordInvalid, type MergedOutcome, type NodeReference, arrayAt, chunks, decoded, dedupedById, rateLimitQuery } from "./wire.vibe"
@@ -30,6 +31,7 @@ export interface MergedWorkInput {
   readonly valuePolicyFromMs: number
   readonly evaluatedReviewKeys: ReadonlySet<string>
   readonly recollection: Recollection
+  readonly reviewedMergedSources?: ReadonlyArray<AuditedSource>
 }
 
 export interface MergedRepository {
@@ -133,7 +135,9 @@ effect function listRepository<E, R>(input: MergedWorkInput, target: MergedTarge
     if (earlier.preflight.id === preflight.id) throw new MergedRecordInvalid({ message: `Registry repositories ${earlier.target.id} and ${target.id} resolved to one GitHub node` })
   }
   const search = { target, toMs: input.nowMs, stats, commitLines, repositoryNodeId: preflight.id }
-  const references = try collectSearchReferences({ ...search, fromMs: input.windowFromMs, qualifier: "merged", kindQualifier: "is:pr is:merged", expectedKind: "PullRequest" })
+  const mergedCensus = { ...search, fromMs: input.windowFromMs, qualifier: "merged", kindQualifier: "is:pr is:merged", expectedKind: "PullRequest" } as const
+  const searched = try collectSearchReferences(mergedCensus)
+  const references = input.reviewedMergedSources === undefined ? searched : try completeReviewedMergedReferences(searched, input.reviewedMergedSources, mergedCensus)
   for (const reference of references) {
     if (reference.outcome === null) throw new MergedRecordInvalid({ message: `Merged pull request ${reference.id} is missing scalar outcome metadata` })
   }
