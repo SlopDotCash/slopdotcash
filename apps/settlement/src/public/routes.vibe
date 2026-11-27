@@ -1,7 +1,7 @@
 // spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { isoNow } from "@repo/platform/clock"
-import { Refused, handle, handleRaw, json, methodNotAllowed } from "@repo/platform/http"
+import { Refused, answerableMethods, handle, handleRaw, json } from "@repo/platform/http"
 import { type Refusal, type Route, cacheControl } from "@repo/platform/route"
 import { actorDirectTransfers, actorVaultPayments, directHistoryHeader, paymentsMe, poolFunding as poolFundingRoute, projectDirectTransfers, projectVaultPayments, receivedTotals as receivedRoute, vaultPayments } from "../client/public.vibe"
 import { getPaymentsActorsByGithubIdVaultPayments as actorParity, getPaymentsMe as accountParity, getPaymentsProjectsByIdVault as vaultParity, getPoolFunding as poolParity } from "../client/refusals.vibe"
@@ -28,6 +28,8 @@ const projectId = /^[a-z0-9][a-z0-9-]*$/u
 const actorId = /^[1-9]\d{0,15}$/u
 const receivedEdgeSeconds = 60
 const poolMethodRefused = poolParity.otherMethods.methodNotAllowedPublicMaxAge60SMaxage60
+const poolMethodResponse = succeed(json({ error: poolMethodRefused.error }, poolMethodRefused.status, poolMethodRefused.headers))
+const poolWrongMethods = answerableMethods.filter((method) => method !== "GET" && method !== "HEAD")
 
 effect function served<A, E extends { readonly _tag: string }, R>(program: A!E!R) {
   return program catch effect (error) => {
@@ -108,7 +110,7 @@ export const publicRoutes = Layer.mergeAll(
     return try directHistory({ kind: "actor", githubUserId }, input.query)
   }),
   handle(poolFundingRoute, () => poolFunding()),
-  methodNotAllowed([poolFundingRoute, { ...poolFundingRoute, method: "HEAD" }], succeed(json({ error: poolMethodRefused.error }, poolMethodRefused.status, poolMethodRefused.headers))),
+  HttpRouter.addAll(poolWrongMethods.map((method) => HttpRouter.route(method, poolFundingRoute.path, poolMethodResponse))),
   handle(totalsRoute, (input) => effect {
     return try served(projectTotals(try projectOf(input.params)))
   }),
