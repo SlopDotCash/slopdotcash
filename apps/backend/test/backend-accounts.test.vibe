@@ -239,10 +239,12 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     }
     for (const path of ["/start", "/disconnect", "/visibility"]) {
       const route = `${prefix}/x${path}`
-      try same([reply(try get(route)), reply(try get(route, expired)), reply(try get(route, live))], [
+      const signedOutWrite = try area.request(route, { method: "POST", json: {} })
+      try same([reply(try get(route)), reply(try get(route, expired)), reply(try get(route, live)), reply(signedOutWrite)], [
         [401, unsigned, "no-store", "application/json", false],
         [401, unsigned, "no-store", "application/json", false],
         [404, missing, "no-store", "application/json", false],
+        [401, unsigned, "no-store", "application/json", false],
       ])
     }
     try same((try get(`${prefix}/member?login=${actor.login}`)).body, null)

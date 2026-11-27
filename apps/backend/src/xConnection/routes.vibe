@@ -190,8 +190,8 @@ export const XRoutes = Layer.mergeAll(
   handleRaw(xProfile, (input) => pointsAnswer(Effect.map(profile(input.query), plainJson))),
   handleRaw(xCallbackRoute, (input) => pointsAnswer(callback(input.query))),
   handleRaw(xMe, () => pointsAnswer(Effect.map(account(), plainJson))),
-  handleRaw(xStart, () => pointsAnswer(start())),
-  handleRaw(xDisconnect, () => pointsAnswer(disconnect())),
-  handleRaw(xVisibility, () => pointsAnswer(publishLink())),
+  handleRaw(xStart, () => pointsAnswer(Effect.map(start(), plainJson))),
+  handleRaw(xDisconnect, () => pointsAnswer(Effect.map(disconnect(), plainJson))),
+  handleRaw(xVisibility, () => pointsAnswer(Effect.map(publishLink(), plainJson))),
   methodNotAllowed([xStart, xDisconnect, xVisibility], pointsAnswer(Effect.map(unsupportedXMethod(), plainJson))),
 )
