@@ -115,6 +115,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       ])
     }
     try same(try asked("", "POST", '{"origin":"slop","report":{}}'), unauthorized)
+    try same(try asked(held, "GET"), unauthorized)
     try same(try retained(), before)
   })
 

@@ -532,6 +532,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         try ask(path, "GET"),
       ], [unauthorized, forbidden, forbidden, path === "" ? malformed : unauthorized, path === "" ? unauthorized : missing])
     }
+    try same(try ask("/sc_missing_fixture", "GET"), unauthorized)
     try same(try counts(), before)
     try same(cases.pending.length, 0)
   }))

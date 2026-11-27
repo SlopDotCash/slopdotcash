@@ -435,7 +435,7 @@ effect function bodyOf(limitKib: number) {
 
 export const caseRoutes = Layer.mergeAll(
   handleSecurityRead({ ...listCases, ...caseSession }, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
-  handleSecurityRead(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
+  handleSecurityRead({ ...readCase, ...caseSession }, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
   handleRaw({ ...claimCase, ...caseSession, access: "public" as const }, () => effect {
     if (!(try sameOriginWrite())) throw new Refused(caseOrigin)
     const body = try bodyOf(claimCase.limitKib)

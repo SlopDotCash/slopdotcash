@@ -228,5 +228,5 @@ effect function read(actor: Actor, id: string, query: URLSearchParams) {
 
 export const submissionReadRoutes = Layer.mergeAll(
   handleSecurityRead({ ...listSubmissions, ...privateSubmissionSession }, (input) => listed(input.actor)),
-  handleSecurityRead(readSubmission, (input) => read(input.actor, input.params.id ?? "", input.query)),
+  handleSecurityRead({ ...readSubmission, ...privateSubmissionSession }, (input) => read(input.actor, input.params.id ?? "", input.query)),
 )
