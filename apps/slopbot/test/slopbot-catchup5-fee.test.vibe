@@ -19,7 +19,7 @@ import { type FeeAsk, gateSubmissionFee } from "../src/fee/gate.vibe"
 import { reopenKeptFee } from "../src/fee/items.vibe"
 import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
 import { checkStandingDeposits } from "../src/fee/standing.vibe"
-import { standingDepositBatch } from "../src/fee/standingRules.ts"
+import { standingCoverBatch, standingDepositBatch } from "../src/fee/standingRules.ts"
 import { SubmissionFeeMode, feeUnpaid } from "../src/fee/store.vibe"
 import { webhookSettings } from "../src/ingress/webhook.vibe"
 import { type Job, JobQueue, readyJob } from "../src/jobs/job.vibe"
@@ -627,6 +627,41 @@ layer(World, { timeout: "240 seconds" })((it) => {
       },
       coverAfterSecond: { state: "strike", strike_seen_at: iso(tCheck), next_check_at: null },
       depositAfterSecond: { outcome: "kept_due", outcome_reason: "strike", strike_repository_id: repositoryId, strike_pull_number: badStrikePr },
+    })
+  })
+
+  it.effect('One batch of covers whose pull requests cannot be read does not hold back the reading of the other covers or the refund that waits on them (spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
+    const { fees } = try FeeWorld
+    const tRun = Date.parse("2026-12-10T00:00:00.000Z")
+    const goneInstallation = installationId + 1
+    const readLongAgo = try opened("Past its window, read long ago", Date.parse("2026-11-02T00:00:00.000Z"))
+    const readLately = try opened("Past its window, read lately", Date.parse("2026-11-02T00:00:00.000Z"))
+    const coverInsert = `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'ada', 'widgets', '2026-11-02T00:00:00.000Z', '2026-11-02T00:00:00.000Z', '2026-11-02T00:00:00.000Z', 'watch', 1, NULL, ?, ?)`
+    try Effect.promise(() => fees.db.batch([
+      fees.db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, removed_at, source_updated_at) VALUES (?, 101, 'gone', 'User', ?, ?, 1)").bind(goneInstallation, iso(t0), iso(t0 + day)),
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+         VALUES ('sd_gone_install', 9201, 1, ?, '755000000000000000000', '75.4717', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', 'robinhood-standing', 9201)`,
+      ).bind(`0x${"9201".padStart(64, "0")}`),
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, withdraw_requested_at)
+         VALUES ('sd_waits_cover', 9202, 1, ?, '755000000000000000000', '75.4717', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', 'robinhood-standing', 9202, '2026-11-03T00:00:00.000Z')`,
+      ).bind(`0x${"9202".padStart(64, "0")}`),
+      ...Array.from({ length: standingCoverBatch }, (_, index) => fees.db.prepare(coverInsert).bind(repositoryId + 1, index + 1, "sd_gone_install", 9201, projectId, goneInstallation, "2026-12-03T00:00:00.000Z", "2026-12-01T00:00:00.000Z")),
+      fees.db.prepare(coverInsert).bind(repositoryId, readLongAgo, "sd_waits_cover", 9202, projectId, installationId, "2026-12-04T00:00:00.000Z", "2026-11-30T00:00:00.000Z"),
+      fees.db.prepare(coverInsert).bind(repositoryId, readLately, "sd_waits_cover", 9202, projectId, installationId, "2026-12-04T00:00:00.000Z", "2026-12-02T00:00:00.000Z"),
+    ]))
+    try at(tRun, checkStandingDeposits())
+    try at(tRun + 5 * 60_000, checkStandingDeposits())
+    try at(tRun + 10 * 60_000, checkStandingDeposits())
+    const covers = (try Effect.promise(() => fees.db.prepare("SELECT pull_number, state FROM standing_deposit_covers WHERE deposit_id = 'sd_waits_cover' ORDER BY pull_number").all())).results
+    const deposit = (try Effect.promise(() => fees.db.prepare("SELECT outcome, outcome_reason FROM standing_deposits WHERE id = 'sd_waits_cover'").all())).results[0]
+    const unread = (try Effect.promise(() => fees.db.prepare("SELECT COUNT(*) AS n FROM standing_deposit_covers WHERE deposit_id = 'sd_gone_install' AND state = 'watch' AND next_check_at = '2026-12-03T00:00:00.000Z'").all())).results[0]
+    try same({ covers, deposit, unread }, {
+      covers: [{ pull_number: readLongAgo, state: "clear" }, { pull_number: readLately, state: "clear" }],
+      deposit: { outcome: "refund_due", outcome_reason: "withdrawn" },
+      unread: { n: standingCoverBatch },
     })
   })
 })
