@@ -51,7 +51,7 @@ function Inventory({ runtime, actorId, lookup, attempt, onEdit, onRetry }: { run
   if (read.status === "failed")
     return (
       <Alert variant="destructive">
-        {read.message}{" "}
+        {read.message.startsWith("Evidence could not be loaded") ? read.message : `Evidence could not be loaded: ${read.message}`}{" "}
         <Button variant="link" onClick={onEdit}>
           Edit
         </Button>{" "}

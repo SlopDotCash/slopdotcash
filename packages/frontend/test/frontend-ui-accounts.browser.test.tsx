@@ -19,18 +19,23 @@ const solanaCard = named("article", "Solana wallet");
 const membersOf = (githubId: number) => site.sql("SELECT actor_id, public, closed_at FROM points_members WHERE github_id = ?", String(githubId));
 const sessionsOf = (actorId: unknown) => site.sql("SELECT count(*) AS sessions FROM points_sessions WHERE actor_id = ?", String(actorId));
 
+let expectedPopups = 0;
+
 beforeEach(async () => {
+  expectedPopups = 0;
   await site.start();
   for (const user of Object.values(users)) await site.user(user.id, user.login);
 });
 
 afterEach(async () => {
-  expect(await site.popups()).toBe(0);
+  expect(await site.popups()).toBe(expectedPopups);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
-describe('Resume an authorized destination after signing in (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account")', () => {
-  it('a signed-out private destination keeps its URL, reads nothing private and returns there after GitHub sign-in (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership")', async () => {
+// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"
+describe("Resume an authorized destination after signing in", () => {
+  // spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
+  it("a signed-out private destination keeps its URL", async () => {
     expect((await site.open("/earnings")).status).toBe(200);
     await shown(signInLink).toMatchObject({ visible: true, href: loginPath("/earnings") });
     await shown(named("link", "Log in")).toMatchObject({ href: loginPath("/earnings") });
@@ -52,7 +57,8 @@ describe('Resume an authorized destination after signing in (spec/frontend/navig
     expect(await membersOf(users.ada.id)).toEqual([member]);
   });
 
-  it('a return destination off this origin is never followed (spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination")', async () => {
+  // spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
+  it("a return destination off this origin is never followed", async () => {
     await site.github(users.ada.login);
     await site.open(`/login?next=${encodeURIComponent("https://example.org/account")}`);
     await site.click(named("button", "Continue with GitHub"));
@@ -61,8 +67,10 @@ describe('Resume an authorized destination after signing in (spec/frontend/navig
   });
 });
 
-describe('Close and reopen an account without losing history (spec/backend/accounts.md, "Story: Close and reopen an account without losing history")', () => {
-  it('a closed account signs out everywhere and only an explicit reopen signs it in again (spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can")', async () => {
+// spec/backend/accounts.md, "Story: Close and reopen an account without losing history"
+describe("Close and reopen an account without losing history", () => {
+  // spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"
+  it("a closed account signs out everywhere and only an", async () => {
     await site.allow("^console Failed to load resource: the server responded with a status of 40[19]", "^409 POST /api/v1/points/join$", "^401 GET /api/v1/payments/me$");
     await signIn(users.lin.login, "/account");
     await shown(named("form", "Close account")).toMatchObject({ count: 0 });
@@ -71,7 +79,7 @@ describe('Close and reopen an account without losing history (spec/backend/accou
 
     const closed = await site.fetch("POST", "/api/v1/points/account/close", { login: users.lin.login });
     expect(closed).toMatchObject({ status: 200, body: { closed: true } });
-    expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 0, closed_at: expect.any(String) }]);
+    expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 0, closed_at: expect.any(String) as unknown }]);
     expect(await sessionsOf(before?.actor_id)).toEqual([{ sessions: 0 }]);
     expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 401 });
 
@@ -84,7 +92,7 @@ describe('Close and reopen an account without losing history (spec/backend/accou
     await site.click(named("button", "Continue with GitHub"));
     await shown(named("button", "Reopen account")).toMatchObject({ visible: true, disabled: false });
     await shown(named("button", "Continue with GitHub")).toMatchObject({ count: 0 });
-    expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 0, closed_at: expect.any(String) }]);
+    expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 0, closed_at: expect.any(String) as unknown }]);
 
     await site.click(named("button", "Reopen account"));
     await at("/account");
@@ -93,8 +101,10 @@ describe('Close and reopen an account without losing history (spec/backend/accou
   });
 });
 
-describe('Keep mail consent tied to the signed-in account (spec/backend/accounts.md, "Story: Keep mail consent tied to the signed-in account"; spec/frontend/presentation.md, "Story: Find account controls on their existing separate pages")', () => {
-  it('a same-account focus check keeps the draft editable while Verify waits, and the verify link applies the requested consent once (spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs")', async () => {
+// spec/backend/accounts.md, "Story: Keep mail consent tied to the signed-in account"; spec/frontend/presentation.md, "Story: Find account controls on their existing separate pages"
+describe("Keep mail consent tied to the signed-in account", () => {
+  // spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"
+  it("a same-account focus check keeps the draft editable", async () => {
     const email = "octo-mae@example.test";
     const field = named("textbox", "Email address");
     const verify = named("button", "Verify");
@@ -114,10 +124,13 @@ describe('Keep mail consent tied to the signed-in account (spec/backend/accounts
 
     await site.click(verify);
     await expect.poll(async () => (await site.verifications()).filter((sent) => sent.githubId === String(users.mae.id)).length, { timeout: 30_000 }).toBe(1);
-    await shown(named("region", "Email preferences")).toMatchObject({ text: expect.stringContaining(email) });
+    await shown(named("region", "Email preferences")).toMatchObject({ text: expect.stringContaining(email) as unknown });
     const [sent] = (await site.verifications()).filter((each) => each.githubId === String(users.mae.id));
 
-    await site.open(`/account#verify-email=${sent?.token ?? ""}`);
+    await site.open(`/inbox#verify-email=${sent?.token ?? ""}`);
+    await site.click(named("button", "Verify email"));
+    await shown({ text: "Verified", exact: true }).toMatchObject({ visible: true });
+    await site.open("/account#notifications");
     await shown(named("switch", "Activity")).toMatchObject({ checked: true, disabled: false });
     await expect.poll(() => site.sql("SELECT enabled FROM notification_email_preferences WHERE github_id = ?", String(users.mae.id))).toEqual([{ enabled: 1 }]);
 
@@ -127,8 +140,10 @@ describe('Keep mail consent tied to the signed-in account (spec/backend/accounts
   });
 });
 
-describe('Change accounts without disclosing the prior account\'s draft (spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account\'s draft")', () => {
-  it('after another account signs in elsewhere, the returning tab shows and sends nothing of the previous account (spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account")', async () => {
+// spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account's draft"
+describe("Change accounts without disclosing the prior", () => {
+  // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+  it("after another account signs in elsewhere, the", async () => {
     const draft = "octo-ivy-private@example.test";
     await site.allow("^console Failed to load resource: the server responded with a status of 40[13]", "^40[13] (GET|POST) /api/v1/");
     await signIn(users.ivy.login, "/account#notifications");
@@ -148,10 +163,12 @@ describe('Change accounts without disclosing the prior account\'s draft (spec/fr
   });
 });
 
-describe('An identity refresh applies only within the navigation lifetime that requested it (spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it")', () => {
-  it('an admin view closes when a tab return finds no account, and a focus answer older than a sign-out cannot reopen it (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled")', async () => {
+// spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"
+describe("An identity refresh applies only within the", () => {
+  // spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"
+  it("an admin view closes when a tab return finds no", async () => {
     await site.allow("^console Failed to load resource: the server responded with a status of 40[13]", "^40[13] (GET|POST) /api/v1/");
-    const admin = named("heading", "Admin", { level: 1 });
+    const admin = named("navigation", "Administration");
     await signIn(users.root.login, "/admin");
     await shown(admin).toMatchObject({ visible: true });
 
@@ -175,8 +192,10 @@ describe('An identity refresh applies only within the navigation lifetime that r
   });
 });
 
-describe('Replace a payout wallet without losing the current destination (spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place")', () => {
-  it('the picker cancels without a wallet request, a rejection registers nothing, a change is registered only on Register, and a reserved award\'s payout consent shows its vault and the registered wallet before any signature and leaves the award reserved when closed (spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version")', async () => {
+// spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"
+describe("Replace a payout wallet without losing the current", () => {
+  // spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"
+  it("the picker cancels without a wallet request, a", async () => {
     await site.wallets({ evm: { name: "Anvil Wallet" }, solana: { name: "Ed25519 Wallet" } });
     await signIn(users.kai.login, "/account#wallets");
     const connect = named("button", "Connect EVM wallet");
@@ -200,7 +219,7 @@ describe('Replace a payout wallet without losing the current destination (spec/b
     const first = (await site.walletAddresses()).evm ?? "";
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/account#wallets");
-    await shown(evmCard).toMatchObject({ text: expect.stringContaining(first) });
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(first) as unknown });
 
     const change = named("button", "Change EVM wallet");
     const question = named("heading", "Change EVM address?");
@@ -215,21 +234,21 @@ describe('Replace a payout wallet without losing the current destination (spec/b
     await expect.poll(() => site.focused()).toMatchObject({ name: "Change EVM wallet" });
     expect((await site.walletAsked()).filter((asked) => asked.method === "personal_sign").length).toBe(signed);
     await site.open("/account#wallets");
-    await shown(evmCard).toMatchObject({ text: expect.stringContaining(first) });
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(first) as unknown });
 
     await site.click(change);
     await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
     await site.click(named("button", "Register"));
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/account#wallets");
-    await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) });
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) as unknown });
     expect((await site.read(evmCard)).text).not.toContain(first);
 
     await site.click(named("button", "Connect Solana wallet"));
     await site.click(named("button", "Connect Ed25519 Wallet", { within: named("dialog", "Connect a Solana wallet") }));
     await shown(named("img", "Confirmed", { within: solanaCard })).toMatchObject({ visible: true });
     await site.open("/account#wallets");
-    await shown(solanaCard).toMatchObject({ text: expect.stringContaining((await site.walletAddresses()).solana ?? "") });
+    await shown(solanaCard).toMatchObject({ text: expect.stringContaining((await site.walletAddresses()).solana ?? "") as unknown });
 
     const vault = `0x${"2".repeat(40)}`;
     const obligation = "obligation-consent";
@@ -262,8 +281,11 @@ describe('Replace a payout wallet without losing the current destination (spec/b
   });
 });
 
-describe('Start and complete a GitHub sign-in flow (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow")', () => {
-  it('a browser that keeps no sign-in cookie is told to allow cookies and start again, and no session or membership opens (spec/backend/identity.md, "A website flow belongs to the browser that started it")', async () => {
+// spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"
+describe("Start and complete a GitHub sign-in flow", () => {
+  // spec/backend/identity.md, "A website flow belongs to the browser that started it"
+  it("a browser that keeps no sign-in cookie is told to", async () => {
+    expectedPopups = 1;
     await site.allow("^console Failed to load resource: the server responded with a status of 403", "^403 POST /v1/oauth/poll$");
     await site.github(users.kai.login);
     await site.blockCookies();
@@ -276,8 +298,9 @@ describe('Start and complete a GitHub sign-in flow (spec/backend/identity.md, "S
   });
 });
 
-describe('Interface capability requirements survive responsive and accessibility modes (spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', () => {
-  it('at 320 px, with reduced motion and 200% text, every account control stays named, reachable from the keyboard and usable', async () => {
+// spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
+describe("Interface capability requirements survive responsive", () => {
+  it("at 320 px, with reduced motion and 200% text, every", async () => {
     await site.wallets({ evm: { name: "Anvil Wallet" } });
     await site.open("/account");
     await site.view(320, 640, true);

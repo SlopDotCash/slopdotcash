@@ -18,11 +18,6 @@ export function staleFrom(generatedAt: string): number {
   return Date.parse(generatedAt) + snapshotStaleAfterMs + 1;
 }
 
-/** Renders the calling component again once `at` has passed. */
-export function useBoundary<R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, at: number): void {
-  useOnce(runtime, `boundary:${at}`, () => untilTime(at));
-}
-
 export function useBoundaryTime<R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, candidates: ReadonlyArray<number | undefined>): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const at = nextBoundary(nowMs, candidates);

@@ -11,7 +11,7 @@ export type RetryProps = {
   onRetry: () => void;
 };
 
-export function Fact({ term, children }: { term: ReactNode; children: ReactNode }) {
+export function CaseFact({ term, children }: { term: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:gap-4">
       <dt className="text-sm font-medium text-muted-foreground sm:w-48 sm:shrink-0">{term}</dt>

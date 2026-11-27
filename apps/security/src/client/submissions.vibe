@@ -26,7 +26,9 @@ export schema SubmissionList {
 
 export schema SubmissionRead { recipientGithubId?: string; submission: SubmissionView; report?: PrivateReport }
 
-export const listSubmissions = route({ method: "GET", path: "/api/v1/security-submissions", access: "session", limitKib: 1, request: undefined, answer: SubmissionList, rejected: "not_found", cache: "private" })
-export const readSubmission = route({ method: "GET", path: "/api/v1/security-submissions/:id", access: "session", limitKib: 1, request: undefined, answer: SubmissionRead, rejected: "not_found", cache: "private" })
+const securityHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" } as const
+
+export const listSubmissions = route({ method: "GET", path: "/api/v1/security-submissions", access: "session", limitKib: 1, request: undefined, answer: SubmissionList, rejected: "not_found", cache: "private", refusalHeaders: securityHeaders })
+export const readSubmission = route({ method: "GET", path: "/api/v1/security-submissions/:id", access: "session", limitKib: 1, request: undefined, answer: SubmissionRead, rejected: "not_found", cache: "private", refusalHeaders: securityHeaders })
 
 export const submissionsApi: ReadonlyArray<AnyRoute> = [listSubmissions, readSubmission]

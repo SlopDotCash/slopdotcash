@@ -47,7 +47,9 @@ export const fixedHeaders = { "cache-control": "no-store", "referrer-policy": "n
 const jsonContentType = "application/json; charset=utf-8"
 
 export function json(body: unknown, status = 200, headers: Readonly<Record<string, string>> = {}) {
-  return HttpServerResponse.jsonUnsafe(body, { status, headers: { ...fixedHeaders, ...headers }, contentType: jsonContentType })
+  const contentType = headers["content-type"] ?? jsonContentType
+  const rest = headers["content-type"] === undefined ? headers : Object.fromEntries(Object.entries(headers).filter(([name]) => name !== "content-type"))
+  return HttpServerResponse.jsonUnsafe(body, { status, headers: { ...fixedHeaders, ...rest }, contentType })
 }
 
 export const outbound = FetchHttpClient.layer
@@ -194,13 +196,20 @@ export interface Routing {
   readonly actorMismatch: Refusal
   readonly unauthenticated: Refusal
   readonly sessionExpired: Refusal
+  readonly refusalHeaders?: Readonly<Record<string, string>>
 }
 
 const unrouted: Routing = { rejected: admission.rejected.code, actorMismatch: admission.actorChanged, unauthenticated: admission.unauthenticated, sessionExpired: admission.unauthenticated }
 
 function routingOf(route: AnyRoute): Routing {
   const unauthenticated = route.unauthenticated ?? admission.unauthenticated
-  return { rejected: route.rejected, actorMismatch: route.actorMismatch ?? admission.actorChanged, unauthenticated, sessionExpired: route.sessionExpired ?? unauthenticated }
+  return {
+    rejected: route.rejected,
+    actorMismatch: route.actorMismatch ?? admission.actorChanged,
+    unauthenticated,
+    sessionExpired: route.sessionExpired ?? unauthenticated,
+    ...route.refusalHeaders === undefined ? {} : { refusalHeaders: route.refusalHeaders },
+  }
 }
 
 function tagOf(error: unknown) {
@@ -255,24 +264,24 @@ export function refusalBody(refusal: Pick<Refusal, "code" | "message">) {
   return refusal.message === "" ? { error: refusal.code } : { error: refusal.code, message: refusal.message }
 }
 
-function refusalResponse(refusal: Refusal) {
-  return json(refusalBody(refusal), refusal.status, refusal.headers)
+function refusalResponse(refusal: Refusal, refusalHeaders?: Readonly<Record<string, string>>) {
+  return json(refusalBody(refusal), refusal.status, { ...refusalHeaders, ...refusal.headers })
 }
 
-effect function internal(error: unknown) {
+effect function internal(error: unknown, refusalHeaders?: Readonly<Record<string, string>>) {
   const request = try HttpServerRequest.HttpServerRequest
   try Effect.logError(admission.internal.code, { ray: request.headers["cf-ray"] ?? "", shape: failureShape(error) })
-  return refusalResponse(admission.internal)
+  return refusalResponse(admission.internal, refusalHeaders)
 }
 
 effect function respond(error: unknown, routing: Routing) {
   const refusal = refusalOf(error, routing)
-  if (refusal !== undefined) return refusalResponse(refusal)
-  return try internal(error)
+  if (refusal !== undefined) return refusalResponse(refusal, routing.refusalHeaders)
+  return try internal(error, routing.refusalHeaders)
 }
 
 export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResponse!E!R, routing: Routing = unrouted) {
-  return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), (defect) => databaseTemporarilyUnavailable(defect) ? succeed(refusalResponse(admission.temporarilyUnavailable)) : internal(defect))
+  return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), (defect) => databaseTemporarilyUnavailable(defect) ? succeed(refusalResponse(admission.temporarilyUnavailable, routing.refusalHeaders)) : internal(defect, routing.refusalHeaders))
 }
 
 effect function tierOrigins(route: AnyRoute) {
@@ -304,10 +313,10 @@ function withCors(response: HttpServerResponse.HttpServerResponse, origin: strin
   return credentials ? HttpServerResponse.setHeader(varied, "access-control-allow-credentials", "true") : varied
 }
 
-effect function crossOriginAdmitted(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
+effect function crossOriginAdmitted(route: AnyRoute, origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
   const origin = request.headers.origin
-  if (origins === undefined || origin === undefined || origin === originOf(request)) return
-  if (allowedOrigin(origins, request) === undefined) throw refusedBy(admission.corsOrigin)
+  if (origins === undefined || origin === undefined || (route.strictCors !== true && origin === originOf(request))) return
+  if (allowedOrigin(origins, request) === undefined) throw refusedBy(route.corsOrigin ?? admission.corsOrigin)
 }
 
 effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpServerResponse!E!R) {
@@ -315,7 +324,7 @@ effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpSe
   let origins: ReadonlyArray<string> | undefined = undefined
   const response = try answered(effect {
     origins = try corsOrigins(route)
-    try crossOriginAdmitted(origins, request)
+    try crossOriginAdmitted(route, origins, request)
     return try program
   }, routingOf(route))
   return withCors(response, allowedOrigin(origins, request), route.corsCredentials === true)
@@ -349,7 +358,7 @@ effect function credentialOf(route: AnyRoute, requireJson: boolean) {
   const request = try HttpServerRequest.HttpServerRequest
   switch (route.access) {
     case "sessionWrite": {
-      if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy(admission.origin)
+      if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy(route.originForbidden ?? admission.origin)
       return undefined
     }
     case "bearer": return try bearerOf(request)
@@ -402,7 +411,7 @@ export function answerSubtree<E, R>(path: `/${string}`, handler: HttpServerRespo
 
 export function handleRaw<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R): Handled<X, R> {
   return HttpRouter.add(route.method, route.path, served(route, effect {
-    const credential = try credentialOf(route, false)
+    const credential = try credentialOf(route, true)
     const response = try f(try admissionOf(route, credential))
     if (response.headers["cache-control"] !== undefined) return response
     const succeeded = response.status >= 200 && response.status <= 299
@@ -414,11 +423,13 @@ effect function preflighted(group: ReadonlyArray<AnyRoute>) {
   const request = try HttpServerRequest.HttpServerRequest
   const origin = request.headers.origin
   const route = group.find((candidate) => candidate.method === request.headers["access-control-request-method"])
-  if (route === undefined) throw refusedBy(admission.corsMethod)
-  if (origin === undefined || allowedOrigin(try corsOrigins(route), request) === undefined) throw refusedBy(admission.corsOrigin)
+  const headers = route?.refusalHeaders ?? group[0]?.refusalHeaders
+  const fail = (refusal: Refusal) => refusedBy(headers === undefined ? refusal : { ...refusal, headers: { ...headers, ...refusal.headers } })
+  if (route === undefined) throw fail(admission.corsMethod)
+  if (origin === undefined || allowedOrigin(try corsOrigins(route), request) === undefined) throw fail(route.corsOrigin ?? admission.corsOrigin)
   const allowed = corsHeadersOf(route)
   const requested = (request.headers["access-control-request-headers"] ?? "").split(",").map((header) => header.trim().toLowerCase()).filter((header) => header !== "")
-  if (requested.some((header) => !allowed.includes(header))) throw refusedBy(admission.corsHeaders)
+  if (requested.some((header) => !allowed.includes(header))) throw fail(admission.corsHeaders)
   return HttpServerResponse.empty({
     status: 204,
     headers: {

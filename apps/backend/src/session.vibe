@@ -2,7 +2,6 @@
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { Refused, admission } from "@repo/platform/http"
 
 module verified {
   import { tokenLengthAllowed as allowed } from "./sessionToken.ts"
@@ -33,10 +32,4 @@ export effect function sessionMember() {
   const hash = try presentedTokenHash()
   if (hash === "") return undefined
   return try first(SessionMember, sql`SELECT m.actor_id, m.github_id, m.login, s.token_hash FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${try isoNow()} AND m.closed_at IS NULL`)
-}
-
-export effect function sessionActor() {
-  const member = try sessionMember()
-  if (member === undefined) throw new Refused(admission.unauthenticated)
-  return member.github_id
 }

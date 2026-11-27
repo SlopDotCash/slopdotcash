@@ -273,29 +273,3 @@ export effect function storedDigests(assessment: string, runId: string) {
   }
   return stored
 }
-
-export interface Retained {
-  readonly assessmentId: string
-  readonly runId: string
-  readonly reportSha256: string
-  readonly required: ReadonlyArray<string>
-}
-
-export effect function retained(request: Retained) {
-  return checked(request) catch effect (error) => {
-    if (error._tag === "Refused") return false
-    throw error
-  }
-}
-
-effect function checked(request: Retained) {
-  const current = try run(request.assessmentId, request.runId)
-  if (current.row.trace_sha256 !== request.reportSha256) return false
-  const found = new Map((try objectsOf(request.assessmentId, request.runId)).map((row) => [row.sha256, row]))
-  for (const sha of new Set([request.reportSha256, ...request.required])) {
-    const row = found.get(sha)
-    if (row === undefined) return false
-    try verify(row, current)
-  }
-  return true
-}

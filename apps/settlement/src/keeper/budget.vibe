@@ -81,10 +81,6 @@ effect function gasRows(tx: SqlTx) {
   return amounts
 }
 
-export effect function groupRows(tx: SqlTx, group: string) {
-  return try decoded(GasRow, try tx.all(sql`SELECT id, day, maximum, transaction_id, actual, settled_day, expiry_evidence FROM gas WHERE ${sameNonce(group)} ORDER BY rowid`), "keeper gas group")
-}
-
 effect function committedLiability(tx: SqlTx, config: KeeperConfig, day: string, group: string, maximum: bigint) {
   const rows = try gasRows(tx)
   for (const { actual, maximum: reserved } of rows)
@@ -139,11 +135,6 @@ effect function l1FeeOf(config: EvmKeeperConfig, transactionId: string) {
   const fee = receipt?.l1Fee === undefined ? undefined : quantityOf(receipt.l1Fee)
   if (fee === undefined) throw new BudgetRefused({ reason: "Finalized L2 data fee unavailable" })
   return fee
-}
-
-export interface GasSettlement {
-  readonly settled: number
-  readonly exceeded: number
 }
 
 effect function settleGroup(scope: GasScope, row: GasRow, actual: bigint, settledAt: number, millis: number) {

@@ -19,12 +19,6 @@ export interface Answer {
 
 const empty = new Uint8Array()
 
-export function exactOrigin(value: string, allowLoopback: boolean): boolean {
-  if (!URL.canParse(value)) return false
-  const url = new URL(value)
-  return url.origin === value && url.username === "" && url.password === "" && (url.protocol === "https:" || (allowLoopback && url.protocol === "http:" && url.hostname === "127.0.0.1"))
-}
-
 export effect function signedCall(request: { readonly step: string; readonly method: Method; readonly path: string; readonly body?: Uint8Array; readonly contentType?: string; readonly timeoutMs: number; readonly limitBytes: number }) {
   const service = try ScanService
   const body = request.body ?? empty

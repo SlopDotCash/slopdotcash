@@ -109,7 +109,7 @@ export effect function retainSignature(key: string, intent: MonthlyIntentRecord,
   })
 }
 
-export function plannedFacts(height: number, digest: string): SigningFacts {
+function plannedFacts(height: number, digest: string): SigningFacts {
   return { height, projectActive: true, restricted: false, vaultServed: true, automaticOn: true, snapshotDigest: digest, pledged: false, retired: false }
 }
 

@@ -1,5 +1,5 @@
 // spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
-import { handleRaw, json } from "@repo/platform/http"
+import { handleRaw } from "@repo/platform/http"
 import { route } from "@repo/platform/route"
 import type { AccessAnswer, AccessQuery, GrantedPermission } from "../../gen/slopbot__reportingReadiness.ts"
 import { accessAnswer, accessQueryValid } from "../../gen/slopbot__reportingReadiness.effect.vibe"
@@ -7,6 +7,7 @@ import { slopbotGetV1RepositoryAccess, slopbotPostGithubWebhook } from "../clien
 import { type AccessRequest, type Gathered, RepositoryIdentity, accessFacts, unavailableFacts } from "./facts.vibe"
 
 export const repositoryAccessOrigin = "https://slopbot.internal"
+const repositoryAccessOrigins = new Set([repositoryAccessOrigin, "https://slopbot-repository-access.internal"])
 
 schema AccessMissing { installation: "missing" }
 schema AccessSuspended { installation: "suspended"; installationId: number }
@@ -43,32 +44,36 @@ const permissionNames: Readonly<Record<Exclude<GrantedPermission, "PermissionUnk
   PermissionNone: "none",
 }
 
+function plainJson(body: unknown, status = 200) {
+  return HttpServerResponse.jsonUnsafe(body, { status, headers: noStore, contentType: "application/json" })
+}
+
 function refusal(row: { readonly status: number; readonly error: string }) {
-  return json({ error: row.error }, row.status, noStore)
+  return plainJson({ error: row.error }, row.status)
 }
 
 function answered(decided: AccessAnswer, gathered: Gathered, includeRepository: boolean) {
   switch (decided.accessKind) {
     case "InvalidRequest": return refusal(slopbotGetV1RepositoryAccess.invalidRequestNoStore)
     case "AccessUnavailable": return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
-    case "NotInstalled": return json({ installation: "missing" }, 200, noStore)
-    case "InstallationSuspended": return json({ installation: "suspended", installationId: decided.answeredInstallation }, 200, noStore)
+    case "NotInstalled": return plainJson({ installation: "missing" })
+    case "InstallationSuspended": return plainJson({ installation: "suspended", installationId: decided.answeredInstallation })
     case "Installed": {
       if (decided.answeredPermission === "PermissionUnknown" || (includeRepository && gathered.repository === undefined)) return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
-      return json({
+      return plainJson({
         installation: "installed",
         installationId: decided.answeredInstallation,
         permission: permissionNames[decided.answeredPermission],
         roleName: gathered.roleName,
         ...includeRepository ? { repository: gathered.repository } : {},
-      }, 200, noStore)
+      })
     }
   }
 }
 
 effect function repositoryAccessAnswer() {
   const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
-  if (url.origin !== repositoryAccessOrigin) {
+  if (!repositoryAccessOrigins.has(url.origin)) {
     const notFound = slopbotPostGithubWebhook.otherMethods.notFound
     return HttpServerResponse.text(notFound.text, { status: notFound.status, contentType: notFound.headers["content-type"] })
   }

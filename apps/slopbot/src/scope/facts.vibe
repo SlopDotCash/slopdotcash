@@ -1,7 +1,7 @@
 // spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/slopbot/repositoryScope.md, "Scope follows registration, status, retirement and restriction in a fixed order"
 import { type Retirement as ProjectRetirement, Registry, Restrictions } from "@repo/ports/backend"
 import { Enforcement, type Restriction as EnforcementRestriction } from "@repo/ports/security"
-import { type FlagState, type RegistryObservation, type Restriction, type Retirement, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type FlagState, type RegistryObservation, type Restriction, type Retirement } from "../../gen/slopbot__repositoryScope.effect.vibe"
 
 export interface RepositoryRef {
   readonly owner: string
@@ -56,8 +56,4 @@ export effect function observe(ref: RepositoryRef) {
     },
     projectId: project.projectId,
   } satisfies Observed
-}
-
-export effect function scopeOf(ref: RepositoryRef) {
-  return slopbotScope((try observe(ref)).observation)
 }

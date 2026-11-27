@@ -53,7 +53,7 @@ export effect function requestKey() {
 }
 
 export effect function securityCases(owner: string) {
-  return try privateCall(owner, listCases, {}, (list) => list.cases.length, (list) => list.viewer.githubId)
+  return try privateCall(owner, listCases, {}, (list) => list.cases.length, (list) => list.viewer.githubId, true)
 }
 
 export effect function securityCase(owner: string, caseId: string) {

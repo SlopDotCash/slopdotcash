@@ -71,6 +71,6 @@ export const xStart = route({ ...points, method: "POST", path: "/api/v1/points/x
 export const xDisconnect = route({ ...points, method: "POST", path: "/api/v1/points/x/disconnect", limitKib: 1, request: NoFields, answer: XDisconnected })
 export const xVisibility = route({ ...points, method: "POST", path: "/api/v1/points/x/visibility", limitKib: 1, request: Visibility, answer: XUpdated })
 
-export const projectSession = route({ method: "GET", path: "/api/v1/project-session", access: "public", limitKib: 1, request: undefined, answer: ProjectSession, rejected: "internal_error", cache: "no-store" })
+export const projectSession = route({ method: "GET", path: "/api/v1/project-session", access: "public", limitKib: 1, request: undefined, answer: ProjectSession, rejected: "internal_error", cache: "no-store", refusalHeaders: { "x-slop-project-api-contract": "project-registry-v1" } })
 
 export const api: ReadonlyArray<AnyRoute> = [pointsPeople, pointsMember, pointsJoin, pointsMe, pointsSignOut, pointsSessions, pointsRevokeSession, pointsVisibility, pointsClose, xProfile, xCallbackRoute, xMe, xStart, xDisconnect, xVisibility, projectSession]

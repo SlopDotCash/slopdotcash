@@ -11,12 +11,12 @@ import { parseBaseUnits } from "../kernels/amounts.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { type Step, advance, attemptOf, authorityOf, fresh, loadBinding, withAttempt, withAuthority } from "../journal/bindings.vibe"
 import { type Entries, type Scope, within } from "../journal/journal.vibe"
-import { type PaymentTables, ordinaryTables, securityTables } from "../journal/scopes.vibe"
+import { type PaymentTables, ordinaryTables } from "../journal/scopes.vibe"
 import { STORED_BINDING, adoptedBinding, addPending, bindingArguments, cancellationKey, checkedKey, consentCandidate, consentIdentity, pendingKeys, removePending, reserveConsent, retainedConsent, revertedKey, textDigest, unusedConsent } from "./stored.vibe"
 import { type ObsoleteIntent, cancelObsoleteStoredBinding } from "./cancellation.vibe"
 import { type Attempt, AttemptHeld, AttesterConfig, type Deployment, NotActivated, attesterAccount, authorityInForce, broadcast, onChain, preflight, prepareSend, readAttempt, reviewedDeployment, servedNetwork, signNext, signedWithin, signerMarker } from "./evm.vibe"
 
-export { type PaymentTables, ordinaryTables, securityTables }
+export { type PaymentTables, ordinaryTables }
 
 const submissionWindow = 600
 const candidatePage = 500

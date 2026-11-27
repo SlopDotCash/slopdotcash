@@ -69,10 +69,6 @@ export function signedFacts(signed: EvmSigned): Facts {
   return { txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.prepared.unsigned.intentHash, ...signed.prepared.expiresAt === undefined ? {} : { expiresAt: signed.prepared.expiresAt } }
 }
 
-export function reservationFacts(ready: EvmPrepared): Facts {
-  return { intentHash: ready.unsigned.intentHash }
-}
-
 export function solanaReservationFacts(ready: SolanaPrepared): Facts {
   return { intentHash: ready.intentHash, blockhashSlot: ready.blockhashSlot, ...ready.accountProof === undefined ? {} : { accountProof: ready.accountProof } }
 }

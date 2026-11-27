@@ -392,7 +392,7 @@ function autoFixture(number: number = 7): AutoFixture {
       changed_files: 1,
       user: autoAuthor,
       head: { sha: autoHead },
-      base: { ref: "development", repo: { id: pilotRepositoryId } },
+      base: { ref: "develop", repo: { id: pilotRepositoryId } },
       labels: [{ name: readyLabelName }],
     },
     events: [{ event: "labeled", created_at: "2026-11-25T10:05:00Z", label: { name: readyLabelName }, actor: autoBot }],
@@ -422,13 +422,13 @@ function autoWorld(fixtures: ReadonlyArray<AutoFixture>, options: AutoWorldOptio
         return { status: 201, data: { id: 1 } } satisfies ApiResponse
       }
       if (path === `/repos/${pilotRepository}`) {
-        return { status: 200, data: { id: pilotRepositoryId, full_name: pilotRepository, default_branch: options.defaultBranch ?? "vibestack" } } satisfies ApiResponse
+        return { status: 200, data: { id: pilotRepositoryId, full_name: pilotRepository, default_branch: options.defaultBranch ?? "main" } } satisfies ApiResponse
       }
       if (path.startsWith(`/repos/${pilotRepository}/issues?`)) {
         return { status: 200, data: [...fixtures.map((item) => ({ number: item.number, pull_request: {} })), { number: 9000 }] } satisfies ApiResponse
       }
       if (/\/contents\/.+\?ref=(.+)$/u.test(path)) {
-        return { status: 200, data: projectFileContent(options.integrationBranch ?? "development") } satisfies ApiResponse
+        return { status: 200, data: projectFileContent(options.integrationBranch ?? "develop") } satisfies ApiResponse
       }
       const permission = /\/collaborators\/([^/]+)\/permission$/u.exec(path)
       if (permission !== null) {
@@ -493,12 +493,12 @@ standaloneIt.effect('Ready auto-merge obeys the switch, dry-run write guard, bas
 
   const verifiedTarget = autoWorld([autoFixture()])
   const verifiedOutcomes = try runAuto(verifiedTarget)
-  try same(verifiedOutcomes, [{ number: 7, action: "merged", detail: `head ${autoHead} into development, approved by maint` }])
+  try same(verifiedOutcomes, [{ number: 7, action: "merged", detail: `head ${autoHead} into develop, approved by maint` }])
   try same(verifiedTarget.writes, [
     { method: "PUT", path: `/repos/${pilotRepository}/pulls/7/merge`, body: { sha: autoHead, merge_method: "merge" } },
     { method: "POST", path: `/repos/${pilotRepository}/issues/7/comments`, body: { body: mergeComment(autoHead, ["maint"]) } },
   ])
-  try same(verifiedTarget.lines[0], `#7 merged: head ${autoHead} into development, approved by maint`)
+  try same(verifiedTarget.lines[0], `#7 merged: head ${autoHead} into develop, approved by maint`)
   try same(mergeComment(autoHead, ["maint"]).includes("@"), false)
 
   const dryTarget = autoWorld([autoFixture()])
@@ -514,10 +514,7 @@ standaloneIt.effect('Ready auto-merge obeys the switch, dry-run write guard, bas
   }
   try same(Exit.isFailure(dryWriteExit), true)
 
-  for (const base of ["main", "vibestack"]) {
-    const reason = try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = base })
-    try same(reason.includes("never merges into"), true)
-  }
+  try same((try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "main" })).includes("never merges into"), true)
   try same((try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "trunk" }, { defaultBranch: "trunk" })).includes("never merges into"), true)
   try same(try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "feature" }), "feature is not the project's registered integration branch")
   try same((try autoSkipReason(() => {}, { fail: (path) => (path.includes("/contents/") ? 404 : undefined) })).includes("could not be read (HTTP 404)"), true)

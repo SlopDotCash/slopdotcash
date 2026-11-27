@@ -138,8 +138,6 @@ export schema HistoricalPacket {
   readonly duplicateRetirements?: ReadonlyArray<PacketRetirement>
 }
 
-export type Author = CorrectionActor | null
-
 export const historicalFrom = "2026-09-27T00:00:00.000Z"
 export const historicalThrough = "2026-11-01T00:00:00.000Z"
 export const octoberStart = "2026-10-01T00:00:00.000Z"

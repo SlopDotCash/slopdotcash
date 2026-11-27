@@ -4,7 +4,7 @@ import { RegistryManifests } from "@repo/ports/backend"
 import { type AttributionStatus, type Declaration, type TextSource, status } from "../../../gen/points__modelAttribution.effect.vibe"
 import { type Registry, exactIdentifier, isRecord, parsedUrl, repositoryIdFromUrl, uniqueSorted } from "../../client/snapshot/checks.vibe"
 import type { InvalidAttributionMarker, WorkItemModel } from "../../client/snapshot/schema.vibe"
-import { type PullTextSource, pullRequestBodySource, pullRequestTextSources } from "../../collect/evidence/artifacts.vibe"
+import { type PullTextSource } from "../../collect/evidence/artifacts.vibe"
 import type { IssueRecord } from "../../collect/merged/hydrate.vibe"
 import { dedupedById, uniqueById } from "../../collect/merged/wire.vibe"
 import { type Actor, isBot } from "../facts.vibe"
@@ -30,7 +30,6 @@ module identifiers {
 }
 import { isDeclaredModelIdentifier, isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier, isExactProviderModelIdentifier, isUnavailableModelIdentifier } from identifiers
 
-export { pullRequestBodySource, pullRequestTextSources }
 export type { PullTextSource }
 
 export error AttributionRefused { message: string }

@@ -55,7 +55,7 @@ interface RefusalRow {
   readonly headers: Readonly<Record<string, string>>
 }
 
-const privateNoStore = { "cache-control": "private, no-store" }
+const privateNoStore = { "cache-control": "private, no-store", "content-type": "application/json" }
 
 const streamHeaders = { "cache-control": "private, no-store, no-transform", "x-content-type-options": "nosniff" }
 

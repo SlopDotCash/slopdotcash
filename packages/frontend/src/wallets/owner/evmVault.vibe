@@ -243,10 +243,11 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
   if (step !== "send" && native) throw refused(evmVaultMessages.noApprovalNative)
   const call: Call = try callOf(vault, operation, step, review.gross)
   const transaction = { from: connection.address, ...call }
-  try evmRequest(connection, "eth_estimateGas", [transaction], (caught) => {
-    const locked = pledgedFundsRefusal(caught)
-    return locked === undefined ? undefined : refused(locked)
-  })
+  evmRequest(connection, "eth_estimateGas", [transaction]) catch effect (error) => {
+    const locked = pledgedFundsRefusal(error)
+    if (locked !== undefined) throw refused(locked)
+    throw error
+  }
   try requireVaultWallet(connection, vault)
   return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
 }

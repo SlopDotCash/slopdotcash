@@ -377,9 +377,3 @@ export effect function handleSolanaSubmissionFee(request: HttpServerRequest.Http
   }
   return run catch () => json({ error: "temporarily_unavailable" }, 503, noStore)
 }
-
-export const defaultSolanaFeeTerms = {
-  network: SOLANA_SUBMISSION_FEE_NETWORK,
-  mint: SOLANA_SUBMISSION_FEE_MINT,
-  feeWallet: SOLANA_SUBMISSION_FEE_KEPT_TO,
-} as const

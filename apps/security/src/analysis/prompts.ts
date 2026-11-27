@@ -4,7 +4,6 @@ import { type ExclusionScope, securityExclusions } from "../program/exclusions.t
 export const analysisPromptRevision = "slop-security-case-analysis-3";
 export const routinePromptRevision = "slop-security-routine-decision-2";
 export const appealTriagePromptRevision = "slop-security-appeal-triage-1";
-export const appealConfidenceFloor = 0.9;
 export const priorCaseLimit = 25;
 
 const proofFileSentence =

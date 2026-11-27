@@ -6,7 +6,7 @@ export interface NoticePresentation {
   readonly action: string;
 }
 
-type Notice = Pick<InboxNotice, "eventKey" | "subject" | "actionPath">;
+type Notice = Pick<InboxNotice, "eventKey" | "subject" | "actionPath" | "pointsDisputeReceipt">;
 
 const disputeKey = "slopbot-points-dispute:";
 
@@ -53,9 +53,13 @@ const presentations: Readonly<Record<NotificationKind, (n: Notice) => NoticePres
   payout_exception: payoutException,
   security_case: (n) => present(`Case ${n.subject} updated`, "Open security cases"),
   security_report_received: (n) => present(`Report ${n.subject} received`, "Open security cases"),
-  slopbot_appeal_review: appeal("Points dispute to review", "Appeal to decide"),
+  slopbot_appeal_review: (n) =>
+    n.eventKey.startsWith(disputeKey)
+      ? present(n.pointsDisputeReceipt ? "Points dispute filed" : "Points dispute to review", "Open Points review")
+      : present("Appeal to decide", "Open appeal on GitHub"),
   slopbot_appeal_resolved: appeal("Points dispute resolved", "Appeal resolved"),
   slopbot_scam_review: (n) => present(`${n.subject} scam closure: review author`, "Open closed item on GitHub"),
+  trace_licensing_available: () => present("You can now license your traces", "Open trace licensing"),
 };
 
 const deliveryLabels: Readonly<Record<EmailDelivery, string>> = {
@@ -67,7 +71,7 @@ const deliveryLabels: Readonly<Record<EmailDelivery, string>> = {
 };
 
 /** @throws {never} */
-export function noticePresentation(notice: Pick<InboxNotice, "kind" | "eventKey" | "subject" | "actionPath">): NoticePresentation {
+export function noticePresentation(notice: Pick<InboxNotice, "kind" | "eventKey" | "subject" | "actionPath" | "pointsDisputeReceipt">): NoticePresentation {
   return presentations[notice.kind](notice);
 }
 

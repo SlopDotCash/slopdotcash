@@ -1,12 +1,12 @@
 // spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
 import { type RecoveryAnswer, RecoveryRequest, type RecoveryScope } from "../client/operator.vibe"
 import type { Scope } from "../journal/journal.vibe"
-import { BindingRecovery, ReconcileBindingRoutes, RecoveryRefused, RecoveryUnavailable, isRecoveryInput, reasonAccepted } from "../operator/reconcileBinding.vibe"
+import { RecoveryRefused, isRecoveryInput, reasonAccepted } from "../operator/reconcileBinding.vibe"
 import { AttesterConfig, onChain, preflight, reviewedDeployment, signerMarker } from "./evm.vibe"
 import { failureKind } from "./binding.vibe"
 import { reconcileBindingWinner } from "./winner.vibe"
 
-export { BindingRecovery, ReconcileBindingRoutes, RecoveryRefused, RecoveryUnavailable }
+export { RecoveryRefused }
 
 export interface RecoveryServices {
   readonly journal: Scope

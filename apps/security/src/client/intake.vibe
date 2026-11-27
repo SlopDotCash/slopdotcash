@@ -61,8 +61,10 @@ export schema IntakeReadiness {
 
 export const readinessSeconds = 30
 
-export const submitReport = route({ method: "POST", path: "/api/v1/security-submissions", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "rejected", cache: "private", status: 201 })
-export const reviseReport = route({ method: "POST", path: "/api/v1/security-submissions/:id/report", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "report_not_editable", cache: "private" })
-export const intakeReadiness = route({ method: "GET", path: "/api/v1/security-programs/:id/intake", access: "public", limitKib: 1, request: undefined, answer: IntakeReadiness, rejected: "program_not_found", cache: { browserSeconds: 0, edgeSeconds: readinessSeconds } })
+const securityHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" } as const
+
+export const submitReport = route({ method: "POST", path: "/api/v1/security-submissions", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "rejected", cache: "private", status: 201, refusalHeaders: securityHeaders })
+export const reviseReport = route({ method: "POST", path: "/api/v1/security-submissions/:id/report", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "report_not_editable", cache: "private", refusalHeaders: securityHeaders })
+export const intakeReadiness = route({ method: "GET", path: "/api/v1/security-programs/:id/intake", access: "public", limitKib: 1, request: undefined, answer: IntakeReadiness, rejected: "program_not_found", cache: { browserSeconds: 0, edgeSeconds: readinessSeconds }, refusalHeaders: securityHeaders })
 
 export const intakeApi: ReadonlyArray<AnyRoute> = [submitReport, reviseReport, intakeReadiness]

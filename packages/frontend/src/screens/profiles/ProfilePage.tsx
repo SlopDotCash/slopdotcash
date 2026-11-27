@@ -1,6 +1,6 @@
 // spec/frontend/views.md, "Story: Read a contributor's profile"; spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"
 import type { PublicMember } from "@repo/backend/client";
-import type { LeaderboardSnapshot } from "@repo/points/client";
+import { journalPenaltyAppliedThirds, type LeaderboardSnapshot } from "@repo/points/client";
 import { Button, cn, DataState, Disclosure, ExternalLink, NotFound, shell, Spinner, Status } from "@repo/ui";
 import { profileCard, profileCardHeading, profileCardTitle } from "./ProfileActivity.tsx";
 import { Clock, Info, Wallet as WalletIcon } from "lucide-react";
@@ -159,7 +159,7 @@ function Projects({ boot, standings, actor }: Pick<Board, "boot" | "standings"> 
   );
 }
 
-function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "snapshot" | "standings"> & { actor: ProfileActor }) {
+function Penalties({ boot, snapshot, applied, actor }: Pick<Board, "boot" | "snapshot"> & { applied: ReadonlyMap<string, number> | undefined; actor: ProfileActor }) {
   const penalties = (snapshot.penalties ?? []).filter((penalty) => penalty.actor.id === actor.id);
   if (penalties.length === 0) return null;
   return (
@@ -171,6 +171,7 @@ function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "s
         <ul className="flex flex-col gap-2">
           {penalties.map((penalty) => {
             const project = findProjectByRepositoryId(boot, penalty.repository);
+            const appliedThirds = applied?.get(penalty.id);
             return (
               <li key={penalty.id}>
                 <ExternalLink href={penalty.source.url} className={linkClass}>
@@ -178,7 +179,8 @@ function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "s
                 </ExternalLink>{" "}
                 <Status presentation={{ tone: penalty.category === "spam" ? "Caution" : "Negative", icon: "Alert", label: penaltyLabels[penalty.category] ?? penalty.category }} />{" "}
                 <span>
-                  {formatMonth(penalty.occurredAt.slice(0, 7))} −{pointsText(penalty.debitThirds)} pts · {standings ? `${pointsText(standings.applied.get(penalty.id) ?? 0)} applied` : "applied debit unavailable"}
+                  {formatMonth(penalty.occurredAt.slice(0, 7))} −{pointsText(penalty.debitThirds)} pts
+                  {applied === undefined ? " · applied debit unavailable" : appliedThirds !== undefined ? ` · ${pointsText(appliedThirds)} applied` : null}
                 </span>
               </li>
             );
@@ -189,7 +191,7 @@ function Penalties({ boot, snapshot, standings, actor }: Pick<Board, "boot" | "s
   );
 }
 
-function Recorded({ board, actor, history, census, own, joined, joinStatus }: { board: Board; actor: ProfileActor; history: Shown<StandingHistory> } & Pick<Parameters<typeof ProfilePoints>[0], "census" | "own" | "joined" | "joinStatus">) {
+function Recorded({ board, actor, history, applied, census, own, joined, joinStatus }: { board: Board; actor: ProfileActor; history: Shown<StandingHistory>; applied: ReadonlyMap<string, number> | undefined } & Pick<Parameters<typeof ProfilePoints>[0], "census" | "own" | "joined" | "joinStatus">) {
   const { login, boot, snapshot, standings, section, reads, product, tier, nowMs } = board;
   const cycles = useShownRead(section.cycles, "index");
   const githubId = githubIdOf(actor);
@@ -219,7 +221,7 @@ function Recorded({ board, actor, history, census, own, joined, joinStatus }: { 
       <ProfilePoints key={login.toLowerCase()} {...shared}>
         <Projects boot={boot} standings={standings} actor={actor} />
       </ProfilePoints>
-      <Penalties boot={boot} snapshot={snapshot} standings={standings} actor={actor} />
+      <Penalties boot={boot} snapshot={snapshot} applied={applied} actor={actor} />
     </main>
   );
 }
@@ -250,7 +252,11 @@ function Resolve({ board }: { board: Board }) {
           }),
     [deciding, login, snapshot, standings, me.value, census.value, own, joined, history.value],
   );
-  if (actor) return <Recorded board={board} actor={actor} history={history} census={census} own={own} joined={joined} joinStatus={joinStatus} />;
+  const applied = useMemo(
+    () => standings?.appliedFor(journal.value !== undefined ? journalPenaltyAppliedThirds(journal.value) : undefined),
+    [standings, journal.value],
+  );
+  if (actor) return <Recorded board={board} actor={actor} history={history} applied={applied} census={census} own={own} joined={joined} joinStatus={joinStatus} />;
   const checking = pending.has(census.status) || joinStatus === "loading" || meLoading || pending.has(history.status);
   const unavailable = failed.has(census.status) || joinStatus === "unavailable" || failed.has(me.status) || failed.has(history.status);
   if (!checking && !unavailable) return <UnknownContributor login={login} />;

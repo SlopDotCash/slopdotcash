@@ -122,17 +122,35 @@ export effect function readPreviousImplementationSources(input: PreviousImplemen
     candidates.set(observation.shape, matching)
   }
   const missing: AcceptedImplementationPredecessor[] = []
+  const audited = new Map<string, PreviousImplementationObservation>()
   for (const candidate of input.sources) {
     const reuse = memo?.previous(repositoryNodeId, candidate)
-    if (reuse !== undefined) consider(reuse, candidate)
-    else missing.push(candidate)
+    if (reuse === undefined) missing.push(candidate)
+    else if (memo !== undefined && (try memo.audits(repositoryNodeId, candidate.id))) {
+      audited.set(candidate.id, reuse)
+      missing.push(candidate)
+    } else {
+      if (memo !== undefined) memo.stats.previousReused += 1
+      consider(reuse, candidate)
+    }
   }
+  if (memo !== undefined) memo.stats.previousRead += missing.length
   const nodes = try implementationNodes(missing.map((candidate) => candidate.id))
   for (const [index, candidate] of missing.entries()) {
     const observation = try observePreviousImplementation(nodes.get(candidate.id), candidate, repositoryNodeId, `previous implementation sources[${index}]`, carriedOrdinaryOids.size > 0)
+    const saved = audited.get(candidate.id)
+    if (saved !== undefined && (observation === undefined || observation.kind === "unresolved")) continue
     if (observation === undefined) continue
+    if (saved !== undefined && observation.kind !== "unresolved" && memo !== undefined) {
+      try memo.auditPrevious(saved, candidate, observation)
+      audited.delete(candidate.id)
+    }
     if (observation.kind !== "unresolved" && memo !== undefined) try memo.rememberPrevious(repositoryNodeId, candidate, observation)
     consider(observation, candidate)
+  }
+  for (const candidate of input.sources) {
+    const saved = audited.get(candidate.id)
+    if (saved !== undefined) consider(saved, candidate)
   }
   return {
     candidates,

@@ -12,12 +12,12 @@ export type NavProject = { readonly id: string; readonly slug: string; readonly 
 export function ProjectNav({ runtime, project, current }: { runtime: PageRuntime; project: NavProject; current: ProjectSection }) {
   const shown = useSession(runtime);
   const actorId = shown?.view.status === "signedIn" ? shown.view.session.githubId : undefined;
-  const access = useRun(runtime, actorId === undefined ? undefined : `navMaintainer:${project.id}:${actorId}`, () => maintainerCheck(project.id, actorId ?? ""), "Project access could not be checked. Retry.");
+  const access = useRun(runtime, current === "settings" || actorId === undefined ? undefined : `navMaintainer:${project.id}:${actorId}`, () => maintainerCheck(project.id, actorId ?? ""), "Project access could not be checked. Retry.");
   const base = `/projects/${project.slug}`;
   const links: ReadonlyArray<{ readonly id: ProjectSection; readonly label: string; readonly href: string }> = [
     { id: "overview", label: "Overview", href: base },
     project.bountyOnly ? { id: "security", label: "Security bounty", href: `${base}/security` } : { id: "funding", label: "Funds & awards", href: `${base}/funding` },
-    ...(access?.status === "done" && access.value.kind === "Allowed" ? [{ id: "settings" as const, label: "Settings", href: `${base}/manage` }] : []),
+    ...(current === "settings" || (access?.status === "done" && access.value.kind === "Allowed") ? [{ id: "settings" as const, label: "Settings", href: `${base}/manage` }] : []),
   ];
   return (
     <NavTabs label="Project navigation">

@@ -140,7 +140,3 @@ export effect function readGrant(app: IntakeAppConfig, submissionId: string, rep
   if (value === undefined || value.v !== 1 || value.g !== reporterGithubId) return undefined
   return { token: Redacted.make(value.t), githubId: reporterGithubId, expiresAtSeconds: value.e } satisfies ReporterGrant
 }
-
-export effect function hasSession() {
-  return (try sessionBinding()) !== undefined
-}
