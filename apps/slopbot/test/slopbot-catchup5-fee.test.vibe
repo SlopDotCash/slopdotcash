@@ -15,7 +15,7 @@ import { IntakePause, type ProjectView, Registry, RegistryManifests, Restriction
 import { Enforcement } from "@repo/ports/security"
 import { feeNeededComment, solanaFeeOffered } from "../src/fee/comments.ts"
 import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
-import { gateSubmissionFee } from "../src/fee/gate.vibe"
+import { type FeeAsk, gateSubmissionFee } from "../src/fee/gate.vibe"
 import { reopenKeptFee } from "../src/fee/items.vibe"
 import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
 import { checkStandingDeposits } from "../src/fee/standing.vibe"
@@ -94,7 +94,7 @@ function iso(millis: number) {
 }
 
 function settingOn(on: boolean) {
-  return JSON.stringify({ id: projectId, slopbot: on ? { submissionFee: { enabled: true, amountMinor: "2000000" }, readyLabel } : { readyLabel } })
+  return JSON.stringify({ id: projectId, repositories: [{ githubUrl: `https://github.com/${repo}` }], slopbot: on ? { submissionFee: { enabled: true, amountMinor: "2000000" }, readyLabel } : { readyLabel } })
 }
 
 function viewOf(): ProjectView {
@@ -242,9 +242,29 @@ function pullRef(number: number) {
   return { installationId, repositoryId, owner: "ada", repo: "widgets", number }
 }
 
-effect function gated(number: number, millis: number) {
+function depositor(openedAt: number, exemption: FeeAsk["exemption"] = "NotExempt") {
+  return { exemption, author: { id: 301, login: "carol" }, openedAt: iso(openedAt) }
+}
+
+effect function standingDeposit(paidAt: number) {
   const { fees } = try FeeWorld
-  const exit = try Effect.exit(at(millis, gateSubmissionFee({ target: { pull: pullRef(number), projectId, itemNodeId: `PR_${number}`, appUser: fees.fake.app.bot.id }, exemption: "NotExempt", mayAsk: true })))
+  try Effect.promise(() => fees.db.batch([
+    fees.db.prepare(
+      `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+       VALUES ('sd_regular_301', 301, 1, ?, '755000000000000000000', '75.4717', ?, ?, 'robinhood-standing', 301)`,
+    ).bind(`0x${"301".padStart(64, "0")}`, iso(paidAt), iso(paidAt)),
+    fees.db.prepare("INSERT INTO standing_deposit_merged_authors (project_id, github_id, checked_at) VALUES (?, 301, ?)").bind(projectId, iso(paidAt + 12 * hour)),
+  ]))
+}
+
+effect function coveredPulls() {
+  const { fees } = try FeeWorld
+  return (try Effect.promise(() => fees.db.prepare("SELECT pull_number, state, pr_open FROM standing_deposit_covers WHERE deposit_id = 'sd_regular_301' ORDER BY pull_number").all())).results
+}
+
+effect function gated(number: number, millis: number, asked: Partial<FeeAsk> = {}) {
+  const { fees } = try FeeWorld
+  const exit = try Effect.exit(at(millis, gateSubmissionFee({ target: { pull: pullRef(number), projectId, itemNodeId: `PR_${number}`, appUser: fees.fake.app.bot.id }, exemption: "NotExempt", mayAsk: true, ...asked })))
   return exit._tag === "Success" ? exit.value : "failed"
 }
 
@@ -279,7 +299,7 @@ effect function closed(number: number, millis: number, merged: boolean) {
 }
 
 layer(World, { timeout: "240 seconds" })((it) => {
-  it.effect('A new outside pull request is asked once under a lease, a failed label write lets the retry ask, record-only writes only the gate, and turning the setting off releases it (spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed")', () => effect {
+  it.effect('A new outside pull request is asked once under a lease, a failed label write lets the retry ask, record-only writes only the gate, turning the setting off releases it, and a standing deposit covers only a pull request the fee applies to (spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
     const { fees } = try FeeWorld
     const first = try opened("First sight", t0 - 1000)
     const waits = try gated(first, t0)
@@ -299,16 +319,24 @@ layer(World, { timeout: "240 seconds" })((it) => {
     const failed = try gated(flaky, t0)
     fees.failLabels = false
     const retried = try gated(flaky, t0 + 60_000)
+    try standingDeposit(t0 - day)
     const older = try opened("Opened before the setting", Date.parse(since) - day)
-    const olderWaits = try gated(older, t0)
+    const olderWaits = try gated(older, t0, depositor(Date.parse(since) - day))
+    const unread = try opened("Exemption not read", t0 - 1000)
+    const unreadWaits = try gated(unread, t0, depositor(t0 - 1000, "ExemptionUnknown"))
     fees.mode = "FeeDryRun"
     const recorded = try opened("Record only", t0 - 1000)
     const recordWaits = try gated(recorded, t0)
     fees.mode = "FeeLive"
     fees.manifest = settingOn(false)
-    const releasedWaits = try gated(first, t0 + 2000)
+    const releasedWaits = try gated(first, t0 + 2000, depositor(t0 - 1000))
     fees.manifest = settingOn(true)
-    try same({ waits, again, asked, solanaChecks, failed, retried, flaky: try seen(flaky), olderWaits, older: try seen(older), recordWaits, recorded: try seen(recorded), releasedWaits, released: try seen(first) }, {
+    const covered = try opened("Covered by the standing deposit", t0 - 1000)
+    const coveredWaits = try gated(covered, t0 + 3000, depositor(t0 - 1000))
+    const covers = try coveredPulls()
+    try closed(covered, t0 + day, true)
+    const cleared = try at(t0 + 2 * day, checkStandingDeposits())
+    try same({ waits, again, asked, solanaChecks, failed, retried, flaky: try seen(flaky), olderWaits, older: try seen(older), unreadWaits, unread: try seen(unread), recordWaits, recorded: try seen(recorded), releasedWaits, released: try seen(first), releasedWhy: (try gateOf(first))?.reason, coveredWaits, covered: try seen(covered), covers, cleared, clearedCovers: try coveredPulls() }, {
       waits: true,
       again: true,
       asked: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
@@ -318,10 +346,18 @@ layer(World, { timeout: "240 seconds" })((it) => {
       flaky: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
       olderWaits: false,
       older: { gate: null, item: null, labels: [], botComments: 0 },
+      unreadWaits: false,
+      unread: { gate: null, item: null, labels: [], botComments: 0 },
       recordWaits: false,
       recorded: { gate: "recorded", item: null, labels: [], botComments: 0 },
       releasedWaits: false,
       released: { gate: "released", item: null, labels: [], botComments: 1 },
+      releasedWhy: "setting-off",
+      coveredWaits: false,
+      covered: { gate: "released", item: null, labels: ["slopbot:deposit-covered"], botComments: 1 },
+      covers: [{ pull_number: covered, state: "watch", pr_open: 1 }],
+      cleared: { read: 1, decided: 0 },
+      clearedCovers: [{ pull_number: covered, state: "clear", pr_open: 0 }],
     })
   })
 

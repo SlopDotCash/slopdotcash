@@ -7,7 +7,7 @@ import { RegistryManifests, type SlopRate, SubmissionFeeRates, SubmissionFeeSett
 import type { FeePull } from "@repo/ports/slopbot"
 import { type StoredFeeSetting, feeSettingAbsent, feeSettingOn } from "../../gen/backend__submissionFeeSettings.effect.vibe"
 import { defaultMinor } from "../../gen/backend__submissionFeeTerms.effect.vibe"
-import { type Event, type FeeExemption, type FeeFacts, type FeeGate, type FeeMode, apply, askInFlight, askStands, feeStep, settingAmount, settingOn } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { type Event, type FeeExemption, type FeeFacts, type FeeGate, type FeeMode, applies, apply, askInFlight, askStands, feeStep, settingAmount, settingOn } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { absentOn404 } from "../context/load.vibe"
 import { addLabels, removeLabel } from "../publish/labels.vibe"
 import { type ScopedItem, requireScope } from "../publish/scope.vibe"
@@ -227,7 +227,7 @@ export effect function gateSubmissionFee(ask: FeeAsk) {
   if (mode === "FeeLive" && item !== null && item.paidAt !== null) return false
   const facts = try feeFacts(ask, mode)
   const model = gateModel(gate, item, nowMillis)
-  if (mode === "FeeLive" && ask.exemption !== "Exempt") {
+  if (mode === "FeeLive" && applies(facts)) {
     if (try hasStandingCover(pull)) {
       if (askInFlight(model)) return true
       if (!coverFinished(gate)) try finishStandingCover(ask.target, gate, model, facts, at)
@@ -235,7 +235,7 @@ export effect function gateSubmissionFee(ask: FeeAsk) {
     }
     const firstSight = gate === undefined || gate.state === "recorded" || gate.state === "released"
     if (
-      (askStands(model) || (firstSight && ask.mayAsk && settingOn(facts))) &&
+      (askStands(model) || (firstSight && ask.mayAsk)) &&
       (try coverByStandingDeposit(pull, ask.target.projectId, ask.author, ask.openedAt, nowMillis, at))
     ) {
       try finishStandingCover(ask.target, gate, model, facts, at)
