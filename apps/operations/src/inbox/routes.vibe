@@ -1,6 +1,6 @@
 // spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
 import { first, rows, sql } from "@repo/platform/d1"
-import { Caller, handle, handleRaw, jsonBody, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { Caller, handle, handleRaw, jsonBody, methodNotAllowed, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Access, Route } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
@@ -108,7 +108,9 @@ effect function acknowledged(caseId: string, githubId: string) {
     default: throw error;
   }
   if (!access.allowed) throw refused(refusals.caseNotFound)
-  const fields = try strictBody(AcknowledgeFields, 64 * 1024)
+  const fields = strictBody(AcknowledgeFields, 64 * 1024) catch effect (error) => {
+    throw refused({ status: error.status, code: error.code, message: error.message, headers: refusals.caseUnauthenticated.headers })
+  }
   const eventKey = fields.eventKey
   if (typeof eventKey !== "string") throw refused(refusals.eventKeyRequired)
   const delivery = try caseDelivery(caseId, eventKey, githubId)
@@ -173,7 +175,11 @@ effect function appealReview() {
 export const inboxRoutes = Layer.mergeAll(
   handle(inside(listNotices), (input) => listed(input.query)),
   handle(inside(markNoticesRead), () => marked()),
-  handle({ ...acknowledgeCaseNotice, request: undefined }, (input) => acknowledged(input.params.id ?? "", input.actor.githubId)),
+  handle({ ...acknowledgeCaseNotice, request: undefined, unauthenticated: refusals.caseUnauthenticated, actorMismatch: refusals.caseActorChanged }, (input) => acknowledged(input.params.id ?? "", input.actor.githubId), refusals.caseOriginForbidden),
+  methodNotAllowed([acknowledgeCaseNotice], effect {
+    if ((try HttpServerRequest.HttpServerRequest).method !== "GET" && !(try sameOriginWrite())) throw refused(refusals.caseOriginForbidden)
+    throw refused(refusals.caseMethodNotFound)
+  }),
   handleRaw(inside(openScamReview), () => scamReview()),
   handleRaw(inside(openAppealReview), () => appealReview()),
   ...otherInboxMethods.map((descriptor) => handle(descriptor, () => effect { throw refused(refusals.methodNotAllowed) })),

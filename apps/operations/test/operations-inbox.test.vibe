@@ -26,6 +26,8 @@ interface Ask {
   readonly method?: string
   readonly as?: string
   readonly json?: unknown
+  readonly raw?: string
+  readonly contentType?: string
   readonly origin?: string
   readonly expected?: string
 }
@@ -81,12 +83,12 @@ effect function ask(path: string, options: Ask = {}) {
   const headers: Record<string, string> = {}
   if (options.as !== undefined) headers.cookie = `__Host-slop_points=${tokenOf(options.as)}`
   if (options.expected !== undefined) headers["x-slop-expected-github-id"] = options.expected
-  if (options.json !== undefined) {
-    headers["content-type"] = "application/json"
+  const body = options.raw ?? (options.json === undefined ? undefined : JSON.stringify(options.json))
+  if (body !== undefined) {
+    headers["content-type"] = options.contentType ?? "application/json"
     headers.origin = options.origin ?? origin
   }
-  const method = options.method ?? (options.json === undefined ? "GET" : "POST")
-  const body = options.json === undefined ? undefined : JSON.stringify(options.json)
+  const method = options.method ?? (body === undefined ? "GET" : "POST")
   const request = try orDie(Effect.try(() => new WebRequest(`${origin}${path}`, { method, headers, body, redirect: "manual" })))
   const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
   const text = try promise(() => response.text())
@@ -269,6 +271,26 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       besideLegacy: [200, { marked: 1 }],
     })
 
+    const acknowledgmentPath = `/api/v1/security-cases/${caseId}/acknowledge`
+    const acknowledgment = { eventKey: "security-receipt:inbox-1" }
+    const originForbidden = { error: "origin_forbidden", message: "Requests must come from this site" }
+    const unauthorized = { error: "unauthorized", message: "Sign in with GitHub" }
+    try same([
+      try ask(acknowledgmentPath, { json: acknowledgment }),
+      try ask(acknowledgmentPath, { json: acknowledgment, origin: "https://other.test" }),
+      try ask(acknowledgmentPath, { raw: "eventKey=security-receipt%3Ainbox-1", contentType: "application/x-www-form-urlencoded" }),
+      try ask(acknowledgmentPath, { raw: "{" }),
+      try ask(acknowledgmentPath),
+    ].map((answer) => [answer.status, answer.body, answer.cache]), [
+      [401, unauthorized, "private, no-store"],
+      [403, originForbidden, "private, no-store"],
+      [403, originForbidden, "private, no-store"],
+      [401, unauthorized, "private, no-store"],
+      [404, { error: "not_found" }, "private, no-store"],
+    ])
+    const [beforeAck] = try (try D1).all(sql`SELECT acknowledged_at FROM security_notification_outbox
+      WHERE case_id = ${caseId} AND event_key = ${acknowledgment.eventKey} AND recipient_github_id = ${member}`)
+    try same(beforeAck?.acknowledged_at, null)
     const acknowledge = (id: string, eventKey: string, as = member) => ask(`/api/v1/security-cases/${id}/acknowledge`, { as, json: { eventKey } })
     const answers = [
       try acknowledge(caseId, "security-receipt:inbox-1"),

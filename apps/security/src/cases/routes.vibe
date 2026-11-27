@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
-import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
+import { type Actor, Caller, Refused, admission, handleRaw, handleRawJsonWrite, json, methodNotAllowed, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
 import { apply, canRecordAttested, heldFor, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
@@ -46,6 +46,11 @@ const common = ["action", "expectedRevision", "idempotencyKey"]
 const idempotencyPattern = /^[A-Za-z0-9_-]{16,80}$/u
 const ghsa = /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const caseOrigin = { ...admission.origin, headers: privateHeaders }
+const caseSession = {
+  unauthenticated: { ...admission.unauthenticated, headers: privateHeaders },
+  actorMismatch: { ...admission.actorChanged, headers: privateHeaders },
+}
 const listLimit = 500
 
 function answer(body: unknown, status = 200) {
@@ -420,13 +425,26 @@ effect function afterwards(id: string, actor: Actor) {
   return { case: try shownCase(observed, actor, true) }
 }
 
+const CaseEnvelope = Schema.Record(Schema.String, Schema.Unknown)
+
 effect function bodyOf(limitKib: number) {
-  return (try jsonBody(limitKib)) as Body
+  return strictBody(CaseEnvelope, limitKib * 1024) catch effect (error) => {
+    throw new Refused({ status: error.status, code: error.code, message: error.message, headers: privateHeaders })
+  }
 }
 
 export const caseRoutes = Layer.mergeAll(
-  handleSecurityRead(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
+  handleSecurityRead({ ...listCases, ...caseSession }, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
   handleSecurityRead(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
-  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => created(input.actor, body))),
-  handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
+  handleRaw({ ...claimCase, ...caseSession, access: "public" as const }, () => effect {
+    if (!(try sameOriginWrite())) throw new Refused(caseOrigin)
+    const body = try bodyOf(claimCase.limitKib)
+    const actor = try (try Caller).current(claimCase)
+    return try created(actor, body)
+  }),
+  handleRawJsonWrite({ ...actOnCase, ...caseSession }, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result))), privateHeaders),
+  methodNotAllowed([listCases, claimCase, actOnCase], effect {
+    if ((try HttpServerRequest.HttpServerRequest).method !== "GET" && !(try sameOriginWrite())) throw new Refused(caseOrigin)
+    return answer({ error: "not_found" }, 404)
+  }),
 )

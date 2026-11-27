@@ -502,6 +502,40 @@ effect function listedAtOnce(cases: Cases.Shape) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Case endpoint refusals keep private headers and leave cases and notices unchanged (spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => scoped(effect {
+    const cases = try Cases
+    const routes = caseRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>
+    const services = Layer.provideMerge(CallerLive, shellOf(cases))
+    const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, services), { disableLogger: true })), (made) => promise(() => made.dispose()))
+    const handler = web.handler as WebHandler
+    const counts = () => promise(() => rows(cases.world, "SELECT (SELECT count(*) FROM security_cases) AS cases, (SELECT count(*) FROM security_case_events) AS events, (SELECT count(*) FROM security_notification_outbox) AS notices"))
+    const before = try counts()
+    effect function ask(path: string, method: "GET" | "POST", body = "{}", from = origin, contentType = "application/json") {
+      const request = try Effect.try(() => new WorkerRequest(`${origin}/api/v1/security-cases${path}`, {
+        method,
+        ...method === "GET" ? {} : { headers: { origin: from, "content-type": contentType }, body },
+      }))
+      const response = try promise(() => handler(request as unknown as globalThis.Request, Context.make(Execution, { context: { waitUntil: (work) => { cases.pending.push(work) } } })))
+      const payload = try promise(() => response.json() as Promise<unknown>)
+      return [response.status, payload, response.headers.get("cache-control"), response.headers.get("x-robots-tag")]
+    }
+    const unauthorized = [401, { error: "unauthorized", message: "Sign in with GitHub" }, "private, no-store", "noindex"]
+    const forbidden = [403, { error: "origin_forbidden", message: "Requests must come from this site" }, "private, no-store", "noindex"]
+    const malformed = [400, { error: "invalid_request", message: "Request body must be valid UTF-8 JSON" }, "private, no-store", "noindex"]
+    const missing = [404, { error: "not_found" }, "private, no-store", "noindex"]
+    for (const path of ["", "/sc_missing_fixture/actions"]) {
+      try same([
+        try ask(path, "POST"),
+        try ask(path, "POST", "{}", "https://other.test"),
+        try ask(path, "POST", "mode=claim", origin, "application/x-www-form-urlencoded"),
+        try ask(path, "POST", "{"),
+        try ask(path, "GET"),
+      ], [unauthorized, forbidden, forbidden, path === "" ? malformed : unauthorized, path === "" ? unauthorized : missing])
+    }
+    try same(try counts(), before)
+    try same(cases.pending.length, 0)
+  }))
+
   it.effect('Receipt-time terms stay frozen and an unpaid receipt creates no award (spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance")', () => effect {
     const cases = try Cases
     provide shellOf(cases) {

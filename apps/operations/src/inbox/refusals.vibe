@@ -25,6 +25,10 @@ export const inboxRefusals = {
   invalidAppealKey: parity(getNotificationsAppealsByKey.invalidRequestPrivateNoStore),
   notAuthorized: parity(getNotificationsScamReviewsByPath.notAuthorized),
   notFound: parity(getNotificationsScamReviewsByPath.notFoundS404),
+  caseOriginForbidden: parity(postSecurityCasesByIdAcknowledge.originForbidden),
+  caseUnauthenticated: parity(postSecurityCasesByIdAcknowledge.unauthorized),
+  caseActorChanged: parity(postSecurityCasesByIdAcknowledge.actorChanged),
+  caseMethodNotFound: parity(postSecurityCasesByIdAcknowledge.notFoundPrivateNoStore),
   caseNotFound: parity(postSecurityCasesByIdAcknowledge.notFound),
   eventKeyRequired: parity(postSecurityCasesByIdAcknowledge.invalidRequestAnInboxEventKey),
 } satisfies Readonly<Record<string, Refusal>>
