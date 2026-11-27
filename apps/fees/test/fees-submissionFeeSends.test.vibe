@@ -18,6 +18,7 @@ import {
   associatedUsdcAccount,
 } from "../src/submissionFee/solanaProgram.ts"
 import { SOLANA_EXPIRED, SOLANA_LANDED_FAILED, type SolanaRunResult, parseSolanaSubmissionFeeConfig } from "../src/submissionFee/solanaWorker.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "../src/submissionFee/standingTerms.ts"
 import { type FakeSolanaLedger, buildSettlementTransaction, createFakeSolanaLedger, depositAccountOf, nextSolanaBlockhash, solanaAddressFromHex, solanaFeeRpc } from "./support/solanaFeeFake.ts"
 import { type FeePorts, type FeeWorld, contract, network, payer, startedFeeWorld, usdg, withFeePorts } from "./support/submissionFee.vibe"
 
@@ -114,7 +115,9 @@ function contractRpc(chain: Contract): Handler {
       case "eth_getTransactionReceipt": {
         const hash = String(call.params[0]) as Hex
         const mined = chain.mined.get(hash)
-        return answered(mined === undefined ? null : { transactionHash: hash, blockHash: blockHash(mined.block), blockNumber: toHex(mined.block), transactionIndex: "0x0", status: mined.ok ? "0x1" : "0x0", from: resolver, to: contract, gasUsed: "0x1", logs: [] })
+        const raw = chain.sent.find((sent) => keccak256(sent) === hash)
+        const to = raw === undefined ? contract : parseTransaction(raw).to?.toLowerCase() ?? contract
+        return answered(mined === undefined ? null : { transactionHash: hash, blockHash: blockHash(mined.block), blockNumber: toHex(mined.block), transactionIndex: "0x0", status: mined.ok ? "0x1" : "0x0", from: resolver, to, gasUsed: "0x1", logs: [] })
       }
       case "eth_getTransactionByHash": return answered(null)
       default: return refused(-32601, `unexpected ${call.method}`)
@@ -187,11 +190,11 @@ effect function parkedRows() {
   return try provided(rows(ParkedSeen, sql`SELECT deposit_id, reason, released_at IS NOT NULL AS released FROM submission_fee_parked WHERE network = ${network} ORDER BY deposit_id`))
 }
 
-effect function deposit(id: number, itemNumber: number, amount: bigint, options: { readonly final?: boolean; readonly chainAmount?: bigint } = {}) {
+effect function deposit(id: number, itemNumber: number, amount: bigint, options: { readonly final?: boolean; readonly chainAmount?: bigint; readonly ledger?: string } = {}) {
   const world = try World
   const at = new Date(start).toISOString()
   try write(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, state)
-    VALUES (${network}, ${id}, ${item(itemNumber)}, ${payer}, ${usdg}, ${amount.toString()}, ${wallet}, ${txHash(id)}, ${firstBlock - 10}, ${at}, ${options.final === false ? null : at}, 'open')`)
+    VALUES (${options.ledger ?? network}, ${id}, ${item(itemNumber)}, ${payer}, ${usdg}, ${amount.toString()}, ${wallet}, ${txHash(id)}, ${firstBlock - 10}, ${at}, ${options.final === false ? null : at}, 'open')`)
   world.chain.deposits.set(id, { payer, token: usdg, amount: options.chainAmount ?? amount, keptTo: wallet, item: item(itemNumber), depositedAt: 1n, state: 1 })
 }
 
@@ -523,6 +526,45 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
         true,
         [{ deposit_id: 3, done: 1 }],
       ],
+    }))
+  })
+
+  it.effect('The standing ledger signs with the Robinhood Chain ledger\'s key: neither signs while the other has a send in flight, and both count toward one native ceiling of the day (spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings")', () => effect {
+    const { chain } = try World
+    const sendsOf = (run: DepositRun) => [network, STANDING_DEPOSIT_LEDGER].map((ledger) => (entryOf(run, ledger) as NetworkResult).send)
+    const signedSince = (from: number) => chain.sent.slice(from).map((raw) => [parseTransaction(raw).nonce, idsOf(raw)])
+    try nextDay()
+    try deposit(50, 900, 2_000_000n, { ledger: STANDING_DEPOSIT_LEDGER })
+    const before = chain.sent.length
+    const nonce = chain.nonce
+    const both = try pass()
+    const whileFirst = signedSince(before)
+    mine(chain, true)
+    const standingTurn = try pass()
+    const afterFirst = signedSince(before + whileFirst.length)
+    try deposit(35, 1, 2_000_000n)
+    const whileStanding = try pass()
+    mine(chain, true)
+    try pass()
+    const pullTurn = try pass()
+    mine(chain, true)
+    const today = try provided(isoNow())
+    try write(sql`INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, reason, block_number, created_at, updated_at, finalized_at)
+      VALUES ('sfs_pull_ledger_today', ${network}, 'live', ${contract}, '[{"id":98,"refund":true}]', ${resolver}, ${txHash(8)}, '0x02deadbeef', 9998, '500000000000', 'finalized', NULL, 1, ${today}, ${today}, ${today})`)
+    try deposit(51, 900, 2_000_000n, { ledger: STANDING_DEPOSIT_LEDGER })
+    const sharedDay = try pass()
+    try Effect.try(() => assert.deepStrictEqual({
+      both: [sendsOf(both), whileFirst],
+      standingTurn: [sendsOf(standingTurn), afterFirst],
+      whileStanding: sendsOf(whileStanding),
+      pullTurn: sendsOf(pullTurn),
+      sharedDay: sendsOf(sharedDay),
+    }, {
+      both: [["sent", "sibling_in_flight"], [[nonce, [{ id: 34, refund: true }]]]],
+      standingTurn: [["none", "sent"], [[nonce + 1, [{ id: 50, refund: true }]]]],
+      whileStanding: ["sibling_in_flight", "in_flight"],
+      pullTurn: ["sent", "sibling_in_flight"],
+      sharedDay: ["none", "gas_budget"],
     }))
   })
 })
