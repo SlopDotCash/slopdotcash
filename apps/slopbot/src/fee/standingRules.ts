@@ -156,9 +156,10 @@ export function coverReading(
   );
   let nextCheckAt: string | null = null;
   if (state === "pending" && strikeSeenAt !== null) {
-    nextCheckAt = new Date(Date.parse(strikeSeenAt) + standingDepositStrikeGraceHours * hourMs).toISOString();
+    const seen = Date.parse(strikeSeenAt);
+    nextCheckAt = new Date((Number.isFinite(seen) ? seen : nowMillis) + standingDepositStrikeGraceHours * hourMs).toISOString();
   } else if (state === "watch") {
-    nextCheckAt = new Date(Math.max(nowMillis + 60_000, Math.min(nowMillis + dayMs, windowEnds + 60_000))).toISOString();
+    nextCheckAt = new Date(Number.isFinite(windowEnds) ? Math.max(nowMillis + 60_000, Math.min(nowMillis + dayMs, windowEnds + 60_000)) : nowMillis + dayMs).toISOString();
   } else if (state === "clear" && open) {
     nextCheckAt = new Date(nowMillis + dayMs).toISOString();
   }
