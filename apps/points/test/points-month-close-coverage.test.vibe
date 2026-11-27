@@ -51,7 +51,7 @@ effect function ledger() {
 }
 
 layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Retained publication timestamps must not stand in for complete November source coverage (spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project")', () => effect {
+  it.effect(`Retained publication timestamps must not stand in for complete November source coverage (spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them")`, () => effect {
     const { db } = try Bench
     const repo = { id: repository, githubUrl: "https://github.com/acme/widgets", displayName: "Widgets", description: "", integrationBranch: "main", aliases: ["acme/legacy-widgets"] }
     const future = { ...repo, id: "acme/future-widgets", githubUrl: "https://github.com/acme/future-widgets", aliases: [], countsFrom: until }
@@ -89,5 +89,26 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
     const correction = { id: try pointRevisionId(afterClose), ...afterClose }
     try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:20.000Z", coverage: [...coverage, ...adjoining], revisions: [...revisions, correction] })
     assert.deepStrictEqual((try ledger())?.weights, [{ githubId: "1101", login: "ada", points: 45 }])
+    const rewardStartAt = "2026-11-22T12:00:00.000Z"
+    const started = JSON.stringify({ id: projectId, status: "active", reward: { rewardStartAt }, repositories: [repo, future] })
+    const startedDigest = try sha256Hex(started)
+    provide d1(db) {
+      try (try D1).batch([
+        sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, 2, ${started}, ${startedDigest}, 'seed', '2026-08-02T00:00:00.000Z')`,
+        sql`UPDATE projects SET revision = 2, manifest = ${started}, manifest_sha256 = ${startedDigest}, updated_at = '2026-08-02T00:00:00.000Z' WHERE id = ${projectId}`,
+      ])
+    }
+    assert.deepStrictEqual((try ledger())?.weights, [])
+    const graceId = userNodeId(1102)
+    const afterStart = {
+      ...body, recordedAt: "2026-12-01T00:11:25.000Z",
+      award: { ...body.award, key: try pointKey({ projectId, actorId: graceId, category, sourceId: "102" }), actor: { id: graceId, login: "grace" }, amount: 30, occurredAt: "2026-11-25T00:00:00.000Z", sourceId: "102", sourceUrl: "https://github.com/acme/widgets/pull/102", workUnitId: "102" },
+    } satisfies RevisionBody
+    const counted = [...revisions, correction, { id: try pointRevisionId(afterStart), ...afterStart }]
+    const late = [{ repository, from: "2026-11-22T12:00:01.000Z", to: until, digest: "f".repeat(64) }]
+    try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:30.000Z", coverage: late, revisions: counted })
+    assert.equal(try ledger(), undefined)
+    try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:35.000Z", coverage: [{ ...late[0], from: "2026-11-20T00:00:00.000Z" }], revisions: counted })
+    assert.deepStrictEqual((try ledger())?.weights, [{ githubId: "1102", login: "grace", points: 30 }])
   })
 })

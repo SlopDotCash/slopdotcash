@@ -21335,7 +21335,7 @@
     },
     {
       "path": "spec/points/rewardWeights.md",
-      "sha256": "49d54e8175d947f3503e5d64377ec4a8cb7a63bff206d90ddb13caf283ae5925",
+      "sha256": "303c82e2c4ef0025faec2c746f9d2cb2abfd159c2313922969ad6d42760a88b1",
       "module": "points__rewardWeights",
       "stories": [
         {
@@ -21432,7 +21432,7 @@
         },
         {
           "heading": "Story: Derive each month's reward weights from accepted work only / Witnesses show exclusion, penalty netting, frozen stability and bans",
-          "line": 183,
+          "line": 191,
           "definitions": [
             "sometimesExcludedActorRemoved",
             "sometimesPenaltyNetted",

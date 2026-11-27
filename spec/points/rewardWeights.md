@@ -132,6 +132,14 @@ At the freeze the book must equal the book of a journal in which the month is
 frozen. Once fixed, the month's weights never change: later credits,
 penalties, appeals and exclusions affect Points standings only.
 
+A project's month opens at its reward start when that instant falls inside
+the month (`reward.rewardStartAt` of the registered manifest). Accepted work
+and penalty requests dated before it belong to no cycle of the project and
+never reach a weight, and the complete coverage a closed month needs is
+counted from that instant, never from an earlier one (`projectCycleWindow`
+in `src/lib/project-view.ts`, `ensureCompleteCycle` in
+`src/lib/reward-cycle.ts`, `recordCounts` in `src/lib/global-leaderboard.ts`).
+
 A ban does not remove or redistribute a weight. The fixed snapshot keeps the
 banned recipient's weight, so every other recipient's share of the month is
 unchanged; the banned recipient's unfunded award is not created by
