@@ -77,7 +77,7 @@ const iso = (value: number) => new Date(time(value)).toISOString();
 const githubId = (actor: number) => String(8_500_000 + generation * 100 + actor);
 const ids = (actors: ReadonlyArray<number>) => actors.map(githubId);
 const actorOf = (by: unknown) => ({ githubId: githubId(Number(by ?? 0)), login: `member-${githubId(Number(by ?? 0))}`, actorId: `actor-${githubId(Number(by ?? 0))}` });
-const key = () => `deposit-driver-${generation}-${++keys}`.padEnd(24, "0");
+const key = () => `deposit-driver-${generation}-${String(++keys).padStart(8, "0")}`;
 const projectOf = () => `deposit-conformance-g${generation}`;
 const caseIdOf = (name: string) => `sc_deposit_g${generation}_${name}`;
 const submissionIdOf = (name: string) => `ss_deposit_g${generation}_${name}`;
@@ -294,8 +294,18 @@ async function swept(by: unknown, step: "release" | "decide"): Promise<Outcome> 
 
 async function projectSetting(by: unknown, on: boolean): Promise<Outcome> {
   if (Number(by ?? 0) !== depositService) return "refused";
-  const changed = await db.prepare("UPDATE projects SET manifest=? WHERE id=? AND manifest<>?").bind(manifestOf(projectOf(), on), projectOf(), manifestOf(projectOf(), on)).run();
-  return changed.meta.changes === 1 ? "accepted" : "refused";
+  const projectId = projectOf();
+  const nextManifest = manifestOf(projectId, on);
+  const [current] = (await db.prepare("SELECT revision, manifest FROM projects WHERE id=?").bind(projectId).all()).results;
+  if (current === undefined || current.manifest === nextManifest) return "refused";
+  const nextRevision = Number(current.revision) + 1;
+  const sha = hexOf(`deposit-setting-${generation}-${nextRevision}-${on}`);
+  const at = iso(nowMs);
+  await db.batch([
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Deposit conformance setting',?)").bind(projectId, nextRevision, nextManifest, sha, at),
+    db.prepare("UPDATE projects SET revision=?, manifest=?, manifest_sha256=?, updated_at=? WHERE id=?").bind(nextRevision, nextManifest, sha, at, projectId),
+  ]);
+  return "accepted";
 }
 
 async function send(event: Event, by: unknown): Promise<Outcome> {

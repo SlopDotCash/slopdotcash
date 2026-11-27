@@ -57,7 +57,11 @@ export class Credentials {
   readonly #codes = new Map<string, Code>();
   #issued = 0;
 
-  constructor(readonly world: GitHubWorld) {}
+  readonly world: GitHubWorld;
+
+  constructor(world: GitHubWorld) {
+    this.world = world;
+  }
 
   #token(prefix: string, credential: Credential): string {
     this.#issued += 1;

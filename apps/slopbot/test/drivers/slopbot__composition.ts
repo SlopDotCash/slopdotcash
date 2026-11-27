@@ -110,6 +110,10 @@ async function freshAttempt() {
   const initial = await run(attemptState(await run(openAttempt())));
   const identity = { ...initial.candidate.identity, itemNode: node() };
   record = await run(openAttempt({ ...initial, candidate: { ...initial.candidate, identity } }));
+  const at = iso(nowSeconds());
+  await db.prepare(`INSERT OR IGNORE INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, verdict, action, created_at, completed_at)
+    VALUES (?, 1, ?, 'pull_request', 3, ?, ?, 'head', 'review', 'policy', 'completed', ?, 'label', ?, ?)`)
+    .bind(`${reviewKey()}-finding`, repository(), node(), author, JSON.stringify({ category: categoryNameOf(initial.candidate.triage.verdict.category) }), at, at).run();
 }
 
 await freshAttempt();
@@ -210,7 +214,13 @@ async function confirm(event: Extract<Event, { type: "confirmClose" }>) {
       reviewKey: reviewKey(),
       closedAt,
     }));
-    return run(confirmSlot({ repositoryId: repository(), itemNodeId: node(), reviewKey: reviewKey(), attemptKey, revision: "head", closedAt, also }));
+    const prevMs = clock.now();
+    if (event.closeEvent.closedAt * 1000 > prevMs) clock.set(event.closeEvent.closedAt * 1000);
+    try {
+      return await run(confirmSlot({ repositoryId: repository(), itemNodeId: node(), reviewKey: reviewKey(), attemptKey, revision: "head", closedAt, also }));
+    } finally {
+      clock.set(prevMs);
+    }
   });
 }
 

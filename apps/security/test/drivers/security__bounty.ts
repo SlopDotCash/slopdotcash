@@ -62,13 +62,14 @@ let route: { readonly direct: DirectRoute | undefined; readonly observedAt: numb
 const cases = new Map<number, string>();
 let keys = 0;
 let receiptTerms: ReceiptTerms | undefined;
+let earlierId: string | undefined;
 
 const base = () => epoch + generation * span;
 const at = (ms: number) => new Date(base() + ms).toISOString();
 const githubId = (actor: number) => String(7_000_000 + generation * 100 + actor);
 const actorOf = (by: unknown) => ({ githubId: githubId(Number(by ?? 0)), login: `member-${githubId(Number(by ?? 0))}`, actorId: `actor-${githubId(Number(by ?? 0))}` });
 const ids = (actors: ReadonlyArray<number>) => actors.map(githubId);
-const key = () => `bounty-driver-${generation}-${++keys}`.padEnd(24, "0");
+const key = () => `bounty-driver-${generation}-${String(++keys).padStart(8, "0")}`;
 const minor = (amount: ReadonlyArray<number>) => BigInt(amount.reduceRight((text, limb) => `${text}${String(limb).padStart(3, "0")}`, "")).toString();
 
 const fixture: ProjectView = {
@@ -121,7 +122,7 @@ const pending: Array<Promise<unknown>> = [];
 const execution: ExecutionContext = { waitUntil: (work) => { pending.push(work); } };
 const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> };
 const githubLayer = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaGitHub), webCrypto, clock.layer));
-const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), githubLayer, Layer.succeed(Execution, { context: execution }), reportDepositSettings("off"));
+const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), githubLayer, outboundVia(viaGitHub), Layer.succeed(Execution, { context: execution }), reportDepositSettings("off"));
 const runtime = ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(awardClearancesLive, SubmissionFeeRatesLive, ProjectParticipationLive), services));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
@@ -175,6 +176,21 @@ async function receive(id: number, event: Extract<Event, { type: "receive" }>): 
 
 async function revisionOf(caseId: string) {
   return (await runtime.runPromise(caseRecord(caseId)))?.row.revision ?? 0;
+}
+
+async function ensureEarlier(): Promise<string> {
+  if (earlierId !== undefined) return earlierId;
+  const caseId = `sc_bounty_g${generation}_earlier`;
+  const submissionId = `ss_bounty_g${generation}_earlier`;
+  const digest = "e".repeat(64);
+  const terms: ReceiptTerms = { revision: 1, publishedAt: base() + 1, receivedAt: base() + 1, paidTerms: false, scoped: true, fundingPolicy: "AfterApproval", eligibility: "InScopeSecurity", offeredGross: [0], split: "StandardSplit", asset: "", excludedFindings: [] };
+  await runtime.runPromise(Effect.flatMap(slopReceipt({
+    caseId, submissionId, projectId: project, repository, reporter: { githubId: githubId(9), login: `member-${githubId(9)}` }, idempotencyKey: key(), marker: "e".repeat(32), receivedAt: at(1),
+    policyRevision: 1, terms: undefined, receiptTerms: terms,
+    report: { key: `security-reports/${submissionId}/1-${digest}.json`, digest, bytes: 64 }, ownerGithubId: null, unbanned: sql`1`,
+  }), batched));
+  earlierId = caseId;
+  return caseId;
 }
 
 async function act(id: number, by: unknown, action: string, fields: Readonly<Record<string, unknown>> = {}): Promise<Outcome> {
@@ -305,7 +321,7 @@ async function send(event: Event, by: unknown): Promise<Outcome> {
     case "decide": {
       const decision = event.decision;
       if (!(decision.finding in findingText)) return "refused";
-      const original = cases.get(event.id === 1 ? 2 : 1);
+      const original = decision.duplicateOf > 0 ? (cases.get(event.id === 1 ? 2 : 1) ?? await ensureEarlier()) : undefined;
       return act(event.id, by, "decide", {
         outcome: findingText[decision.finding as keyof typeof findingText], severity: severityText[decision.severity], loss: lossText[decision.loss], inScope: decision.inScope,
         reason: "Conformance decision.", relatedParty: decision.declareRelated,
@@ -365,6 +381,7 @@ export const driver: Driver<ReturnType<typeof shape>> & AsyncDisposable = {
     cases.clear();
     claimAdvisories.clear();
     receiptTerms = undefined;
+    earlierId = undefined;
     clock.set(base() + clockMs);
   },
   dispatch: (_key, event, by) => send(event, by),

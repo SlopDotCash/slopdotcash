@@ -82,17 +82,23 @@ function rowOf(key: string): ReviewRow {
 }
 
 async function claim(key: string, token: number, leaseUntil: number): Promise<"accepted" | "refused"> {
-  at(key);
+  const nowSec = millis(at(key)) / 1000;
   if (token <= (tokens.get(key) ?? 0)) return "refused";
   if (!(await runtime.runPromise(activeInstallation(installationOf(key))))) return "refused";
   if ((await runtime.runPromise(budgetBlockedUntil(reviewKeyOf(key)))) !== undefined) return "refused";
-  const exit = await runtime.runPromiseExit(claimReview(rowOf(key), { token: tokenText(key, token), route: "AdvisoryReview", expiresAt: millis(leaseUntil) / 1000 }));
-  return verdictOf(exit, (outcome) => {
+  const targetSec = millis(leaseUntil) / 1000;
+  const cappedSec = targetSec > nowSec + 1200 ? nowSec + 1200 : targetSec;
+  const exit = await runtime.runPromiseExit(claimReview(rowOf(key), { token: tokenText(key, token), route: "AdvisoryReview", expiresAt: cappedSec }));
+  const result = verdictOf(exit, (outcome) => {
     if (outcome.kind !== "claimed") return false;
     tokens.set(key, token);
     claims.set(key, outcome.claim);
     return true;
   });
+  if (result === "accepted" && targetSec > nowSec + 1200) {
+    await db.prepare("UPDATE slopbot_reviews SET lease_expires_at = ? WHERE review_key = ? AND claim_token = ?").bind(new Date(millis(leaseUntil)).toISOString(), reviewKeyOf(key), tokenText(key, token)).run();
+  }
+  return result;
 }
 
 async function finish(key: string, token: number, status: RowStatus): Promise<"accepted" | "refused"> {

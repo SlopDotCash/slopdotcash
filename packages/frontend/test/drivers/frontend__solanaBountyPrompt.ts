@@ -27,7 +27,10 @@ function memoryStorage(): ListedStorage {
 class Names {
   readonly toShell = new Map<string, string>();
   readonly toModel = new Map<string, string>();
-  constructor(private readonly make: (index: number) => string) {}
+  private readonly make: (index: number) => string;
+  constructor(make: (index: number) => string) {
+    this.make = make;
+  }
   shell(model: string): string {
     if (model === "") return "";
     const found = this.toShell.get(model);
@@ -73,12 +76,14 @@ export const driver: Driver = {
     prompt = await fresh();
   },
   dispatch: async (_key, event: Event, by) => {
-    await known(event);
-    return outcome(prompt.machine.send(toShell(event) as Event, Number(by)));
+    const translated = toShell(event);
+    await known(translated);
+    return outcome(prompt.machine.send(translated as Event, Number(by)));
   },
   receive: async (_key, raw, by) => {
-    await known(raw);
-    return outcome(prompt.machine.receive(toShell(raw), Number(by)));
+    const translated = toShell(raw);
+    await known(translated);
+    return outcome(prompt.machine.receive(translated, Number(by)));
   },
   observe: async () => toModel(await Effect.runPromise(prompt.machine.get())) as SolanaPrompt,
 };

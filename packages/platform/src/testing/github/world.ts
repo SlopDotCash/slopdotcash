@@ -385,7 +385,11 @@ export class GitHubWorld {
   #serial = 1_000_000;
   #advisories = 0;
 
-  constructor(readonly now: () => number) {}
+  readonly now: () => number;
+
+  constructor(now: () => number) {
+    this.now = now;
+  }
 
   #at(iso: string | undefined): string {
     return iso ?? new Date(this.now()).toISOString();

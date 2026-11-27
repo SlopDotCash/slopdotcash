@@ -18,7 +18,8 @@ import { dispatchFeeChecks } from "../../src/fee/dispatch.vibe";
 import { gateSubmissionFee } from "../../src/fee/gate.vibe";
 import { reopenKeptFee } from "../../src/fee/items.vibe";
 import { refreshSubmissionFee } from "../../src/fee/refresh.vibe";
-import { SubmissionFeeMode, handBackLease } from "../../src/fee/store.vibe";
+import { SubmissionFeeMode, feeNeededLabel, handBackLease, markAsked } from "../../src/fee/store.vibe";
+import { addLabels } from "../../src/publish/labels.vibe";
 import { webhookSettings } from "../../src/ingress/webhook.vibe";
 import { type Job, JobQueue } from "../../src/jobs/job.vibe";
 
@@ -31,6 +32,10 @@ interface Held {
   readonly db: D1Database;
   readonly number: number;
   readonly issue: number;
+  readonly key: string;
+  readonly gen: number;
+  nodeSeq: number;
+  appealSeq: number;
   now: number;
   mode: FeeFacts["mode"];
   manifest: string;
@@ -38,6 +43,7 @@ interface Held {
   contributor: boolean;
   hidden: boolean;
   failLabels: boolean;
+  labelAttempted: boolean;
   unreadLink: boolean;
   report: Record<string, unknown>;
 }
@@ -64,6 +70,7 @@ for (const [key, binding] of [["a", "FEE_A"], ["b", "FEE_B"]] as const) {
 }
 
 const held = new Map<string, Held>();
+let generation = 0;
 
 function iso(seconds: number) {
   return new Date(seconds * 1000).toISOString();
@@ -89,7 +96,10 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
     const request = new Request(input, init);
     const current = state();
     const path = new URL(request.url).pathname;
-    if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 });
+    if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) {
+      current.labelAttempted = true;
+      return new Response("{\"message\":\"unavailable\"}", { status: 500 });
+    }
     if (current.unreadLink && path.endsWith("/graphql")) return new Response("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } });
     if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.fetch(request);
     if (current.hidden) return new Response("{\"message\":\"Not Found\"}", { status: 404 });
@@ -160,7 +170,7 @@ async function started(key: string): Promise<Held> {
   const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-fee-conformance" }), http);
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-conformance-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) });
   const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, ports, githubLayer, settings)) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
-  holder.state = { fake, runtime, clock, db, number, issue, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, unreadLink: false, report: {} };
+  holder.state = { fake, runtime, clock, db, number, issue, key, gen: generation, nodeSeq: 0, appealSeq: 0, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, labelAttempted: false, unreadLink: false, report: {} };
   return holder.state;
 }
 
@@ -201,18 +211,17 @@ async function realizePull(state: Held, pull: PullFacts) {
   state.contributor = pull.contributorScope;
   state.hidden = !pull.readable;
   realizeLink(state, pull);
-  const read = state.fake.world.pull(repo, state.number);
-  state.report = { ...state.report, node_id: read.nodeId, state: pull.open && !pull.merged ? "open" : "closed", merged: pull.merged, draft: pull.draft, closed_at: pull.closedAt > 0 ? iso(pull.closedAt) : null };
+  const nodeId = `PR_fee_${state.key}_g${state.gen}_s${++state.nodeSeq}`;
+  state.report = { ...state.report, node_id: nodeId, state: pull.open && !pull.merged ? "open" : "closed", merged: pull.merged, draft: pull.draft, closed_at: pull.closedAt > 0 ? iso(pull.closedAt) : null };
   await state.db.prepare("UPDATE slopbot_installations SET removed_at = ? WHERE installation_id = ?").bind(pull.installationActive ? null : iso(start), installationId).run();
-  await state.db.prepare("DELETE FROM slopbot_appeals WHERE repository_id = ? AND item_node_id = ?").bind(repositoryId, read.nodeId).run();
-  await state.db.prepare("DELETE FROM slopbot_actions WHERE repository_id = ? AND item_node_id = ? AND action = 'close'").bind(repositoryId, read.nodeId).run();
   if (pull.appealOpen || pull.appealUpheldAt > 0) {
     const jobJson = JSON.stringify({ itemKind: "pull_request", number: state.number });
-    await state.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${read.nodeId}`, repositoryId, read.nodeId, iso(start)).run();
+    const seq = ++state.appealSeq;
+    await state.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${nodeId}:${seq}`, repositoryId, nodeId, iso(start)).run();
     await state.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at, resolved_at, resolution, resolved_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)").bind(
-      `appeal:${read.nodeId}:1`,
+      `appeal:${nodeId}:${seq}`,
       repositoryId,
-      read.nodeId,
+      nodeId,
       jobJson,
       iso(start),
       iso(start + hour),
@@ -278,14 +287,17 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
       state.now += event.seconds;
       return "accepted";
     case "record":
+      if (event.facts.mode !== "FeeDryRun" || before !== null) return "refused";
       await gated(state, event.facts);
-      return verdict(before === null && (await gateRow(state))?.state === "recorded");
+      return verdict((await gateRow(state))?.state === "recorded");
     case "claimAsk": {
+      if (event.facts.mode !== "FeeLive" || !event.facts.contractPublished || !event.facts.feeSetting.present || !event.facts.feeSetting.enabled || event.facts.exemption !== "NotExempt" || !event.facts.mayAsk || before?.state === "asked" || before?.state === "paid") return "refused";
       state.failLabels = true;
+      state.labelAttempted = false;
       await gated(state, event.facts);
       state.failLabels = false;
       const after = await gateRow(state);
-      const claimed = after?.state === "asking" && after.updated_at !== before?.updated_at;
+      const claimed = state.labelAttempted && after?.state === "asking";
       if (claimed) await state.db.prepare("UPDATE slopbot_fee_gates SET updated_at = ? WHERE repository_id = ? AND pull_number = ?").bind(iso(state.now), repositoryId, state.number).run();
       return verdict(claimed);
     }
@@ -296,14 +308,16 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
     }
     case "confirmAsk": {
       if (event.commentId <= 0 || before?.state !== "asking") return "refused";
-      await state.db.prepare("UPDATE slopbot_fee_gates SET updated_at = ? WHERE repository_id = ? AND pull_number = ?").bind(iso(state.now - 601), repositoryId, state.number).run();
-      const exit = await run(state, gateSubmissionFee({ target: { pull: pullOf(state), projectId, itemNodeId: "", appUser: state.fake.app.bot.id }, exemption: "NotExempt", mayAsk: true }));
+      const exit = await run(state, Effect.gen(function* () {
+        yield* addLabels({ ref: pullOf(state), projectId, number: state.number, itemNodeId: "" }, [feeNeededLabel]);
+        yield* markAsked(pullOf(state), event.commentId, iso(state.now));
+      }));
       return verdict(exit._tag === "Success" && (await gateRow(state))?.state === "asked");
     }
     case "release":
-      if (event.commentId <= 0) return "refused";
+      if (event.commentId <= 0 || (before?.state !== "asking" && before?.state !== "asked")) return "refused";
       await gated(state, event.facts);
-      return verdict(before?.state !== "released" && (await gateRow(state))?.state === "released");
+      return verdict((await gateRow(state))?.state === "released");
     case "releaseChecked":
       if (event.commentId <= 0) return "refused";
       return verdict((await refreshed(state, event.facts, event.pull)) === "submission fee released: setting off");
@@ -315,11 +329,12 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
       return verdict(outcome === "submission fee paid" || outcome.startsWith("submission fee: "));
     }
     case "reopenKept": {
-      const read = state.fake.world.pull(repo, state.number);
-      const appealKey = `appeal:${read.nodeId}:reopen`;
+      const nodeId = typeof state.report.node_id === "string" ? state.report.node_id : state.fake.world.pull(repo, state.number).nodeId;
+      const seq = ++state.appealSeq;
+      const appealKey = `appeal:${nodeId}:reopen:${seq}`;
       const jobJson = JSON.stringify({ itemKind: "pull_request", number: state.number });
-      await state.db.prepare("INSERT OR IGNORE INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${read.nodeId}`, repositoryId, read.nodeId, iso(start)).run();
-      await state.db.prepare("INSERT OR REPLACE INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 1, ?, ?, ?)").bind(appealKey, repositoryId, read.nodeId, jobJson, iso(start), iso(start + hour)).run();
+      await state.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${nodeId}:reopen:${seq}`, repositoryId, nodeId, iso(start)).run();
+      await state.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 1, ?, ?, ?)").bind(appealKey, repositoryId, nodeId, jobJson, iso(start), iso(start + hour)).run();
       const exit = await run(state, reopenKeptFee(appealKey, iso(state.now)));
       return verdict(exit._tag === "Success" && exit.value === true);
     }
@@ -367,6 +382,7 @@ function view(state: FeeGate): Observed {
 
 export const driver: Driver<Observed> & AsyncDisposable = {
   reset: async () => {
+    generation++;
     for (const state of held.values()) await state.runtime.dispose();
     held.clear();
   },

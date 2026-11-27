@@ -127,8 +127,12 @@ const PagesPatch = Schema.Struct({
 const Manifest = Schema.Record(Schema.String, Schema.String);
 
 class Refusal extends Error {
-  constructor(readonly status: number, readonly code: number, message: string) {
+  readonly status: number;
+  readonly code: number;
+  constructor(status: number, code: number, message: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 

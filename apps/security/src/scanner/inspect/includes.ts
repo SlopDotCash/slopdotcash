@@ -68,9 +68,11 @@ function collectGypValue(item: GypLiteral, paths: string[]): boolean {
 
 class GypReader {
   i = 0;
+  readonly text: string;
   readonly n: number;
 
-  constructor(readonly text: string) {
+  constructor(text: string) {
+    this.text = text;
     this.n = text.length;
   }
 
