@@ -220,7 +220,8 @@ pure def canStartDay(s: Sends, by: Actor): bool = by == Worker and s.phase == Id
 pure def startDay(s: Sends, by: Actor): Sends = { ...s, spentToday: 0 }
 pure def alwaysOnlyRecordedBytesLeave(s: Sends): bool = s.broadcasts.subseteq(s.journaled) and s.mined.subseteq(s.broadcasts)
   and (openSend(s) implies s.journaled.contains(s.signedBytes))
-  and (s.phase == Journaled implies s.journaled.contains(s.signedBytes))
+  and (s.phase == Journaled implies s.journaled.contains(s.signedBytes) and s.row == Submitted)
+  and (s.phase == Signed implies s.journaled.size() < s.signatures)
   and (s.journaled.size() <= s.signatures) and s.signedBytes <= s.signatures and s.signedBytes >= 0
   and (s.phase != Idle implies s.signedBytes == s.signatures and s.signatures > 0)
 pure def stepRecordedWithinTheDay(before: Sends, after: Sends): bool = after.spentToday > before.spentToday implies

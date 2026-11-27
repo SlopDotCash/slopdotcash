@@ -9486,7 +9486,7 @@
     },
     {
       "path": "spec/fees/solanaRpcRotation.md",
-      "sha256": "83ffe4fd02b60a5a56cf095f7216dc71e3297a27e23e842d633a2d5774ae7635",
+      "sha256": "0aca6f8b28f44672ec95885eea17a34480da745786fed0c818048c4e6ded7ad3",
       "module": "fees__solanaRpcRotation",
       "stories": [
         {
@@ -9561,7 +9561,7 @@
         },
         {
           "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / An uncertain activation keeps its lease until it expires, and every other end releases only its own lease",
-          "line": 151,
+          "line": 152,
           "definitions": [
             "canRecordCommandFailure",
             "recordCommandFailure",
@@ -9576,7 +9576,7 @@
         },
         {
           "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / Each phase is in the receipt before the next starts, and phases only move forward",
-          "line": 181,
+          "line": 182,
           "definitions": [
             "rank",
             "terminal",
@@ -9586,7 +9586,7 @@
         },
         {
           "heading": "Story: Replace the Solana RPC pair of the exact active fee Worker / Simulation samples cover matching, changed and refused pins",
-          "line": 204,
+          "line": 205,
           "definitions": [
             "pairSample",
             "baseSample",
@@ -9778,7 +9778,7 @@
     },
     {
       "path": "spec/fees/submissionFeeRate.md",
-      "sha256": "a2be75d616543e251b6e8c3f8147b9294949fe610a542b70eed9f14a9620706a",
+      "sha256": "cd159bf5a127dd24dd8f2c6bca5bc4c69352e4bba7a1629f1a6f40ef2550a056",
       "module": "fees__submissionFeeRate",
       "stories": [
         {
@@ -9962,7 +9962,7 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "deba566df72bb910d195c418ca05e30d6aadee7f98c01a239062d2f9f8020122",
+      "sha256": "c7d902b9ad0d51c09d0348dcde50d6c4dbf1c0c3b4bc851fb2819ea9dc43a9a1",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
@@ -9971,7 +9971,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors",
-          "line": 332
+          "line": 333
         }
       ],
       "rules": [
@@ -10080,7 +10080,7 @@
         },
         {
           "heading": "Story: Send only what is due, once, inside the native ceilings / A deposit whose payout the token refuses is parked and never holds up the rest",
-          "line": 239,
+          "line": 240,
           "definitions": [
             "parkedChecksPerRun",
             "parkedRecheckMs",
@@ -10110,7 +10110,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
-          "line": 339,
+          "line": 340,
           "definitions": [
             "solanaMaxBatch",
             "solanaExpiredReason",
@@ -10132,7 +10132,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
-          "line": 384,
+          "line": 385,
           "definitions": [
             "WorkerLedgerResult",
             "WorkerOutcomes",
@@ -16978,7 +16978,7 @@
     },
     {
       "path": "spec/operations/robinhoodRpcRotation.md",
-      "sha256": "f9ea0cfd0501bd868389e3c909a4b5ed00d1b520eedaee51ccbcd8af9c420350",
+      "sha256": "bb7f7f97453454f1d0ca59e7e629f870c35d4e7fa8de822870e084b37678cc0f",
       "module": "operations__robinhoodRpcRotation",
       "stories": [
         {
@@ -17066,7 +17066,7 @@
         },
         {
           "heading": "Story: Rotate the fee converter's Robinhood RPC only to a qualified, independent endpoint from the pinned version / Only a readback of the same Worker at the candidate with the release message confirms the rotation",
-          "line": 193,
+          "line": 194,
           "definitions": [
             "Readback",
             "canConfirmReadback",
@@ -17082,7 +17082,7 @@
         },
         {
           "heading": "Story: Rotate the fee converter's Robinhood RPC only to a qualified, independent endpoint from the pinned version / Simulation samples cover admitted and refused runs, pins, journals, reads and readbacks",
-          "line": 231,
+          "line": 232,
           "definitions": [
             "goodRequest",
             "requestValues",
@@ -17098,7 +17098,9 @@
             "uploadedValues",
             "goodVersion",
             "versionValues",
-            "readbackValues"
+            "readbackValues",
+            "eval_witness_sometimesConfirmed",
+            "eval_witness_sometimesUncertain"
           ]
         }
       ],
@@ -17399,7 +17401,7 @@
     },
     {
       "path": "spec/operations/upgradeVerification.md",
-      "sha256": "ccc33907e5ed82373611d262f7614ba0d09df494ded734cc6ebf748a5a5c4130",
+      "sha256": "2e496d2c4a278dccc59f55ac574db6954679c1b4618f053be306c38b9644e9bf",
       "module": "operations__upgradeVerification",
       "stories": [
         {

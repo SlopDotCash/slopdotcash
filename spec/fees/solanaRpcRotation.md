@@ -138,9 +138,10 @@ pure def deploy(r: Rotation, check: BoundaryCheck): Rotation =
 pure def canConfirmActivation(r: Rotation, result: ActivationOutcome): bool = r.phase == Deploying
 pure def confirmActivation(r: Rotation, result: ActivationOutcome): Rotation =
   if (result == Confirmed) enter(Verified, r) else stop(Uncertain, r)
-pure def alwaysOnlyCandidateActivated(r: Rotation): bool = r.activation == 0
+pure def alwaysOnlyCandidateActivated(r: Rotation): bool = (r.activation == 0
   or (r.activation == r.candidate.version and r.activation != r.base.version and sameWorker(r, r.candidate)
-    and (r.phase == Deploying or r.phase == Verified or r.phase == Uncertain))
+    and (r.phase == Deploying or r.phase == Verified or r.phase == Uncertain)))
+  and (r.phase == Uploaded implies r.candidate.version > 0 and r.candidate.version != r.base.version)
 pure def alwaysActivationNeedsLease(r: Rotation): bool = r.activation != 0 implies r.leaseHeld or r.leaseReleased
 pure def alwaysLeaseHeldWhileWorking(r: Rotation): bool =
   (r.phase == Leased or r.phase == Uploaded or r.phase == Deploying or r.phase == Uncertain) implies r.leaseHeld

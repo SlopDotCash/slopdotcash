@@ -181,9 +181,10 @@ pure def alwaysPhaseFacts(r: RobinhoodRotation): bool =
     and (pastQualify(r.phase) implies r.qualified)
     and ((r.phase == Uploaded or r.phase == Rechecked) implies r.candidate > 0 and r.activated == 0)
 pure def alwaysUploadNeedsQualifiedPin(r: RobinhoodRotation): bool =
-  r.candidate > 0 implies (r.qualified and r.deployment > 0 and r.expected > 0 and r.source > 0 and r.candidate != r.expected)
+  r.candidate > 0 implies (r.phase != NotStarted and r.qualified and r.deployment > 0 and r.expected > 0 and r.source > 0 and r.candidate != r.expected)
 pure def alwaysActivationOnlyAfterRecheck(r: RobinhoodRotation): bool =
   ((r.phase == Deployed or r.phase == Confirmed or r.phase == Uncertain) iff r.activated > 0)
+    and r.activated >= 0
     and (r.activated > 0 implies r.activated == r.candidate and r.candidate > 0)
 pure def alwaysUploadAttemptRecorded(r: RobinhoodRotation): bool = r.candidate > 0 implies r.uploadAttempted
 pure def sometimesRefusedAfterUpload(r: RobinhoodRotation): bool = r.phase == Refused and r.candidate > 0
@@ -256,4 +257,23 @@ pure val versionValues = Set(goodVersion, { ...goodVersion, sameBindings: false 
 pure val readbackValues = Set({ onlyActive: 11, latest: 11, releaseMessage: true, version: goodVersion },
   { onlyActive: 10, latest: 11, releaseMessage: true, version: goodVersion },
   { onlyActive: 11, latest: 11, releaseMessage: false, version: goodVersion })
+pure val eval_witness_sometimesConfirmed = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 11),
+  ("recheckBeforeDeploy", { onlyActive: 10, latest: 11, deployment: 20, liveMain: true }, goodVersion, quietJournal),
+  ("deploy", true),
+  ("confirmReadback", { onlyActive: 11, latest: 11, releaseMessage: true, version: goodVersion }))
+pure val eval_witness_sometimesUncertain = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 11),
+  ("recheckBeforeDeploy", { onlyActive: 10, latest: 11, deployment: 20, liveMain: true }, goodVersion, quietJournal),
+  ("deploy", false))
 ```
