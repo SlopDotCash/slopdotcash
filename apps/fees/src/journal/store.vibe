@@ -6,9 +6,9 @@ import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { type Event, type Fee, type NotAState, type ProviderFinding, type RecordedSend, type Reservation, type Row, apply, day, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Sender, dailyCeilingOf, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
-import { type Instance, type Intent, type Journal, type NameKind, type Names, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
+import { type Instance, type Intent, type Journal, type NameKind, type Names, type ObservedLease, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
 import { type EvmSend, type ReservedSend, verifiedEvmSend, verifiedSolanaSend } from "./signedSend.ts"
-import { type Evaluation, type RouteName, abandonReservation, abandonReserved, acquireLease, acquireRotationLease, claimed, evaluation, expiryProof, finalized, importReservation, inScope, releaseLease, releaseRotationLease, renewLease, renewRotationLease, replacement, reserve, reverted, rotationPrefix, scanStep, settled, signed, transition } from "./writes.vibe"
+import { type Evaluation, type RouteName, abandonReservation, abandonReserved, acquireLease, acquireRotationLease, claimed, evaluation, expiryProof, finalized, importReservation, inScope, releaseLease, releaseRotationLease, releasedAt, renewLease, renewRotationLease, replacement, reserve, reverted, rotationPrefix, scanStep, settled, signed, transition } from "./writes.vibe"
 import { type RecordedSwap, retainedSendReview } from "../solana/receipt.vibe"
 
 import { errorText, withinReservation } from "../kernels/verified.vibe"
@@ -477,6 +477,19 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
   }
 }
 
+effect function nextLease(instance: Instance, journal: Journal, names: Names, event: Event, next: Fee) {
+  switch (event.type) {
+    case "acquireLease":
+      return { runId: runText(instance.scope, try named(names, "run", event.runId, event), event.trigger), expiresAt: try isoAt(next.lease.expiresAt + instance.epoch) } satisfies ObservedLease
+    case "renewLease":
+      return { runId: try need(journal.runs.get(event.runId), event, "the run is not in this journal"), expiresAt: try isoAt(next.lease.expiresAt + instance.epoch) } satisfies ObservedLease
+    case "releaseLease":
+      return { runId: try need(journal.runs.get(event.runId), event, "the run is not in this journal"), expiresAt: releasedAt } satisfies ObservedLease
+    default:
+      return journal.leased
+  }
+}
+
 effect function observe(instance: Instance, journal: Journal, names: Names, event: Event, next: Fee, facts: Facts, intent: Intent | undefined) {
   const added = event.type === "addToken" ? try need(facts.token, event, "the added token's address is missing") : undefined
   const address = effect (token: number) => try need(journal.tokens[token - 1] ?? (token === journal.tokens.length + 1 ? added : undefined), event, `the token ${token} has no address in this journal`)
@@ -501,8 +514,20 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
   for (const receipt of next.receipts) receipts.push(try named(names, "receipt", receipt, event))
   const vaults: Array<Instance["vaults"][number]> = []
   for (const vault of next.vaults) vaults.push({ vault: try named(names, "vault", vault.vault, event), deployment: try named(names, "deployment", vault.deployment, event), token: try address(vault.token) })
-  const { intent: _carried, ...rest } = instance
-  return { ...rest, network: next.network, held: { ...instance.held, runtime: next.runtime }, tokens, receipts, vaults, ...intent === undefined ? {} : { intent } } satisfies Instance
+  const lastLease = try nextLease(instance, journal, names, event, next)
+  const lastRotation = journal.rotating
+  const { intent: _carried, lastLease: _lease, lastRotation: _rotation, ...rest } = instance
+  return {
+    ...rest,
+    network: next.network,
+    held: { ...instance.held, runtime: next.runtime },
+    tokens,
+    receipts,
+    vaults,
+    ...intent === undefined ? {} : { intent },
+    ...lastLease === undefined ? {} : { lastLease },
+    ...lastRotation === undefined ? {} : { lastRotation },
+  } satisfies Instance
 }
 
 effect function decide(journal: Journal, instance: Instance, names: Names, event: JournalEvent, by: Sender, facts: Facts) {
@@ -529,8 +554,7 @@ effect function readEach(instance: Instance, names: Names) {
   return try found.decode(rows)
 }
 
-effect function rotationWrite(journal: Journal, instance: Instance, names: Names, event: RotationEvent, next: Fee) {
-  const runId = `${rotationPrefix}${instance.scope}${try named(names, "rotation", event.rotationId, event)}`
+effect function rotationWrite(journal: Journal, instance: Instance, runId: string, event: RotationEvent, next: Fee) {
   const now = try isoAt(journal.state.clock + instance.epoch)
   switch (event.type) {
     case "acquireRotationLease": return acquireRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
@@ -545,12 +569,24 @@ effect function sendRotation(instance: Instance, names: Names, event: RotationEv
     throw new JournalRefused({ event: event.type, issue: rotationUnavailable })
   }
   const next = try apply(loaded.state, event, by)
-  const statement = try rotationWrite(loaded, instance, names, event, next)
+  const runId = `${rotationPrefix}${instance.scope}${try named(names, "rotation", event.rotationId, event)}`
+  const statement = try rotationWrite(loaded, instance, runId, event, next)
   const changed = (try D1).run(statement) catch effect () => {
     throw new JournalRefused({ event: event.type, issue: rotationUnavailable })
   }
   if (event.type !== "releaseRotationLease" && changed !== 1) throw new JournalRefused({ event: event.type, issue: rotationRefusals[event.type] })
-  return { state: next, instance } satisfies Sent
+  const lastRotation = event.type === "releaseRotationLease"
+    ? undefined
+    : { runId, expiresAt: try isoAt(next.rotation.expiresAt + instance.epoch) } satisfies ObservedLease
+  const { lastLease: _lease, lastRotation: _rotation, ...rest } = instance
+  return {
+    state: next,
+    instance: {
+      ...rest,
+      ...loaded.leased === undefined ? {} : { lastLease: loaded.leased },
+      ...lastRotation === undefined ? {} : { lastRotation },
+    } satisfies Instance,
+  } satisfies Sent
 }
 
 export effect function send(instance: Instance, names: Names, event: Event, by: Sender, facts: Facts = {}) {

@@ -57,8 +57,8 @@ export function generationNames(generation: number): GenerationNames {
   };
 }
 
-function evmKey(generation: number): Hex {
-  return `0x${hex(generation + 1, 64)}`;
+function evmKey(generation: number, wallet = 1): Hex {
+  return wallet === 1 ? `0x${hex(generation + 1, 64)}` : `0x${hex(generation + 1, 32)}${hex(wallet, 32)}`;
 }
 
 function solanaSeed(generation: number): Uint8Array {
@@ -96,9 +96,10 @@ function solanaSend(instance: Instance, nonce: number): Signed {
   return { txId: base58.encode(signature), rawTx: base64.encode(Uint8Array.from([...compact(1), ...signature, ...message])), intentHash: base58.encode(sha256(message)) };
 }
 
-async function evmSend(instance: Instance, nonce: number, gas: number, maxFee: number, priority: number): Promise<Signed> {
-  const unsigned: TransactionSerializableEIP1559 = { type: "eip1559", chainId: 8453, nonce, gas: BigInt(gas), maxFeePerGas: BigInt(maxFee) * megawei, maxPriorityFeePerGas: BigInt(priority) * megawei, to: privateKeyToAccount(evmKey(generationOf(instance))).address, value: 0n };
-  const rawTx = await privateKeyToAccount(evmKey(generationOf(instance))).signTransaction(unsigned);
+async function evmSend(instance: Instance, nonce: number, gas: number, maxFee: number, priority: number, wallet = 1): Promise<Signed> {
+  const account = privateKeyToAccount(evmKey(generationOf(instance), wallet));
+  const unsigned: TransactionSerializableEIP1559 = { type: "eip1559", chainId: 8453, nonce, gas: BigInt(gas), maxFeePerGas: BigInt(maxFee) * megawei, maxPriorityFeePerGas: BigInt(priority) * megawei, to: account.address, value: 0n };
+  const rawTx = await account.signTransaction(unsigned);
   return { txId: keccak256(rawTx), rawTx, intentHash: keccak256(serializeTransaction(unsigned)) };
 }
 
@@ -167,9 +168,11 @@ export interface Recording {
 /** @throws {never} */
 export async function seedRecorded(recording: Recording): Promise<string | undefined> {
   const { db, instance, names, runId, token, recorded, now } = recording;
-  const wallet = instance.held.wallets[recorded.wallet - 1];
-  if (wallet === undefined || instance.network === "Solana" || recorded.nonce < 0 || recorded.gasLimit <= 0 || recorded.fees.maxFee <= 0 || recorded.fees.priority < 0) return undefined;
-  const signed = await evmSend(instance, recorded.nonce, recorded.gasLimit, recorded.fees.maxFee, recorded.fees.priority);
+  if (recorded.wallet <= 0 || instance.network === "Solana" || recorded.nonce < 0 || recorded.gasLimit <= 0 || recorded.fees.maxFee <= 0 || recorded.fees.priority < 0 || recorded.fees.priority > recorded.fees.maxFee) return undefined;
+  const known = recorded.wallet === 1 ? instance.held.wallets[0] : undefined;
+  const wallet = known ?? privateKeyToAccount(evmKey(generationOf(instance), recorded.wallet)).address.toLowerCase();
+  if (known === undefined) names.bind("wallet", wallet, recorded.wallet);
+  const signed = await evmSend(instance, recorded.nonce, recorded.gasLimit, recorded.fees.maxFee, recorded.fees.priority, recorded.wallet);
   names.bind("tx", signed.txId, recorded.tx);
   const conversion = recorded.kind === "Conversion";
   const expiresAt = recorded.kind === "Claim" ? null : Math.ceil((recorded.deadline + instance.epoch) / 1_000);

@@ -202,9 +202,10 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const besideBase = try refusal(rotating, { type: "renewRotationLease", rotationId: 1 })
     const held = try solanaLock(rotating)
     const released = try refusal(rotating, { type: "releaseRotationLease", rotationId: 1 })
-    const runAfter = try tried(rotating, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    const runAfter = try tried(rotating, { type: "acquireLease", runId: 1, trigger: "Receipts" })
     try step(rotating, { type: "releaseLease", runId: 1 })
     const again = try refusal(rotating, { type: "acquireRotationLease", rotationId: 2 })
+    const rotated = (try Effect.provide(journal(rotating.instance, rotating.names), services(rotating))).state
 
     const later = try opened(4, "Solana")
     try live(later, liveSolana)
@@ -217,10 +218,10 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const loaded = (try Effect.provide(journal(busy.instance, busy.names), services(busy))).state
 
     try same({
-      rotation: [acquired, runLocked, renewed, foreign, besideBase, held, released, runAfter, again],
+      rotation: [acquired, runLocked, renewed, foreign, besideBase, held, released, runAfter, again, [rotated.nextRun, rotated.trigger, rotated.lease.holder, rotated.rotation.holder]],
       later: [expiredTaken, refusedBusy, afterBusy.map(([run]) => String(run).startsWith("g4:")), loaded.rotation],
     }, {
-      rotation: ["accepted", "Rejected", "accepted", "Rejected", "accepted", [["rpc-rotation-g3:g3-rotation-1", "held"]], "accepted", "accepted", "accepted"],
+      rotation: ["accepted", "Rejected", "accepted", "Rejected", "accepted", [["rpc-rotation-g3:g3-rotation-1", "held"]], "accepted", "accepted", "accepted", [2, "Receipts", 0, 2]],
       later: ["accepted", "Solana fee activity prevents RPC rotation", [true], { holder: 0, expiresAt: 0 }],
     })
   })

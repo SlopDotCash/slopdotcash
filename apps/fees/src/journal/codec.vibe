@@ -66,6 +66,8 @@ export interface Reviewed { readonly vault: string; readonly deployment: string;
 
 export interface Intent { readonly evaluation: Evaluation; readonly row: Row }
 
+export interface ObservedLease { readonly runId: string; readonly expiresAt: string }
+
 export interface Instance {
   readonly network: Network
   readonly scope: string
@@ -75,6 +77,8 @@ export interface Instance {
   readonly receipts: ReadonlyArray<string>
   readonly vaults: ReadonlyArray<Reviewed>
   readonly intent?: Intent
+  readonly lastLease?: ObservedLease
+  readonly lastRotation?: ObservedLease
 }
 
 export interface SendRecord {
@@ -116,6 +120,8 @@ export interface Journal {
   readonly foreign: ReadonlyArray<Foreign>
   readonly unaccounted: ReadonlyArray<Unaccounted>
   readonly pending: number
+  readonly leased?: ObservedLease
+  readonly rotating?: ObservedLease
 }
 
 export interface Foreign { readonly purpose: string; readonly reservation: Reservation }
@@ -355,8 +361,12 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const clock = (try Clock.currentTimeMillis) - epoch
   const ms = (iso: string) => millisOf(iso) - epoch
   const rotationScope = `${rotationPrefix}${scope}`
-  const rotating = lock !== undefined && lock.run_id.startsWith(rotationScope) ? lock : undefined
-  const leased = lock !== undefined && !lock.run_id.startsWith(rotationPrefix) && lock.run_id.startsWith(scope) ? lock : undefined
+  const rotating: ObservedLease | undefined = lock !== undefined && lock.run_id.startsWith(rotationScope)
+    ? { runId: lock.run_id, expiresAt: lock.expires_at }
+    : instance.lastRotation
+  const leased: ObservedLease | undefined = lock !== undefined && !lock.run_id.startsWith(rotationPrefix) && lock.run_id.startsWith(scope)
+    ? { runId: lock.run_id, expiresAt: lock.expires_at }
+    : instance.lastLease
 
   const reserved = new Set(gasRows.flatMap((row) => row.tx_id === null ? [] : [row.tx_id]))
   const live = rows.filter((row) => row.mode === "live")
@@ -385,7 +395,8 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     return value
   }
   for (const [, runId] of firstSeen) runOf(runId)
-  if (leased !== undefined) runOf(leased.run_id)
+  if (instance.intent !== undefined) runOf(instance.intent.evaluation.runId)
+  if (leased !== undefined) runOf(leased.runId)
   const nextRun = Math.max(0, ...runs.keys()) + 1
 
   const known = new Set(rows.map((row) => row.id))
@@ -406,12 +417,11 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const scales = try resolveTokenScales(instance, [...carriers, ...pendingImport], tokenOf)
   const scaleOf = (token: number) => scales.get(token) ?? 1n
   const wallets = instance.held.wallets
-  const extraWallets: Array<string> = []
+  for (const address of wallets) names.number("wallet", address)
   const walletOf = (address: string) => {
     const index = wallets.indexOf(address)
     if (index !== -1) return index + 1
-    if (!extraWallets.includes(address)) extraWallets.push(address)
-    return wallets.length + extraWallets.indexOf(address) + 1
+    return names.number("wallet", address)
   }
 
   const sends: Array<SendRecord> = []
@@ -542,8 +552,9 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     proofs.push({ tx: names.number("tx", row.tx_id), a: { operator: names.number("operator", a.operator), ...provenClean }, b: { operator: names.number("operator", b.operator), ...provenClean }, blockhashSlot: proof.blockhashSlot, coverage: coverageOf(names, a.coverage) })
   }
 
+  const importedRows = new Set(modelGas.filter((entry) => entry.imported).map((entry) => entry.row))
   const current = nextRun - 1
-  const runValue = modelRows.reduce((total, row) => row.runId === current && ((row.state === "Quoted" && !row.live) || (row.kind === "Conversion" && row.attempts.length > 0)) ? total + row.valueMicro : total, 0)
+  const runValue = modelRows.reduce((total, row) => row.runId === current && !importedRows.has(row.id) && ((row.state === "Quoted" && !row.live) || (row.kind === "Conversion" && row.attempts.length > 0)) ? total + row.valueMicro : total, 0)
   const holdings: Array<Holding> = tokens.map((address, index) => {
     const token = index + 1
     const seen = instance.tokens[index]
@@ -577,9 +588,9 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     runtime: instance.held.runtime,
     network,
     clock,
-    lease: leased === undefined || leased.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: runOf(leased.run_id), expiresAt: ms(leased.expires_at) },
+    lease: leased === undefined || leased.expiresAt === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: runOf(leased.runId), expiresAt: ms(leased.expiresAt) },
     nextRun,
-    trigger: leased === undefined ? "Recovery" : runParts(scope, leased.run_id).trigger,
+    trigger: leased === undefined ? "Recovery" : runParts(scope, leased.runId).trigger,
     runValue,
     receipts: instance.receipts.map((receipt) => names.number("receipt", receipt)),
     holdings,
@@ -589,7 +600,12 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     overrun,
     scans,
     proofs,
-    rotation: rotating === undefined || rotating.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: names.number("rotation", rotating.run_id.slice(rotationScope.length)), expiresAt: ms(rotating.expires_at) },
+    rotation: rotating === undefined || rotating.expiresAt === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: names.number("rotation", rotating.runId.slice(rotationScope.length)), expiresAt: ms(rotating.expiresAt) },
   } satisfies Fee)
-  return { state, sends, gas, tokens, scales, runs, scans: latestScans, foreign, unaccounted, pending } satisfies Journal
+  const retainedRotation = rotating === undefined || rotating.expiresAt === releasedAt ? undefined : rotating
+  return {
+    state, sends, gas, tokens, scales, runs, scans: latestScans, foreign, unaccounted, pending,
+    ...leased === undefined ? {} : { leased },
+    ...retainedRotation === undefined ? {} : { rotating: retainedRotation },
+  } satisfies Journal
 }
