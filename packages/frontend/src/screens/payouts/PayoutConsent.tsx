@@ -3,7 +3,7 @@ import type { AccountPayment, AccountWallet, PaymentsAccount } from "@repo/settl
 import { chainFamily, isNetworkKey } from "@repo/settlement/kernels/networks";
 import { Button, Dialog, DialogContent, Status, type StatusProps, type WalletOption } from "@repo/ui";
 import { type Effect, Exit } from "effect";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import type { AccessLost } from "../../wallets/core/binding.vibe";
 import { ConsentReview } from "./ConsentReview.tsx";
@@ -38,6 +38,7 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost, onRefr
   const offers = useFeed(consent, "offers", watchOffers).value ?? [];
   const wallets: WalletOption[] = offers.filter((offer) => offer.family === family && (family !== "solana" || offer.solanaBinding)).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }));
   const reserved = reservedPayment(payment, claim);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -95,12 +96,17 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost, onRefr
           </a>
         </Button>
       ) : (
-        <Button variant="secondary" size="sm" aria-label="Authorize payout wallet" onClick={begin}>
+        <Button ref={triggerRef} variant="secondary" size="sm" aria-label="Authorize payout wallet" onClick={begin}>
           Authorize
         </Button>
       )}
       <Dialog open={open} onOpenChange={(next) => (next ? undefined : dismiss())}>
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.focus();
+          }}
+        >
           <ConsentReview
             payout={payment}
             family={family}

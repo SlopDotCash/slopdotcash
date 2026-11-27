@@ -245,6 +245,7 @@ describe("Replace a payout wallet without losing the current", () => {
     await site.click(change);
     await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
     await site.click(named("button", "Register"));
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) as unknown });
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/account#wallets");
     await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) as unknown });
