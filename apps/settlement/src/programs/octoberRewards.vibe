@@ -1,0 +1,153 @@
+// spec/settlement/octoberImport.md, "An apply run writes only under the reviewed digest, current main and the production lock"; spec/settlement/octoberImport.md, "A proposal already written is never added to or replaced"
+import { RegistryLive, RestrictionsLive } from "@repo/backend/ports"
+import { isoNow } from "@repo/platform/clock"
+import { type D1, type Statement, first, sql } from "@repo/platform/d1"
+import { gitText } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { githubApp } from "@repo/platform/github/app"
+import { checkedSnapshot, currentPointsBatch, publishedOctoberWeights, repositoryRegistry } from "@repo/points/live"
+import { Registry, Restrictions } from "@repo/ports/backend"
+import { EnforcementRowsLive } from "@repo/security/live"
+import { holdsAll, verifyCurrentOwner } from "../closeout/run.vibe"
+import { configuredEnforcementPorts } from "../jobs/services.vibe"
+import { manifestOf } from "../monthly/store.vibe"
+import { executeOctober, octoberStatements } from "../october/import.vibe"
+import { checkOctoberElizaEvidence, compileOctoberElizaProposal } from "../october/plan.ts"
+import { decodeOctoberReviewedPacket, octoberPeriod } from "../october/review.ts"
+
+export error OctoberStopped { message: string }
+
+export interface OctoberSeams<E> {
+  readonly database: (accountId: string, token: Redacted.Redacted<string>) => Layer.Layer<D1, E, HttpClient.HttpClient>
+  readonly checkout: string
+}
+
+schema Generation { readonly generation: number }
+schema ProjectRow { readonly manifest: string; readonly manifest_sha256: string; readonly revision: number }
+
+const userAgent = "slop-reviewed-october"
+const projectId = "eliza"
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function currentMain(checkout: string, source: string) {
+  const moved = "Main changed during the October import."
+  const head = try gitText({ args: ["-C", checkout, "rev-parse", "HEAD"], limit: 4096, seconds: 60 }, moved)
+  const remote = try gitText({ args: ["-C", checkout, "ls-remote", "origin", "refs/heads/main"], limit: 4096, seconds: 60 }, moved)
+  if (head.trim() !== source || remote.split(/\s/u)[0] !== source) throw new OctoberStopped({ message: moved })
+}
+
+effect function generation() {
+  const row = try first(Generation, sql`SELECT COALESCE(MAX(rowid), 0) AS generation FROM project_enforcements`)
+  if (row === undefined) throw new OctoberStopped({ message: "The current enforcement generation is unavailable." })
+  return row.generation
+}
+
+export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: OctoberSeams<E>) {
+  let stage = "trusted invocation"
+  const run = effect {
+    const [registryPath, ...rest] = args
+    const source = try environment("GITHUB_SHA")
+    const apply = try environment("OCTOBER_APPLY")
+    const digest = try environment("REVIEWED_PACKET_SHA256")
+    const encoded = try Config.Redacted("OCTOBER_REWARDS_REVIEWED_PACKET")
+    if (
+      registryPath === undefined || rest.length !== 0 ||
+      (try environment("GITHUB_ACTIONS")) !== "true" ||
+      (try environment("GITHUB_REPOSITORY")).toLowerCase() !== "slopdotcash/slopdotcash" ||
+      (try environment("GITHUB_EVENT_NAME")) !== "workflow_dispatch" ||
+      (try environment("GITHUB_REF")) !== "refs/heads/main" ||
+      !/^[a-f0-9]{40}$/u.test(source) || !/^[a-f0-9]{64}$/u.test(digest) ||
+      (apply !== "false" && apply !== "true") || Redacted.value(encoded) === ""
+    ) throw new OctoberStopped({ message: "The October importer requires a protected exact-main dispatch." })
+    try currentMain(seams.checkout, source)
+
+    stage = "reviewed packet and production registry"
+    const bytes = new TextEncoder().encode(Redacted.value(encoded))
+    const packet = try Effect.try(() => decodeOctoberReviewedPacket(bytes, digest))
+    if (packet.projects.length !== 1 || packet.projects[0]?.id !== projectId) throw new OctoberStopped({ message: "Expected an Eliza-only reviewed October packet." })
+    const repositories = try repositoryRegistry(try checkedSnapshot(registryPath))
+    const appId = try Config.String("SLOPBOT_APP_ID")
+    const privateKey = try Config.Redacted("SLOPBOT_APP_PRIVATE_KEY")
+    const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+    const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+    const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive)
+    const privateDatabase = Layer.mergeAll(configuredEnforcementPorts, seams.database(accountId, token))
+    const ownerAuthority = Layer.mergeAll(github({ userAgent }), githubApp({ appId, privateKey, userAgent }))
+    provide Layer.merge(Layer.provideMerge(registry, privateDatabase), ownerAuthority) {
+      const enforcementGeneration = try generation()
+      const view = try (try Registry).project(projectId)
+      const restrictions = try Restrictions
+      const closure = try restrictions.project(projectId)
+      const row = try first(ProjectRow, sql`SELECT manifest, manifest_sha256, revision FROM projects WHERE id = ${projectId}`)
+      if (view === undefined || row === undefined || row.revision !== view.revision || row.manifest_sha256 !== view.manifestSha256 ||
+        view.rowStatus !== "Active" || view.manifestStatus !== "Active" || view.retirement !== "NotRetired" || view.listingTier === "Retired" ||
+        (try generation()) !== enforcementGeneration) {
+        throw new OctoberStopped({ message: "The current Eliza registry changed." })
+      }
+      const manifest = try manifestOf(projectId, row.manifest)
+
+      stage = "current Eliza owner authority"
+      try verifyCurrentOwner(row.manifest, packet.reviewerGithubId)
+      const now = try isoNow()
+      const compiled = try Effect.try(() => compileOctoberElizaProposal(bytes, digest, {
+        capturedAt: now,
+        enforcementGeneration,
+        revision: row.revision,
+        manifestSha256: row.manifest_sha256,
+        manifest: row.manifest,
+        restricted: closure.restricted,
+        verifiedOwnerGithubId: packet.reviewerGithubId,
+      }, now))
+
+      stage = "private exact replay readback"
+      const replay = octoberStatements(compiled.proposal, row.manifest, now, [])
+      let outcome = "already-imported"
+      if (!(try holdsAll(replay.readback))) {
+        stage = "current public Points and private eligibility"
+        const weights = try publishedOctoberWeights(projectId, compiled.project.from, repositories)
+        const batch = try currentPointsBatch()
+        const excluded = new Set((manifest.reward.payoutExclusions ?? [])
+          .filter((entry) => entry.fromCycle <= octoberPeriod && (entry.untilCycle === null || octoberPeriod < entry.untilCycle))
+          .map((entry) => entry.actorId))
+        const eligible = new Set<string>()
+        const eligibility: Statement[] = []
+        for (const { githubUserId } of compiled.project.weights) {
+          if (excluded.has(githubUserId)) continue
+          const standing = try restrictions.account(githubUserId)
+          const clear = try restrictions.unbanned(githubUserId)
+          if (!standing.banned) eligible.add(githubUserId)
+          eligibility.push(sql`(${clear}) = ${standing.banned ? 0 : 1}`)
+        }
+        try Effect.try(() => checkOctoberElizaEvidence(compiled, {
+          publicPointsBatch: weights.digest,
+          privatePointsBatch: batch?.digest ?? "",
+          observedWeights: weights.weights,
+          knownIdentities: weights.identities,
+          eligible,
+        }))
+
+        stage = "atomic proposal protection and readback"
+        const proposal = octoberStatements(compiled.proposal, row.manifest, now, eligibility)
+        const beforeWrite = () => effect {
+          try verifyCurrentOwner(row.manifest, packet.reviewerGithubId)
+          try currentMain(seams.checkout, source)
+        }
+        try currentMain(seams.checkout, source)
+        outcome = try executeOctober(proposal, apply === "true", beforeWrite)
+      }
+      if (outcome !== "applied") try currentMain(seams.checkout, source)
+      const mode = outcome === "preview" ? "preview" : `${outcome}-and-verified`
+      try Console.log(JSON.stringify({
+        schemaVersion: "1", project: projectId, projects: 1, period: octoberPeriod, mode,
+        reviewedPacketSha256: digest, pointsBatch: compiled.proposal.pointsBatch,
+        recipients: compiled.proposal.awards.length, grossBase: compiled.proposal.grossBase,
+      }))
+    }
+  }
+  run catch effect () => {
+    throw new OctoberStopped({ message: `Eliza October import refused during ${stage}.` })
+  }
+}
