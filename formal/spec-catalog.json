@@ -16513,7 +16513,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "466fbfc208e80170ca3575ef4e0edceff761c97e964f8a37b8bfeadb3f815710",
+      "sha256": "07a3d9f01b25309c4d360cdd9c2b67744a5f15ab35e68496ba8eb083da6f8166",
       "module": "operations__release",
       "stories": [
         {
@@ -16714,7 +16714,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key",
-          "line": 502,
+          "line": 503,
           "definitions": [
             "FeeMode",
             "SubmissionFeeConfig",
@@ -16728,7 +16728,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 554,
+          "line": 555,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16743,7 +16743,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 596,
+          "line": 597,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16763,7 +16763,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 631,
+          "line": 632,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16778,7 +16778,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 659,
+          "line": 660,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16862,7 +16862,7 @@
         },
         {
           "target": "./escrowQualification.md",
-          "line": 656
+          "line": 657
         }
       ]
     },
