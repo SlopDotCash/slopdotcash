@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "vitest";
-import { prepareOctoberElizaProposal } from "../src/october/plan.ts";
+import { prepareOctoberProposal } from "../src/october/plan.ts";
 import {
   assertOctoberReviewedWeights,
   decodeOctoberReviewedPacket,
@@ -117,7 +117,7 @@ const manifest = {
   rewardAsset: { network: "solana", symbol: "USDC", decimals: 6, address: assetAddress },
 };
 
-function proposalFixture(registry: unknown = manifest) {
+function proposalFixture(registry: unknown = manifest, scope = { id: "eliza", from: "2026-10-01T00:00:00.000Z" }) {
   const identities = [{ ...a, login: "Zulu" }, { ...b, login: "alpha" }, actor("44"), actor("45")];
   const weights = identities.map(({ githubUserId }) => ({
     githubUserId,
@@ -128,7 +128,7 @@ function proposalFixture(registry: unknown = manifest) {
   const manifestSha256 = createHash("sha256").update(manifestText).digest("hex");
   const reviewed = {
     ...packet,
-    projects: [{ ...packet.projects[0], manifestSha256, identities, weights }],
+    projects: [{ ...packet.projects[0], ...scope, manifestSha256, identities, weights }],
   };
   const bytes = new TextEncoder().encode(JSON.stringify(reviewed));
   const capture = {
@@ -150,7 +150,7 @@ function proposalFixture(registry: unknown = manifest) {
 
 test("Eliza October divides the approved gross, preserves the legacy tie order and rounds individual fees up", () => {
   const { bytes, capture, reviewDigest } = proposalFixture();
-  const plan = prepareOctoberElizaProposal(bytes, reviewDigest, capture, now);
+  const plan = prepareOctoberProposal("eliza", bytes, reviewDigest, capture, now);
   assert.equal(plan.grossBase, "1000000000");
   assert.equal(plan.feeBase, "20000001");
   assert.equal(plan.netBase, "979999999");
@@ -164,14 +164,14 @@ test("Eliza October divides the approved gross, preserves the legacy tie order a
 
 test("Eliza October refuses stale registry, changed eligibility, unverified owner and mismatched public or private Points", () => {
   const { bytes, capture, reviewDigest } = proposalFixture();
-  const run = (overrides: Partial<typeof capture>) => prepareOctoberElizaProposal(bytes, reviewDigest, { ...capture, ...overrides }, now);
+  const run = (overrides: Partial<typeof capture>) => prepareOctoberProposal("eliza", bytes, reviewDigest, { ...capture, ...overrides }, now);
   for (const altered of [
     { capturedAt: "2026-11-13T00:00:00.000Z" }, { capturedAt: "2026-12-01T00:00:00.000Z" },
     { enforcementGeneration: 2 }, { revision: 7 }, { manifest: "{}" }, { restricted: true },
   ]) {
     assert.throws(() => run(altered), /registry or enforcement/);
   }
-  assert.throws(() => run({ verifiedOwnerGithubId: "101" }), /verified current Eliza owner/);
+  assert.throws(() => run({ verifiedOwnerGithubId: "101" }), /verified current project owner/);
   assert.throws(() => run({ privatePointsBatch: "b".repeat(64) }), /public and private Points/);
   assert.throws(() => run({ publicPointsBatch: "b".repeat(64) }), /public and private Points/);
   assert.throws(() => run({ eligible: new Set(["42", "43", "44", "45"]) }), /eligibility changed/);
@@ -185,7 +185,7 @@ test("Eliza October admits only the approved rail, time window and project", () 
     { ...manifest, rewardAsset: { ...manifest.rewardAsset, decimals: 18 } },
   ]) {
     const { bytes, capture, reviewDigest } = proposalFixture(current);
-    assert.throws(() => prepareOctoberElizaProposal(bytes, reviewDigest, capture, now), /approved October rail/);
+    assert.throws(() => prepareOctoberProposal("eliza", bytes, reviewDigest, capture, now), /approved October rail/);
   }
   const { reviewed, capture } = proposalFixture();
   for (const project of [
@@ -193,6 +193,85 @@ test("Eliza October admits only the approved rail, time window and project", () 
     { ...reviewed.projects[0], id: "slopdotcash" },
   ]) {
     const bytes = new TextEncoder().encode(JSON.stringify({ ...reviewed, projects: [project] }));
-    assert.throws(() => prepareOctoberElizaProposal(bytes, digest(bytes), capture, now), /Eliza-only|approved contribution window/);
+    assert.throws(() => prepareOctoberProposal("eliza", bytes, digest(bytes), capture, now), /selected project|approved contribution window/);
+  }
+});
+
+const slopScope = { id: "slopdotcash", from: "2026-10-11T00:00:00.000Z" };
+const baseUsdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const slopVault = "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36";
+const slopManifest = {
+  ...manifest,
+  id: slopScope.id,
+  reward: {
+    ...manifest.reward,
+    chain: "base",
+    rewardStartAt: slopScope.from,
+    cycleCaps: [{ cycleId: octoberPeriod, monthlyCapMinor: "0" }],
+  },
+  terms: { receiptPolicy: { state: "active" } },
+  escrow: {
+    ...manifest.escrow,
+    chain: "base",
+    effectiveCycle: octoberPeriod,
+    deployments: [{ network: "base-mainnet", asset: baseUsdc, vault: slopVault }],
+  },
+  rewardAsset: { network: "base", symbol: "USDC", decimals: 6, address: baseUsdc, chainId: "8453" },
+};
+
+test("Slop October uses the reviewed Base vault, exact gross, rounded fees and project-specific award origins", () => {
+  const { bytes, capture, reviewDigest } = proposalFixture(slopManifest, slopScope);
+  const plan = prepareOctoberProposal("slopdotcash", bytes, reviewDigest, capture, now);
+  assert.equal(plan.id, "slopdotcash");
+  assert.equal(plan.vault, slopVault);
+  assert.equal(plan.network, "base-mainnet");
+  assert.equal(plan.assetAddress, baseUsdc);
+  assert.equal(plan.grossBase, "1000000000");
+  assert.equal(plan.feeBase, "20000001");
+  assert.equal(plan.netBase, "979999999");
+  assert.deepEqual(plan.awards.map(({ githubUserId, grossBase }) => [githubUserId, grossBase]), [
+    ["42", "333333333"], ["43", "333333334"], ["44", "333333333"],
+  ]);
+  assert.equal(plan.awards[1]?.sourceDigest, createHash("sha256").update(JSON.stringify(["slop-escrow-origin-v2", "slopdotcash", "2026-10", "43"])).digest("hex"));
+  assert.throws(() => prepareOctoberProposal("eliza", bytes, reviewDigest, capture, now), /selected project/);
+});
+
+test("Slop October refuses wrong rails, vaults and contribution windows", () => {
+  for (const deployment of [
+    { network: "ethereum-mainnet", asset: baseUsdc, vault: slopVault },
+    { network: "base-mainnet", asset: "0x" + "1".repeat(40), vault: slopVault },
+    { network: "base-mainnet", asset: baseUsdc, vault: "11111111111111111111111111111111" },
+    { network: "base-mainnet", asset: baseUsdc, vault: "0x" + "1".repeat(40) },
+  ]) {
+    const altered = { ...slopManifest, escrow: { ...slopManifest.escrow, deployments: [deployment] } };
+    const { bytes, capture, reviewDigest } = proposalFixture(altered, slopScope);
+    assert.throws(() => prepareOctoberProposal("slopdotcash", bytes, reviewDigest, capture, now), /approved October rail/);
+  }
+  const futureEscrow = { ...slopManifest, escrow: { ...slopManifest.escrow, effectiveCycle: "2026-11" } };
+  const fixture = proposalFixture(futureEscrow, slopScope);
+  assert.throws(() => prepareOctoberProposal("slopdotcash", fixture.bytes, fixture.reviewDigest, fixture.capture, now), /approved October rail/);
+  const wrongFrom = "2026-10-01T00:00:00.000Z";
+  const altered = { ...slopManifest, reward: { ...slopManifest.reward, rewardStartAt: wrongFrom } };
+  const { bytes, capture, reviewDigest } = proposalFixture(altered, { ...slopScope, from: wrongFrom });
+  assert.throws(() => prepareOctoberProposal("slopdotcash", bytes, reviewDigest, capture, now), /approved contribution window/);
+});
+
+test("Slop's reviewed pool requires the explicit manual-only October override", () => {
+  for (const cycleCaps of [
+    undefined,
+    [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
+    [{ cycleId: octoberPeriod, monthlyCapMinor: "1000000000" }],
+    [{ cycleId: octoberPeriod, monthlyCapMinor: "0" }, { cycleId: octoberPeriod, monthlyCapMinor: "0" }],
+  ]) {
+    const { bytes, capture, reviewDigest } = proposalFixture({ ...slopManifest, reward: { ...slopManifest.reward, cycleCaps } }, slopScope);
+    assert.throws(() => prepareOctoberProposal("slopdotcash", bytes, reviewDigest, capture, now), /explicit zero automatic cap/);
+  }
+  for (const current of [
+    { ...slopManifest, rewardAsset: undefined },
+    { ...slopManifest, rewardAsset: { ...slopManifest.rewardAsset, chainId: "1" } },
+    { ...slopManifest, terms: { receiptPolicy: { state: "suspended" } } },
+  ]) {
+    const { bytes, capture, reviewDigest } = proposalFixture(current, slopScope);
+    assert.throws(() => prepareOctoberProposal("slopdotcash", bytes, reviewDigest, capture, now), /active receipts and the verified Base asset/);
   }
 });
