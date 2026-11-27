@@ -2,13 +2,10 @@
 // spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "The acceptance instant selects the policy"
 
 export const scoreV2EffectiveAt = 1785542400000;
-export const usageNeutralEvidencePolicyAt = 1787097600000;
-export const historicalValuePolicyAt = 1788220800000;
 export const outcomeFirstPolicyAt = 1790812800000;
 export const paymentReviewPolicyAt = 1791588095388;
 export const valuePolicyAt = 1793491200000;
 
-export const detailedMergedPullRequestsPerMonth = 5;
 export const materialTestAdditions = 10;
 export const materialTestChurn = 20;
 export const resolvedIssueCap = 5;
