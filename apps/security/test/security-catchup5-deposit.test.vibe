@@ -16,7 +16,7 @@ import { noticePorts } from "@repo/operations/live"
 import { Request as WorkerRequest } from "miniflare"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
-import { screeningPrompt } from "../src/analysis/prompts.ts"
+import { analysisPrompt, screeningPrompt } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { caseRoutes } from "../src/cases/routes.vibe"
 import { markPaid } from "../src/deposit/port.vibe"
@@ -56,6 +56,7 @@ const hour = 3_600_000
 const day = 24 * hour
 const slop = 10n ** 18n
 const importedReporter = "53204"
+const linkedReporter = "53205"
 const grantKey = `${"D".repeat(42)}A`
 
 type OwnerRead = "read" | "unavailable" | "not-installed" | "retired"
@@ -316,6 +317,11 @@ effect function save(deposits: Deposits.Shape, as: string, key: string, summary:
   return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string; readonly deposit: unknown } }).submission
 }
 
+effect function duplicateOf(deposits: Deposits.Shape, caseId: string, original: string, key: string) {
+  const [current] = try promise(() => rows(deposits.world, "SELECT revision FROM security_cases WHERE id=?", caseId))
+  return try exchanged(deposits, deposits.live, `/api/v1/security-cases/${caseId}/actions`, maintainer, { action: "decide", outcome: "duplicate", severity: "low", loss: "not-verified", inScope: true, relatedParty: false, rootCauseKey: "pause-check", duplicateOf: original, expectedRevision: current?.revision, idempotencyKey: key, reason: "The earlier report covers the same root cause." })
+}
+
 effect function intakeOf(world: World, submissionId: string) {
   const [found] = try promise(() => rows(world, "SELECT report_version AS version, screening_state AS state, revision FROM security_submission_intake WHERE submission_id=?", submissionId))
   return found
@@ -426,6 +432,23 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       },
     )
 
+    const linkedSummary = "Withdraw skips the pause check"
+    try orDie(Effect.try(() => {
+      github.world.addUser({ id: Number(linkedReporter), login: `member-${linkedReporter}` })
+      github.world.addAdvisory("slop-test/intake", { author: `member-${linkedReporter}`, summary: linkedSummary, description: "withdraw() never reads paused(), so funds leave while the vault is paused." })
+    }))
+    fake.reply((call) => call.system === analysisPrompt && said(call).includes(linkedSummary), { text: JSON.stringify({ summary: "withdraw() ignores the pause.", severity: "high", potentialLoss: "likely", duplicateCaseIds: [saved.caseId], rootCauseKey: null, remediation: "Read paused() before every withdrawal." }) })
+    const linkedImport = try promise(() => sent(deposits, deposits.live, "/api/v1/security-cases", maintainer, { mode: "import", projectId: "intake-fixture" }))
+    try settled(deposits)
+    const [linked] = try promise(() => rows(world, "SELECT c.id, (SELECT a.state FROM security_case_analyses a WHERE a.case_id = c.id ORDER BY a.attempt DESC LIMIT 1) AS analysis, (SELECT a.duplicate_case_ids FROM security_case_analyses a WHERE a.case_id = c.id ORDER BY a.attempt DESC LIMIT 1) AS duplicates FROM security_cases c WHERE c.reporter_github_id=?", linkedReporter))
+    const linkedCase = String(linked?.id ?? "")
+    const offered = fake.calls.filter((call) => call.system === analysisPrompt && said(call).includes(saved.caseId)).length
+    const ofHeld = try duplicateOf(deposits, linkedCase, saved.caseId, "deposit-duplicate-held-01")
+    try same(
+      { imported: [linkedImport.status, linkedImport.body], analysis: [linked?.analysis, linked?.duplicates], offered, ofHeld: refusal(ofHeld) },
+      { imported: [200, { state: "ok", received: 1 }], analysis: ["complete", "[]"], offered: 0, ofHeld: [409, "invalid_duplicate"] },
+    )
+
     fake.reply((call) => call.system === screeningPrompt && said(call).includes(fuller), { text: JSON.stringify({ decision: "legitimate", reason: "The report names previewShares() and carries a runnable proof.", duplicateCaseIds: [] }) })
     try paid(world, saved.caseId, 50, new Date(clock.now()).toISOString())
     const started = try swept(deposits, "live")
@@ -438,14 +461,17 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       { started, screened: [screenedCalls(fake, thin), screenedCalls(fake, fuller)], state: screenedIntake?.state, owner: [ownerAfter.status, ownerListedAfter.includes(saved.id)], notified: notified.includes(maintainer), repeated: repeated.started },
       { started: { released: 0, decided: 0, started: 1 }, screened: [0, 1], state: "legitimate", owner: [200, true], notified: true, repeated: 0 },
     )
+    const ofPaid = try duplicateOf(deposits, linkedCase, saved.caseId, "deposit-duplicate-paid-01")
+    const [closedLinked] = try promise(() => rows(world, "SELECT receipt_state AS receipt, duplicate_of AS original FROM security_cases WHERE id=?", linkedCase))
+    try same({ ofPaid: ofPaid.status, closedLinked }, { ofPaid: 200, closedLinked: { receipt: "duplicate", original: saved.caseId } })
 
     try orDie(Effect.try(() => github.world.addAdvisory("slop-test/intake", { author: `member-${importedReporter}`, summary: "Permit signature replays on another chain", description: "The permit signature has no domain separator, so it replays on another deployment." })))
     const imported = try promise(() => sent(deposits, deposits.live, "/api/v1/security-cases", maintainer, { mode: "import", projectId: "intake-fixture" }))
     try settled(deposits)
     const [importedCase] = try promise(() => rows(world, "SELECT id, submission_state AS state, received_at_source AS source FROM security_cases WHERE reporter_github_id=?", importedReporter))
     try same(
-      { imported: [imported.status, imported.body], importedCase: [importedCase?.state, importedCase?.source], deposit: try depositRow(world, String(importedCase?.id ?? "")) },
-      { imported: [200, { state: "ok", received: 1 }], importedCase: ["verified", "github-verified"], deposit: null },
+      { imported: [imported.status, imported.body], importedCase: [importedCase?.state, importedCase?.source], deposit: try depositRow(world, String(importedCase?.id ?? "")), offeredOncePaid: fake.calls.filter((call) => call.system === analysisPrompt && said(call).includes(saved.caseId)).length },
+      { imported: [200, { state: "ok", received: 1 }], importedCase: ["verified", "github-verified"], deposit: null, offeredOncePaid: 1 },
     )
 
     const unreadable = try claim(deposits, deposits.live, "53011")
