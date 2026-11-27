@@ -178,7 +178,7 @@ effect function readCovers(nowMillis: number, at: string) {
   const due = try rows(WatchedCoverRow, sql`SELECT repository_id, pull_number, installation_id, owner, repo, window_start, state, strike_seen_at
     FROM standing_deposit_covers
     WHERE state IN ('watch', 'pending', 'clear') AND next_check_at IS NOT NULL AND next_check_at <= ${at}
-    ORDER BY next_check_at, updated_at LIMIT ${standingCoverBatch}`)
+    ORDER BY updated_at, next_check_at LIMIT ${standingCoverBatch}`)
   let read = 0
   for (const cover of due) {
     const pull = try readCoverPull(cover)
