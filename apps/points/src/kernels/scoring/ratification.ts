@@ -1,6 +1,5 @@
 //@ backend dafny
 // spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
-import { type AuthorityEvidence, type Ratification } from "../../../gen/points__scoringPolicy.ts";
 
 export interface RatificationRecord {
   schemaVersion: string;
@@ -122,17 +121,6 @@ export function tierThirds(tier: string): number {
 }
 
 /** @throws {never} */
-export function tierBand(tier: string): number {
-  //@ ensures 0 <= \result && \result <= 5
-  if (tier === "small") return 1;
-  if (tier === "medium") return 2;
-  if (tier === "large") return 3;
-  if (tier === "xl") return 4;
-  if (tier === "exceptional") return 5;
-  return 0;
-}
-
-/** @throws {never} */
 export function distinctNodeIds(ids: string[], limit: number): boolean {
   //@ ensures \result ==> ids.length <= limit
   if (ids.length > limit) return false;
@@ -207,13 +195,6 @@ export function checkApproval(approval: ApprovalRecord, expected: RatificationRe
   }
   if (!validReason(approval.reason)) return "invalid-reason";
   return "valid";
-}
-
-/** @throws {never} */
-export function ratificationOf(record: RatificationRecord, sourceId: string, maintainer: number, authority: AuthorityEvidence): Ratification {
-  //@ ensures \result.head === record.headSha && \result.maintainer === maintainer && \result.record === sourceId
-  //@ ensures 0 <= \result.band && \result.band <= 5
-  return { band: tierBand(record.tier), maintainer: maintainer, head: record.headSha, record: sourceId, authority: authority };
 }
 
 /** @throws {never} */

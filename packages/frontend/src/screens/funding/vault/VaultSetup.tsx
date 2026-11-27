@@ -148,7 +148,7 @@ export function VaultSetup(props: VaultSetupProps) {
       <p className="text-sm text-muted-foreground">Your wallet creates and owns the vault.</p>
       {read === "signIn" ? (
         <p className="text-sm text-foreground">
-          <a href={loginHref} className="text-primary underline-offset-4 hover:underline">
+          <a href={loginHref} className="text-primary underline underline-offset-4 hover:decoration-2">
             Sign in with GitHub
           </a>{" "}
           to set up the vault.

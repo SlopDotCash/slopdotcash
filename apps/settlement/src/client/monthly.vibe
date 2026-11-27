@@ -165,7 +165,12 @@ function refusal(row: { readonly status: number; readonly error: string; readonl
   return { status: row.status, code: row.error, message: row.message ?? "", headers: row.headers }
 }
 
+const privateNoStore = { "cache-control": "private, no-store" } as const
+const originForbidden = { status: 403, code: "origin_forbidden", message: "" } as const
+
 const sessionRefusals = {
+  refusalHeaders: privateNoStore,
+  originForbidden,
   unauthenticated: refusal(getPaymentsProjectsByIdMonthlyByPeriod.notSignedIn),
   sessionExpired: refusal(getPaymentsProjectsByIdMonthlyByPeriod.sessionExpired),
   actorMismatch: refusal(getPaymentsProjectsByIdMonthlyByPeriod.actorChangedYourAccountChangedReload),
@@ -257,6 +262,7 @@ export const monthlyCuts = route({
   answer: MonthlyCuts,
   rejected: "payments_unavailable",
   cache: "private",
+  refusalHeaders: privateNoStore,
 })
 
 export schema MonthlySettingAction {
@@ -314,6 +320,8 @@ export const paymentsSolanaMonthlyCommitment = route({
   answer: MonthlySettingAnswered,
   rejected: settingRows.monthlySettingRejected.error,
   cache: "private",
+  refusalHeaders: privateNoStore,
+  originForbidden,
   invalid: refusal(settingRows.invalidMonthlySetting),
 })
 

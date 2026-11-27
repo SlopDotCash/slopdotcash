@@ -1,5 +1,5 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
-import type { CaseList, SecurityCase } from "./case.schema.ts";
+import type { SecurityCase } from "./case.schema.ts";
 
 const terms = { grossMinor: "10000000000", currency: "USDC", decimals: 6, fundingPolicy: "after-approval", asset: { kind: "stablecoin", symbol: "USDC" } };
 
@@ -66,19 +66,6 @@ export const awardCase: SecurityCase = {
   rootCauseKey: "withdrawal-rounding",
 };
 
-export const paidCase: SecurityCase = {
-  ...awardCase,
-  revision: 9,
-  allowedActions: [],
-  nextStep: "No action needed.",
-  awardState: "approved",
-  award: { grossMinor: "10000000000", researcherMinor: "7500000000", slopMinor: "2500000000" },
-  paymentState: "paid",
-  paymentRail: "escrow",
-  settlement: { state: "paid", network: "base", transactionIds: ["0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060"], privacyNotice: "Chain transactions show the wallet, time and amount. The report stays private." },
-  paymentDeadline: "2026-12-01T00:00:00.000Z",
-};
-
 export const appealCase: SecurityCase = {
   ...maintainerCase,
   viewerRoles: ["dispute"],
@@ -104,11 +91,4 @@ export const reporterCase: SecurityCase = {
   nextStep: "Waiting for the project owner's response.",
   analysis: undefined,
   triagers: undefined,
-};
-
-export const caseList: CaseList = {
-  viewer: { githubId: "1", githubLogin: "octocat" },
-  programs: [{ projectId: "acme-vault", roles: ["security-maintainer"] }],
-  cases: [maintainerCase, { ...paidCase, id: "sc_9b8c7d6e5f4a3b2c", advisory: null }],
-  authorityUnavailable: false,
 };

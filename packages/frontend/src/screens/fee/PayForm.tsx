@@ -3,7 +3,7 @@ import { Address, Alert, Button, ExternalLink, RadioGroup, Spinner, WalletChoose
 import { canConfirmUnsent, canDisconnectWallet, depositedWithinHour, payer, type PayFlow } from "../../../gen/frontend__feePages.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
-import { amountText, keptToText, wayKey } from "../../wallets/fee/feeCalls.ts";
+import { amountText, isSolanaFeeNetwork, isSolanaRecordAddress, keptToText, wayKey } from "../../wallets/fee/feeCalls.ts";
 import { PendingCheck } from "../funding/vault/PendingCheck.tsx";
 import { formatDate } from "../projects/summary.ts";
 import type { FeePay, FeeShown, Noun, ShownRecord } from "./payFlow.vibe";
@@ -14,6 +14,7 @@ import { useAct } from "./usePay.ts";
 const words = {
   "pull request": { label: "Pay the fee", uncounted: "it did not pay this pull request" },
   report: { label: "Pay the deposit", uncounted: "it did not count for this report" },
+  "standing deposit": { label: "Pay the standing deposit", uncounted: "it did not count as your standing deposit" },
 } as const;
 
 const section = "flex flex-col gap-3";
@@ -48,7 +49,13 @@ export function PaidRecord({ record, held }: { record: ShownRecord; held: string
         {paid.finalized ? "Its block is final." : `Its block is not final yet. ${network} can still replace it, and the record follows the chain.`}
       </p>
       <p>
-        <TransactionLink network={paid.network} hash={paid.transaction} label="Deposit transaction" />
+        {isSolanaFeeNetwork(paid.network) && isSolanaRecordAddress(paid.transaction) ? (
+          <>
+            Deposit record <code className="break-all font-mono text-sm">{paid.transaction}</code>
+          </>
+        ) : (
+          <TransactionLink network={paid.network} hash={paid.transaction} label="Deposit transaction" />
+        )}
       </p>
       <p className="text-muted-foreground">{outcomeText(record, held)}</p>
       {record.resolveTransaction ? (

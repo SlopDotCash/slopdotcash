@@ -16,16 +16,6 @@ export interface TrustedArtifact {
   readonly kind: ArtifactKind
 }
 
-export const requiredEvidenceRows: ReadonlyArray<EvidenceRow> = [
-  { id: "before-screenshots", label: "Before screenshots" },
-  { id: "after-screenshots", label: "After screenshots" },
-  { id: "walkthrough-video", label: "Walkthrough video" },
-  { id: "backend-logs", label: "Backend logs" },
-  { id: "frontend-logs", label: "Frontend console/network logs" },
-  { id: "llm-trajectory", label: "Real-LLM trajectory" },
-  { id: "domain-artifacts", label: "Domain artifacts" },
-]
-
 export const surfaceOcrEvidenceRow: EvidenceRow = { id: "ocr-review", label: "OCR visual text review" }
 
 export const ocrEvidence = /\bOCR\b|ocr-triage|mvp:visual-verify|audit:app:verify|tesseract|text readout/i

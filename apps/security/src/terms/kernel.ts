@@ -25,11 +25,3 @@ export function platformShare(gross: bigint, full: boolean): bigint {
   //@ ensures researcherShare(gross, full) + \result === gross
   return full ? 0n : gross / 4n;
 }
-
-/** @throws {never} */
-//@ pure
-export function offerAllowed(offered: bigint, chosen: bigint, fixed: boolean, full: boolean): boolean {
-  //@ ensures \result <==> splitPossible(chosen, full) && (!fixed || chosen === offered)
-  //@ ensures \result ==> chosen > 0
-  return splitPossible(chosen, full) && (!fixed || chosen === offered);
-}

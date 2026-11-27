@@ -287,8 +287,3 @@ export effect function runJournal(key: JournalKey, context: JournalContext, run:
   if (outcome.text !== undefined) try published(key, outcome.text)
   return outcome.state
 }
-
-export effect function touchExecution(key: JournalKey, now: number) {
-  const touched = try isoAt(now * 1000)
-  return sql`INSERT INTO monthly_payment_execution (project_id, period, network, last_attempt) SELECT project_id, period, network, ${touched} FROM monthly_payment_authorizations WHERE project_id = ${key.projectId} AND period = ${formatPeriod(key.period)} AND network = ${key.network} ON CONFLICT (project_id, period, network) DO UPDATE SET last_attempt = excluded.last_attempt`
-}

@@ -56,8 +56,6 @@ export interface HistoricalAllocationAcceptance {
   readonly baseRef: string
 }
 
-export type RetainedDiscovery = "no-retained-original" | "retained-originals"
-
 export interface RetainedPull {
   readonly nodeId: string
   readonly number: number
@@ -322,9 +320,4 @@ export effect function retainedOriginals(source: AcceptedSource) {
     if (current.node_id !== expected.node_id || current.head.sha !== expected.head.sha || current.updated_at !== expected.updated_at) throw refused(retainedSourceChanged)
   }
   return { kind: "originals", accepted: retainedPull(accepted), acceptance, originals: originals.map(retainedPull) } satisfies RetainedOriginals
-}
-
-export effect function discoverRetained(source: AcceptedSource) {
-  const found = try retainedOriginals(source)
-  return (found.kind === "none" ? "no-retained-original" : "retained-originals") satisfies RetainedDiscovery
 }

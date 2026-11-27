@@ -5,7 +5,7 @@ import { type ChainView, canSignSolana, signSolana } from "../../gen/settlement_
 import { decodeAward, decodeMonth, decodeOrigin, isInitialized } from "../chain/solana/accounts.ts"
 import { type Digest, digest } from "../chain/solana/bytes.ts"
 import { monthAddress, monthlySourceAddress, originAddress } from "../chain/solana/pda.ts"
-import { SolanaReadRefused, type Slotted, finalizedAccount, finalizedAccounts as finalizedAccountsRaw } from "../chain/solana/reads.vibe"
+import { SolanaReadRefused, finalizedAccount, finalizedAccounts as finalizedAccountsRaw } from "../chain/solana/reads.vibe"
 import type { Period } from "../kernels/calendar.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { ordinaryScope, within } from "../journal/journal.vibe"
@@ -16,7 +16,6 @@ import type { VerifiedDeployment } from "../owner/solanaDeployment.vibe"
 import { type MonthAttestation, type MonthlyIntentRecord, MonthlyRefused, decide, journalIntent, monthKey, periodOf, plannedDeployment, readIntent, retainSignature, servedNetworks, signingFacts } from "./monthlyRoot.vibe"
 import { type ReviewedSolana, type SolanaKey, SolanaAttesterConfig, finalizedProject, identitySigner, onSolana, reviewedSolana } from "./solana.vibe"
 
-export type { Slotted }
 
 function refusedMonth(reason: string) {
   return new MonthlyRefused({ reason })

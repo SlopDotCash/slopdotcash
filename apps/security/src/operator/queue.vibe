@@ -13,7 +13,6 @@ import { depositHeld } from "../deposit/held.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"
 import { sendOwnerReminders } from "./reminders.vibe"
 
-export const OPEN_RECEIPT_STATES = ["received", "triaging"] as const
 export const RETRY_ATTEMPT_LIMIT = 4
 export const RETRY_SPACING_MS = 30 * 60 * 1000
 export const DAILY_ATTEMPT_LIMIT = 150

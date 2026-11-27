@@ -29,7 +29,34 @@ import {
 } from "../../flows/account/standingDeposit.vibe";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
+import { feeDepositKey } from "../../wallets/fee/feeCalls.ts";
 import { formatDate } from "../projects/summary.ts";
+import { PayForm } from "./PayForm.tsx";
+import { standingSetup } from "./payFlow.vibe";
+import { feeRuntime } from "./runtime.vibe";
+import { useOpened, usePay } from "./usePay.ts";
+
+function hasSavedStandingRequest(item: string): boolean {
+  try {
+    return typeof sessionStorage !== "undefined" && sessionStorage.getItem(feeDepositKey(item)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function StandingPayMounted({ githubId, item }: { githubId: string; item: string }) {
+  const payRuntime = feeRuntime(standingSetup);
+  const opened = useOpened(payRuntime, { kind: "standingDeposit", githubId, item });
+  if (opened.status === "running") return <Spinner label="Loading the payment form" />;
+  if (opened.status === "failed") return <Alert variant="destructive">{opened.message}</Alert>;
+  return <StandingPayBound payRuntime={payRuntime} pay={opened.value} />;
+}
+
+function StandingPayBound({ payRuntime, pay }: { payRuntime: ReturnType<typeof feeRuntime>; pay: Parameters<typeof usePay>[1] }) {
+  const { state, shown } = usePay(payRuntime, pay);
+  if (state === undefined || shown === undefined) return <Spinner label="Loading the payment form" />;
+  return <PayForm runtime={payRuntime} pay={pay} state={state} shown={shown} noun="standing deposit" />;
+}
 
 const coverStateText: Readonly<Record<StandingCover["state"], string>> = {
   watch: "Covered",
@@ -134,6 +161,7 @@ function SignedInDeposit({ runtime, githubId }: { runtime: PageRuntime; githubId
   const loaded = useOnce(runtime, key, () => loadStandingDeposit(githubId));
   const [override, setOverride] = useState<StandingDepositRecord | null>(null);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
   const { busy, error, act } = useAction(runtime);
   const nowMs = useNow();
 
@@ -152,6 +180,7 @@ function SignedInDeposit({ runtime, githubId }: { runtime: PageRuntime; githubId
   const row = record.deposit;
   const finished = row === null || row.outcome === "refunded" || row.outcome === "kept";
   const dueWay = row?.due[0];
+  const openPay = payOpen || (row !== null && hasSavedStandingRequest(row.item));
 
   return (
     <div className="flex flex-col gap-6">
@@ -161,8 +190,16 @@ function SignedInDeposit({ runtime, githubId }: { runtime: PageRuntime; githubId
         <section aria-label="Standing deposit due" className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-sm">
           <h2 className="text-lg font-semibold text-foreground">Deposit due</h2>
           <p className="text-muted-foreground">
-            Send <strong className="text-foreground">{formatSlopAmount(dueWay.amount)}</strong> on {networkLabel(dueWay.network)} to the standing deposit contract for item <code className="font-mono text-xs break-all text-foreground">{row.item}</code>.
+            <strong className="text-foreground">{formatSlopAmount(dueWay.amount)}</strong> on {networkLabel(dueWay.network)}.
           </p>
+          {record.quote !== null && record.quote !== row.amount && !openPay ? (
+            <p className="text-muted-foreground">
+              Slop&apos;s published SLOP rate changed since this deposit was asked; at the rate now it is {formatSlopAmount(record.quote)}.{" "}
+              <Button variant="secondary" size="sm" loading={busy} onClick={() => void act(requestNewStandingDeposit(githubId), setOverride)}>
+                Update the amount
+              </Button>
+            </p>
+          ) : null}
           <dl className="grid gap-2 sm:grid-cols-[max-content_1fr]">
             <dt className="text-muted-foreground">Contract</dt>
             <dd><Address value={dueWay.contract} label="Deposit contract" /></dd>
@@ -171,14 +208,21 @@ function SignedInDeposit({ runtime, githubId }: { runtime: PageRuntime; githubId
             <dt className="text-muted-foreground">If kept, it goes to</dt>
             <dd><Address value={dueWay.keptTo} label="Burn address" /></dd>
           </dl>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" loading={busy} onClick={() => void act(requestNewStandingDeposit(githubId), setOverride)}>
-              Refresh quote
-            </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => { setOverride(null); retryOnce(runtime, key); }}>
-              Check payment status
-            </Button>
-          </div>
+          {openPay ? (
+            <StandingPayMounted key={row.item} githubId={githubId} item={row.item} />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={busy} onClick={() => setPayOpen(true)}>
+                Pay from a wallet
+              </Button>
+              <Button variant="secondary" size="sm" loading={busy} onClick={() => void act(requestNewStandingDeposit(githubId), setOverride)}>
+                Refresh quote
+              </Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setOverride(null); retryOnce(runtime, key); }}>
+                Check payment status
+              </Button>
+            </div>
+          )}
         </section>
       ) : null}
       {row && row.paid !== null && row.outcome === null && row.withdrawRequestedAt === null ? (

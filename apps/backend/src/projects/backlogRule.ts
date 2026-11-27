@@ -4,7 +4,6 @@ export const dormantAfterDays = 14;
 export const dormantWarningAfterDays = 10;
 export const catchUpMaxDays = 14;
 export const backlogRuleFrom = "2026-12-01T00:00:00.000Z";
-export const catchUpHistoryMax = 240;
 export const intakeCountMaxAgeMs = 72 * 60 * 60 * 1000;
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -147,10 +146,6 @@ export function backlogState(project: BacklogProjectManifest | null | undefined,
   };
 }
 
-export function backlogOutOfRotation(project: BacklogProjectManifest | null | undefined, rows: ReadonlyArray<BacklogCountRow> | undefined, nowMs: number): boolean {
-  return backlogState(project, rows, nowMs).outOfRotation;
-}
-
 export function dormancyNear(state: BacklogState): boolean {
   return (
     state.judged
@@ -187,18 +182,4 @@ export function backlogOutDetail(state: BacklogState): string {
   return `Your project left the home page, /sponsors and agent discovery: ${reasonText(state)}. It returns by itself once ${
     state.reason === "backlog" ? `fewer than ${backlogWaitingLimit} wait` : "a maintainer merges"
   }. You can mark it as catching up on reviews for up to ${catchUpMaxDays} days from its settings. Accepted work still records points.`;
-}
-
-export function utcMonth(iso: string): string {
-  return iso.slice(0, 7);
-}
-
-export function catchUpOfferedEnd(nowMs: number): string {
-  const now = new Date(nowMs);
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + catchUpMaxDays)).toISOString();
-}
-
-export function catchUpStartAllowed(project: BacklogProjectManifest | null | undefined, nowMs: number): boolean {
-  const month = utcMonth(new Date(nowMs).toISOString());
-  return !(project?.slopbot?.catchUpHistory ?? []).some((entry) => utcMonth(entry.startedAt) === month);
 }

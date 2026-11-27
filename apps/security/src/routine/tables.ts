@@ -10,7 +10,6 @@ export type BasisName = "digest" | "two-calls" | "clock" | "hold";
 export type HoldName = "loss-plausible" | "calls-disagreed" | "analysis-unavailable" | "github-advisory" | "report-not-stored" | "proof-still-missing";
 
 export const modes: Readonly<Record<ActiveMode, Mode>> = { dry_run: "DryRun", live: "Live" };
-export const modeNames: Readonly<Record<Mode, RoutineMode>> = { Off: "off", DryRun: "dry_run", Live: "live" };
 
 export const outcomeNames: Readonly<Record<RoutineOutcome, Exclude<RoutineOutcomeName, "unavailable">>> = {
   RoutineDuplicate: "duplicate",

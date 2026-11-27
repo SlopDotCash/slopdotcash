@@ -3,10 +3,21 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
 import { fullIntervalMs } from "../../../gen/points__collectionMemo.ts"
 import type { AcceptedImplementationPredecessor } from "../../score/history.vibe"
+import { type RulesSource, implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn, implementationMemoRulesVersion, rulesDigest } from "../memo/memo.vibe"
 import { emptyChangeDigest } from "./native.vibe"
 import { type AcceptedImplementationSource, acceptedOrdinaryCommitOid } from "./sources.vibe"
 
 export error ImplementationMemoInvalid { message: string }
+export error ImplementationMemoAudit { message: string }
+
+export interface ImplementationMemoStats {
+  digestsReused: number
+  digestsRead: number
+  previousReused: number
+  previousRead: number
+  audited: number
+  auditMismatches: number
+}
 
 export type PreviousImplementationObservation =
   | { readonly kind: "ineligible" }
@@ -14,6 +25,11 @@ export type PreviousImplementationObservation =
   | { readonly kind: "candidate"; readonly shape: string; readonly source: AcceptedImplementationSource }
 
 export interface ImplementationMemo {
+  auditOneIn: number
+  readonly stats: ImplementationMemoStats
+  audits(repositoryNodeId: string, pullRequestId: string): boolean!ImplementationMemoInvalid!Experimental.Crypto.Crypto
+  auditPrevious(saved: PreviousImplementationObservation, prior: AcceptedImplementationPredecessor, live: PreviousImplementationObservation): void!(ImplementationMemoInvalid | ImplementationMemoAudit)
+  auditDigest(saved: string, live: string | undefined): void!ImplementationMemoAudit
   previous(repositoryNodeId: string, prior: AcceptedImplementationPredecessor): PreviousImplementationObservation | undefined
   rememberPrevious(repositoryNodeId: string, prior: AcceptedImplementationPredecessor, observation: PreviousImplementationObservation): void!ImplementationMemoInvalid
   digest(repositoryNodeId: string, source: AcceptedImplementationSource): string | undefined
@@ -38,9 +54,14 @@ interface DigestEntry {
 
 type Row = Readonly<Record<string, unknown>>
 
-export const implementationMemoFormat = "slop-accepted-implementation-memo-v2"
+export const implementationMemoFormat = "slop-accepted-implementation-memo-v3"
 export const implementationMemoFile = "accepted-implementation-memo.json"
-export const implementationMemoUnavailable = "[slop.cash] accepted implementation memo unavailable; reading evidence live"
+export const implementationMemoRulesDigest = "a6e8a460e501b3074afc68dbf6664f2588320f40f43ef7b9a44ca77bef46ae1b"
+export const implementationMemoRulesSources: ReadonlyArray<RulesSource> = [
+  { path: "apps/points/src/collect/implementation/native.vibe" },
+  { path: "apps/points/src/collect/implementation/previous.vibe" },
+  { path: "apps/points/src/collect/implementation/sources.vibe" },
+]
 
 const maxBytes = 512 * 1024 * 1024
 const maxRows = 200_000
@@ -70,10 +91,7 @@ effect function instant(value: unknown) {
   if (typeof value !== "string") throw invalid("timestamp")
   const at = millisOf(value)
   if (!Number.isFinite(at)) throw invalid("timestamp")
-  const exact = isoAt(at) catch effect () => {
-    throw invalid("timestamp")
-  }
-  if (exact !== value) throw invalid("timestamp")
+  if ((try isoAt(at)) !== value) throw invalid("timestamp")
   return value
 }
 
@@ -169,11 +187,44 @@ effect function parseJson(source: string) {
   return value
 }
 
-function implementationMemo(previousEntries: Map<string, PreviousEntry>, digestEntries: Map<string, DigestEntry>, fixedCodeDigest: string | undefined): ImplementationMemo {
+function implementationMemo(previousEntries: Map<string, PreviousEntry>, digestEntries: Map<string, DigestEntry>, fixedCodeDigest: string | undefined, initialAuditSeed = "", initialAuditOneIn = implementationMemoAuditOneIn): ImplementationMemo {
   let codeDigest = fixedCodeDigest
+  let auditSeed = initialAuditSeed
+  const stats: ImplementationMemoStats = { digestsReused: 0, digestsRead: 0, previousReused: 0, previousRead: 0, audited: 0, auditMismatches: 0 }
   const hasNativeProof = (repositoryNodeId: string, observation: PreviousImplementationObservation) =>
     observation.kind === "candidate" && digestEntries.has(digestKey(repositoryNodeId, observation.source))
-  return {
+  function resetReuseCounts() {
+    stats.digestsReused = 0
+    stats.digestsRead = 0
+    stats.previousReused = 0
+    stats.previousRead = 0
+  }
+  effect function checkAudit(same: boolean) {
+    stats.audited += 1
+    if (same) return
+    stats.auditMismatches += 1
+    resetReuseCounts()
+    for (const [key, entry] of previousEntries) if (entry.observedAt !== null) previousEntries.delete(key)
+    for (const [key, entry] of digestEntries) if (entry.observedAt !== null) digestEntries.delete(key)
+    auditSeed = ""
+    throw new ImplementationMemoAudit({ message: "A saved accepted implementation entry differs from its live read" })
+  }
+  const memo: ImplementationMemo = {
+    auditOneIn: initialAuditOneIn,
+    stats,
+    effect audits(repositoryNodeId: string, pullRequestId: string) {
+      if (auditSeed === "") return false
+      if (!Number.isSafeInteger(memo.auditOneIn) || memo.auditOneIn < 1) throw invalid("audit rate")
+      const digest = try sha256Hex(`${auditSeed}\0${repositoryNodeId}\0${pullRequestId}`)
+      return Number.parseInt(digest.slice(0, 8), 16) % memo.auditOneIn === 0
+    },
+    effect auditPrevious(saved: PreviousImplementationObservation, prior: AcceptedImplementationPredecessor, live: PreviousImplementationObservation) {
+      const same = JSON.stringify(try parseObservation(saved, prior.id)) === JSON.stringify(try parseObservation(live, prior.id))
+      try checkAudit(same)
+    },
+    effect auditDigest(saved: string, live: string | undefined) {
+      try checkAudit(saved === live)
+    },
     previous(repositoryNodeId: string, prior: AcceptedImplementationPredecessor) {
       return previousEntries.get(previousKey(repositoryNodeId, prior))?.observation
     },
@@ -195,6 +246,7 @@ function implementationMemo(previousEntries: Map<string, PreviousEntry>, digestE
       digestEntries.set(key, { repositoryNodeId, source: accepted, digest, observedAt: null })
     },
     beginPass() {
+      resetReuseCounts()
       for (const [key, entry] of previousEntries) if (entry.observedAt === null) previousEntries.delete(key)
     },
     effect serialize(nextCodeDigest: string, producedAt: string) {
@@ -205,23 +257,26 @@ function implementationMemo(previousEntries: Map<string, PreviousEntry>, digestE
       for (const entry of previousEntries.values()) if (millisOf(entry.prior.mergedAt) > millisOf(entry.observedAt ?? producedAt)) throw invalid("pull request is in the future")
       const previous = try storeRows(previousEntries, producedAt, (entry) => entry.observedAt === null || recent(entry.observedAt, nowMs) || hasNativeProof(entry.repositoryNodeId, entry.observation))
       const digests = try storeRows(digestEntries, producedAt, () => true)
-      const contents = `${JSON.stringify({ format: implementationMemoFormat, codeDigest: nextCodeDigest, producedAt, previous, digests })}\n`
+      const contents = `${JSON.stringify({ format: implementationMemoFormat, rulesVersion: implementationMemoRulesVersion, codeDigest: nextCodeDigest, producedAt, previous, digests })}\n`
       if (utf8(contents).length > maxBytes) throw invalid("file is too large")
       for (const entry of previousEntries.values()) entry.observedAt ??= producedAt
       for (const entry of digestEntries.values()) entry.observedAt ??= producedAt
       return contents
     },
   }
+  return memo
 }
 
 export function emptyImplementationMemo() {
   return implementationMemo(new Map(), new Map(), undefined)
 }
 
-export effect function parseImplementationMemo(contents: string, codeDigest: string, nowMs: number) {
+export effect function parseImplementationMemo(contents: string, codeDigest: string, nowMs: number, rulesVersion = implementationMemoRulesVersion) {
   if (utf8(contents).length > maxBytes) throw invalid("file is too large")
-  const value = try record(try parseJson(contents), ["format", "codeDigest", "producedAt", "previous", "digests"])
-  if (value.format !== implementationMemoFormat || (try text(value.codeDigest, digestPattern, "code digest")) !== codeDigest) throw invalid("version or code digest")
+  const value = try record(try parseJson(contents), ["format", "rulesVersion", "codeDigest", "producedAt", "previous", "digests"])
+  if (value.format !== implementationMemoFormat || value.rulesVersion !== rulesVersion) throw invalid("format or rules version")
+  const writtenUnder = try text(value.codeDigest, digestPattern, "code digest")
+  try text(codeDigest, digestPattern, "code digest")
   const producedAt = try instant(value.producedAt)
   if (!recent(producedAt, nowMs)) throw invalid("stale or future artifact")
   const digestEntries = new Map<string, DigestEntry>()
@@ -249,7 +304,12 @@ export effect function parseImplementationMemo(contents: string, codeDigest: str
     const proved = observation.kind === "candidate" && digestEntries.has(digestKey(repositoryNodeId, observation.source))
     if (recent(observed, nowMs) || proved) previousEntries.set(key, { repositoryNodeId, prior, observation, observedAt: observed })
   }
-  return implementationMemo(previousEntries, digestEntries, codeDigest)
+  const auditOneIn = writtenUnder === codeDigest ? implementationMemoAuditOneIn : implementationMemoChangedCodeAuditOneIn
+  return implementationMemo(previousEntries, digestEntries, codeDigest, producedAt, auditOneIn)
+}
+
+export effect function implementationMemoRulesHash(root: string, sources = implementationMemoRulesSources) {
+  return try rulesDigest(root, sources, "implementation-memo-rules")
 }
 
 effect function setting(name: string) {
@@ -285,23 +345,28 @@ function messageOf(error: { readonly _tag: string }) {
   return "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : error._tag
 }
 
-effect function readImplementationMemo(input: string, codeDigest: string) {
+effect function readImplementationMemo(input: string, codeDigest: string, rulesVersion: number) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
   const path = files.resolve(files.dirname(input), implementationMemoFile)
   if (Number((try fs.stat(path)).size) > maxBytes) throw invalid("file is too large")
-  return try parseImplementationMemo(new TextDecoder().decode(try fs.readFile(path)), codeDigest, try Clock.currentTimeMillis)
+  return try parseImplementationMemo(new TextDecoder().decode(try fs.readFile(path)), codeDigest, try Clock.currentTimeMillis, rulesVersion)
 }
 
-export effect function openImplementationMemo(codeDigest: string) {
+export effect function openImplementationMemo(codeDigest: string, rulesVersion = implementationMemoRulesVersion) {
   const input = try setting("SLOP_COLLECTION_MEMO")
   const full = (try setting("SLOP_COLLECTION_FULL")) || "false"
   if (input === "" || full === "true") return emptyImplementationMemo()
-  const memo = readImplementationMemo(input, codeDigest) catch effect () => {
-    try Console.error(implementationMemoUnavailable)
+  const loaded = effect {
+    const restored = try readImplementationMemo(input, codeDigest, rulesVersion)
+    try Console.error(`[slop.cash] accepted implementation memo restored; auditing 1 in ${restored.auditOneIn}`)
+    return restored
+  }
+  return loaded catch effect (error) => {
+    const reason = error._tag === "PlatformError" ? "none was restored" : messageOf(error)
+    try Console.error(`[slop.cash] accepted implementation memo unavailable (${reason}); reading evidence live`)
     return emptyImplementationMemo()
   }
-  return memo
 }
 
 export effect function writeImplementationMemo(memo: ImplementationMemo, codeDigest: string, output: string) {

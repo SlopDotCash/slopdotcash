@@ -2,11 +2,11 @@
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { handleRaw } from "@repo/platform/http"
+import { handleRaw, json } from "@repo/platform/http"
 import { Rejected, xCallback } from "../../gen/backend__accounts.effect.vibe"
-import { AccountSettings, type XClient, pointsAnswer, pointsJson } from "../accounts/routes/admission.vibe"
+import { AccountSettings, type XClient, pointsAnswer } from "../accounts/routes/admission.vibe"
 import { boundedObject, keysOf } from "../accounts/routes/membership.vibe"
-import { bare } from "../accounts/routes/refusals.vibe"
+import { type Row, bare } from "../accounts/routes/refusals.vibe"
 import { type Facts, noFacts } from "../accounts/store/codec.vibe"
 import { type Intent, type Sender, send } from "../accounts/store/store.vibe"
 import { xCallbackRoute, xDisconnect, xMe, xProfile, xStart, xVisibility } from "../client/accounts.vibe"
@@ -70,26 +70,36 @@ effect function xSession() {
   return row === undefined ? undefined : { actor: row.actor_id, sender: { kind: "session", hash } satisfies Sender }
 }
 
+const plainJson = { "content-type": "application/json" }
+
+function xBare(row: Row) {
+  return bare(row, {}, plainJson)
+}
+
+function xJson(body: unknown, cookie?: string) {
+  return json(body, 200, cookie === undefined ? plainJson : { ...plainJson, "set-cookie": cookie })
+}
+
 function signedOut() {
-  return bare(postPointsXStart.notSignedInNoStore)
+  return xBare(postPointsXStart.notSignedInNoStore)
 }
 
 function invalidBody() {
-  return bare(postPointsXStart.invalidRequestNoStore)
+  return xBare(postPointsXStart.invalidRequestNoStore)
 }
 
 effect function profile(query: URLSearchParams) {
   const actor = query.get("actor") ?? ""
-  if (!actorShape.test(actor)) return bare(getPointsXProfile.invalidActor)
+  if (!actorShape.test(actor)) return xBare(getPointsXProfile.invalidActor)
   const link = try first(LinkRow, sql`SELECT l.x_id AS id, l.username, l.verified_at AS verifiedAt FROM points_x_links l JOIN points_members m ON m.actor_id = l.actor_id WHERE l.actor_id = ${actor} AND l.public = 1 AND m.public = 1`)
-  return pointsJson(link ?? null)
+  return xJson(link ?? null)
 }
 
 effect function account() {
   const session = try xSession()
   if (session === undefined) return signedOut()
   const linked = try first(AccountRow, sql`SELECT x_id AS id, username, verified_at AS verifiedAt, public FROM points_x_links WHERE actor_id = ${session.actor}`)
-  return pointsJson({ configured: (try AccountSettings).x !== undefined, account: linked ?? null })
+  return xJson({ configured: (try AccountSettings).x !== undefined, account: linked ?? null })
 }
 
 effect function start() {
@@ -97,7 +107,7 @@ effect function start() {
   if (session === undefined) return signedOut()
   const settings = try AccountSettings
   const client = settings.x
-  if (client === undefined) return bare(postPointsXStart.xNotConfigured)
+  if (client === undefined) return xBare(postPointsXStart.xNotConfigured)
   const value = try boundedObject(256)
   if (value === undefined || keysOf(value) !== "public" || typeof value.public !== "boolean") return invalidBody()
   const state = try randomText(32)
@@ -109,7 +119,7 @@ effect function start() {
   if (!started) return signedOut()
   const origin = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).origin
   const authorizationUrlText = authorizationUrl(client, `${origin}/api/v1/points/x/callback`, state, try challengeOf(verifier))
-  return pointsJson({ authorizationUrl: authorizationUrlText }, flowHeader(`${flowCookie}_${state}`, capability, flowSeconds))
+  return xJson({ authorizationUrl: authorizationUrlText }, flowHeader(`${flowCookie}_${state}`, capability, flowSeconds))
 }
 
 effect function connect(client: XClient, stateHash: string, query: URLSearchParams, name: string | undefined, progress: Progress) {
@@ -167,7 +177,7 @@ effect function disconnect() {
   if (session === undefined) return signedOut()
   const disconnected = try sent({ kind: "disconnectX" }, session.sender)
   if (!disconnected) return signedOut()
-  return pointsJson({ disconnected: true })
+  return xJson({ disconnected: true })
 }
 
 effect function publishLink() {
@@ -175,9 +185,9 @@ effect function publishLink() {
   if (session === undefined) return signedOut()
   const value = try boundedObject(256)
   if (value === undefined || keysOf(value) !== "public" || typeof value.public !== "boolean") return invalidBody()
-  if (!value.public) return bare(postPointsXVisibility.publicVisibilityRequired)
+  if (!value.public) return xBare(postPointsXVisibility.publicVisibilityRequired)
   const published = try sent({ kind: "publishX" }, session.sender)
-  return published ? pointsJson({ updated: true }) : bare(postPointsXVisibility.notConnected)
+  return published ? xJson({ updated: true }) : xBare(postPointsXVisibility.notConnected)
 }
 
 export const XRoutes = Layer.mergeAll(

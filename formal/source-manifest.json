@@ -7,10 +7,10 @@
     "repository": "SlopDotCash/slopdotcash",
     "requestedBranch": "main",
     "resolvedBranch": "main",
-    "commit": "eb4f41bee0ac11d835ac8f9d30088ad002a2d1d5",
+    "commit": "bd8ab0f67fa344e04e06910ad15257184c6e41a2",
     "path": "docs/slop-product-requirements.md",
-    "sha256": "a70ab9d7a68f8c6de20380096fba995a88313f8ea3055a0848170b172d9ce155",
-    "matchingMainCommit": "eb4f41bee0ac11d835ac8f9d30088ad002a2d1d5"
+    "sha256": "76601b78b127501ffc47b2d9dab3b9264b0ccb674d681fea1e07da538d418476",
+    "matchingMainCommit": "bd8ab0f67fa344e04e06910ad15257184c6e41a2"
   },
   "legacyModels": {
     "repository": "SlopDotCash/slopdotcash",
@@ -34,5 +34,5 @@
     "path": "docs/slop-product-requirements.md",
     "sha256": "b3a8651f7f76e82844d01ede99676de7854f59de0774880dff80be89cc1a0c5b"
   },
-  "latestAuditedApplicationMain": "eb4f41bee0ac11d835ac8f9d30088ad002a2d1d5"
+  "latestAuditedApplicationMain": "bd8ab0f67fa344e04e06910ad15257184c6e41a2"
 }

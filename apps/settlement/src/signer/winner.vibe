@@ -12,7 +12,7 @@ import { Attempt, AttemptHeld, type Deployment, frozenLimit, readAttempt, rpcUrl
 import { CANCELLATION_GAS as cancellationGas } from "../kernels/attesterLimits.ts"
 import { worstCaseNativeCost } from "../kernels/budget.ts"
 
-export { type RecoveryInput, isRecoveryInput }
+export { type RecoveryInput }
 
 export schema Proof {
   readonly transactionId: string

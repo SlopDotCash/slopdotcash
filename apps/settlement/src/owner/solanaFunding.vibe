@@ -10,7 +10,7 @@ import { ordinaryFeeEvidenceMatches } from "../../gen/settlement__money.effect.v
 import type { OwnerRequest, PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
 import { type FundingOperation, fundingInstructions } from "./ownerInstructions.ts"
 import { type VerifiedDeployment, finalizedFunds } from "./solanaDeployment.vibe"
-import { type WalletCheck, type WalletMessage, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+import { type WalletCheck, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
 import { type Capture, type Outcome, outcomeOf, reviewed, submitted } from "./store.vibe"
 
 export interface FundingIntent {
@@ -204,4 +204,3 @@ export effect function completedCheck(request: OwnerRequest, text: string, trans
   return outcomeOf(next) satisfies Outcome
 }
 
-export type { WalletMessage }

@@ -98,9 +98,11 @@ export const ReportingReadinessRefresher = entrypoint(services, { refreshReporti
 
 export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMethods)
 
+const notFound = HttpRouter.add("*", "*", HttpServerResponse.text("not found", { status: 404, contentType: "text/plain;charset=UTF-8" }))
+
 export default worker({
   services,
-  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes),
+  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes, notFound),
   scheduled,
   queue: (message) => settle(message, dispatchJob),
 })

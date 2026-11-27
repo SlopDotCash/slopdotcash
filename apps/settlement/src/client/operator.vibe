@@ -43,12 +43,13 @@ const ReconcileBody = Schema.Record(Schema.String, Schema.Unknown)
 export const reconcileBindingRoute = route({
   method: "POST",
   path: "/api/v1/operator/wallet-bindings/reconcile",
-  access: "sessionWrite",
+  access: "public",
   limitKib: 64,
   request: ReconcileBody,
   answer: RecoveryAnswer,
   rejected: "recovery_pending_or_rejected",
   cache: "no-store",
+  refusalHeaders: { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" },
 })
 
 export const reservedAwardsRoute = route({

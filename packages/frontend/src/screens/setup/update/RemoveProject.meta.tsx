@@ -20,7 +20,7 @@ export const meta: ComponentMeta<RemoveProjectProps> = {
     // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"
     Publishing: async () => {
       remove.mockClear();
-      await userEvent.click(screen.getByRole("button", { name: "Remove project" }));
+      await expect(screen.getByRole("button", { name: "Remove project" })).toBeDisabled();
       await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
       await expect(remove).not.toHaveBeenCalled();
     },

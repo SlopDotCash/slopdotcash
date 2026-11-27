@@ -21,7 +21,7 @@ const JOURNALS = { test: "dedicated-test-signer-v1", production: "production-sig
 
 function journalOf(env: AttesterWorkerEnv): JournalStub | undefined {
   const name = env.SIGNER_STACK === undefined || env.SIGNER_STACK === "test" ? JOURNALS.test : env.SIGNER_STACK === "production" ? JOURNALS.production : undefined;
-  return name === undefined ? undefined : env.JOURNAL.get(env.JOURNAL.idFromName(name));
+  return name === undefined || env.JOURNAL === undefined ? undefined : env.JOURNAL.get(env.JOURNAL.idFromName(name));
 }
 
 const notFound = (): Response => new Response("Not found", { status: 404 });

@@ -1,18 +1,13 @@
 // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"
 import { Effect, type ManagedRuntime } from "effect";
 import { useSyncExternalStore } from "react";
-import { type Done, messageOf as baseMessageOf, run as baseRun, type Settled, useAction as useBaseAction, useOnce } from "../../../app/hooks.ts";
+import { type Done, run as baseRun, type Settled, useAction as useBaseAction, useOnce } from "../../../app/hooks.ts";
 import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, watchOffers } from "./funding.vibe";
 import { pageHidden } from "./pageVisibility.ts";
 
 export type { Done, Settled };
 
 const fallback = "The wallet request failed.";
-
-/** @throws {never} */
-export function messageOf(cause: Parameters<typeof baseMessageOf>[0]): string {
-  return baseMessageOf(cause, fallback);
-}
 
 export function run<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, work: Effect.Effect<A, E, R>): Promise<Done<A>> {
   return baseRun(runtime, work, fallback);

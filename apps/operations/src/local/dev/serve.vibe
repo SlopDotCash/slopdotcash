@@ -60,7 +60,7 @@ function reasonOf(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-export function parsedVars(text: string): Readonly<Record<string, string>> {
+function parsedVars(text: string): Readonly<Record<string, string>> {
   return Object.fromEntries(text.split("\n").flatMap((line) => {
     const match = varLine.exec(line)
     return match === null ? [] : [[match[1] ?? "", (match[2] ?? "").replace(/^(["'])(.*)\1$/u, "$2")]]

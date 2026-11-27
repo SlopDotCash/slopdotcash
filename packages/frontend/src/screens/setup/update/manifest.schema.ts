@@ -43,6 +43,8 @@ export const ManagedManifest = Schema.Struct({
       automaticClosure: Schema.optional(Schema.Boolean),
       readyLabel: Schema.optional(Schema.Unknown),
       intakeCap: Schema.optional(Schema.Number),
+      catchUpUntil: Schema.optional(Schema.String),
+      catchUpHistory: Schema.optional(Schema.Array(Schema.Struct({ startedAt: Schema.String }))),
       submissionFee: Schema.optional(Schema.Unknown),
       wantedIssues: Schema.optional(Schema.Boolean),
     }),

@@ -29,6 +29,6 @@ function services(env: Env) {
 
 export default worker({
   services,
-  routes: HttpRouter.add("*", "*", HttpServerResponse.text("Not found", { status: 404 })),
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text("Not found", { status: 404, contentType: "text/plain;charset=UTF-8" })),
   scheduled: byCron(referralCrons),
 })

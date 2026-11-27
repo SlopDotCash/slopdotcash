@@ -9,7 +9,7 @@ export { SnapshotInvalid, decodeSnapshot, validatePaymentSnapshot, validatePubli
 export { type ImplementationWeight, type PenaltyDeductions, eventThirds, implementationShares, penaltyDeductions } from "./snapshot/shares.vibe"
 export { type Registry, compareCodeUnits, pointsOf, registryOf } from "./snapshot/checks.vibe"
 export { leaderboardMethodology } from "./snapshot/methodology.vibe"
-export { JournalPage, PointsIndex, PointsSummary, ShardEntry, ShardRow, SummaryContributor, journalPageSize, maxShardBytes, pointsJournal, shardCount, shardPath } from "./journal.vibe"
+export { JournalPage, PointsIndex, PointsSummary, ShardEntry, ShardRow, SummaryContributor, journalPageSize, journalPenaltyAppliedThirds, maxShardBytes, pointsJournal, shardCount, shardPath } from "./journal.vibe"
 export { DisputeAnswer, DisputeDetail, DisputeFiling, DisputeView, DisputedAward, DisputedAwards, answerDispute, disputeKeyPattern, disputeListSize, fileDispute, pointsDispute, pointsDisputes } from "./disputes.vibe"
 export { ProtectedPointMonth, ProtectedPointMonths, protectedMonthsRoute } from "./protectedMonths.vibe"
 export { CensusRepository, ProfileIndex, ProfileIssue, ProfileIssueEvent, ProfileIssueHistory, ProfileRecord, ProfilesInvalid, contributorPullSearchUrl, issueHistoryReconciles, profileCounts, profileIndexOf } from "../profiles/shape.vibe"

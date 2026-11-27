@@ -8,7 +8,7 @@ import {
   slopbotBotLogin,
 } from "../../gen/slopbot__readyLabel.ts";
 
-export const neverBases: ReadonlyArray<string> = ["main", "vibestack"];
+export const neverBases: ReadonlyArray<string> = ["main"];
 export const projectFilePath = ".github/slop-project.json";
 
 export type ParseResult<T> =

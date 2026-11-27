@@ -1,22 +1,25 @@
 // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"
-import { Alert, Button, Logo, Spinner } from "@repo/ui";
+import { Alert, Button, cn, Logo, shell, Spinner } from "@repo/ui";
 import { RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { RouteKind } from "../../gen/app.ts";
 import { type RegistryFreshness, registryBlocked, registryPolicy, staleBannerShown } from "../../gen/frontend__registry.ts";
 import { pageOf } from "../../gen/frontend__routes.ts";
+import { HomeHero } from "../screens/home/HomePage.tsx";
 import { formatDateTime } from "./format.ts";
 import type { Frame } from "./pages.ts";
+import type { PageRuntime } from "./runtime.vibe";
 
 export type RegistryGateProps = {
   kind: RouteKind;
   freshness: RegistryFreshness | undefined;
   frame: Frame;
   onRetry: () => void;
+  runtime?: PageRuntime;
   children?: ReactNode;
 };
 
-export function RegistryGate({ kind, freshness, frame, onRetry, children }: RegistryGateProps) {
+export function RegistryGate({ kind, freshness, frame, onRetry, runtime, children }: RegistryGateProps) {
   if (freshness === undefined) {
     return (
       <p role="status" aria-label="Loading" title="Loading" className="flex items-center justify-center gap-2 py-12">
@@ -27,17 +30,29 @@ export function RegistryGate({ kind, freshness, frame, onRetry, children }: Regi
   }
   const policy = registryPolicy(pageOf(kind));
   if (registryBlocked(policy, freshness)) {
-    return frame(
+    const message = freshness.tag === "RegistryFailed" ? "Projects unavailable" : "This page needs current project data.";
+    const unavailableBody = (
       <div className="flex flex-col items-start gap-4">
         <Alert variant="destructive" action={<Button variant="secondary" size="sm" onClick={onRetry}>Try again</Button>}>
-          {freshness.tag === "RegistryFailed" ? "Projects unavailable" : "This page needs current project data."}
+          {message}
         </Alert>
         <p className="text-sm text-muted-foreground">
           <a href="/login">Sign in</a> · <a href="/account">Account</a>
         </p>
-      </div>,
-      "Projects are unavailable",
+      </div>
     );
+    if (kind === "Home") {
+      return (
+        <main className={cn(shell, "flex-1")}>
+          <HomeHero runtime={runtime} />
+          <section className="flex flex-col items-start gap-4 py-12">
+            <h2 className="text-2xl font-bold text-foreground">Projects are unavailable</h2>
+            {unavailableBody}
+          </section>
+        </main>
+      );
+    }
+    return frame(unavailableBody, "Projects are unavailable");
   }
   return (
     <>

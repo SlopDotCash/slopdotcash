@@ -24,7 +24,6 @@ export interface EvidenceFinding { category: EvidenceCategory; points: number; s
 export interface EvidenceAssessment { points: number; maxPoints: number; categories: EvidenceCategory[]; findings: EvidenceFinding[] }
 
 export const evidencePointCap = 6;
-export const evidenceCategories: EvidenceCategory[] = ["screenshot", "video", "logs", "trajectory", "domain-artifact"];
 export const findingOrder: EvidenceCategory[] = ["domain-artifact", "logs", "screenshot", "trajectory", "video"];
 
 /** @throws {never} */

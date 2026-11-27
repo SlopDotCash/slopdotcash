@@ -151,10 +151,6 @@ export const postRunsByIdEvents = {
   invalidRequestInvalidHeadSha: { status: 400, error: "invalid_request", message: "Invalid headSha", headers: jsonNoStoreSlopTraceApiContract },
 } as const
 
-export const getWellKnownSlopProjectsJson = {
-  ...withThisProjectIsIts,
-} as const
-
 export const getProjectsByIdByArtifact = {
   ...withThisProjectIsIts,
 } as const

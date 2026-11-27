@@ -8,9 +8,6 @@ export type ValueTier = "none" | ScoreTier;
 export type ReviewTier = "none" | "triage" | "standard" | "deep" | "specialist";
 
 export const scoreTiers: ScoreTier[] = ["micro", "small", "medium", "large", "xl", "exceptional"];
-export const valueTiers: ValueTier[] = ["none", "micro", "small", "medium", "large", "xl", "exceptional"];
-export const reviewTiers: ReviewTier[] = ["none", "triage", "standard", "deep", "specialist"];
-
 /** @throws {never} */
 //@ pure
 export function scoreTierThirds(tier: ScoreTier): number {
@@ -63,25 +60,4 @@ export function reviewTierPoints(tier: ReviewTier): number {
   //@ ensures \result === 10 * reviewTierThirds(tier)
   //@ ensures tier !== "none" ==> (\result === 10 || \result === 30 || \result === 90 || \result === 240)
   return 10 * reviewTierThirds(tier);
-}
-
-/** @throws {never} */
-export function isScoreTier(text: string): boolean {
-  return text === "micro" || text === "small" || text === "medium" || text === "large" || text === "xl" || text === "exceptional";
-}
-
-/** @throws {never} */
-export function isValueTier(text: string): boolean {
-  return text === "none" || isScoreTier(text);
-}
-
-/** @throws {never} */
-export function isReviewTier(text: string): boolean {
-  return text === "none" || text === "triage" || text === "standard" || text === "deep" || text === "specialist";
-}
-
-/** @throws {never} */
-export function isScoreTierThirds(thirds: number): boolean {
-  //@ ensures \result === (thirds === 1 || thirds === 3 || thirds === 9 || thirds === 24 || thirds === 45 || thirds === 75)
-  return thirds === 1 || thirds === 3 || thirds === 9 || thirds === 24 || thirds === 45 || thirds === 75;
 }

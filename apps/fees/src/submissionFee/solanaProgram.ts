@@ -15,7 +15,6 @@ export const SOLANA_PAY_LIMITS = { address: 20, item: 30, all: 120 } as const;
 export const SOLANA_RECORDS_PER_READ = 100;
 export const SOLANA_SIGNATURE_PAGE = 1000;
 export const SOLANA_TRANSACTION_BYTES = 1232;
-export const SOLANA_MAX_BATCH = 5;
 
 export const CLASSIC_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SYSTEM_PROGRAM = "11111111111111111111111111111111";

@@ -33,12 +33,6 @@ export function navigateWithin(href: string): void {
   notifyAll();
 }
 
-export function replaceAddress(href: string): void {
-  if (typeof history === "undefined") return;
-  history.replaceState(history.state, "", href);
-  notifyAll();
-}
-
 export function useAddress(): string {
   return useSyncExternalStore(subscribe, address, serverAddress);
 }

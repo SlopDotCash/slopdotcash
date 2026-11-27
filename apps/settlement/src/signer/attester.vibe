@@ -16,7 +16,6 @@ import { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopedPins, type SignerScope, scop
 import { SolanaAttesterConfig, type SolanaAttesterVars, solanaAttesterConfig } from "./solana.vibe"
 import { attestSolanaMonth } from "./solanaMonthly.vibe"
 
-export { pinsOf }
 
 export interface AttesterEnv extends AttesterVars, SolanaAttesterVars, ScopedPins {
   readonly PAYMENT_NETWORK?: string

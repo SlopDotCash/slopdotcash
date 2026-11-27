@@ -8,7 +8,7 @@ import { call } from "../../platform/api.vibe"
 import { Deployment } from "../../platform/config.vibe"
 import { monthlyCutReads, vaultPaymentReads } from "../../reads/payments.vibe"
 import { type MemberLookup, memberLimitBytes, memberReads, peopleReads, pointsJournalReads, profileReads } from "../../reads/points.vibe"
-import { Registry, type RegistryBoot } from "../../reads/registry.vibe"
+import { Registry } from "../../reads/registry.vibe"
 import { type Resource, Unreadable, resource } from "../../reads/resource.vibe"
 import type { ShownRead } from "../projects/reads.vibe"
 
@@ -135,4 +135,4 @@ export effect function registryBoot() {
   return try (try Registry).load()
 }
 
-export type { Journal, People, Profiles, RegistryBoot }
+export type { Journal, People, Profiles }

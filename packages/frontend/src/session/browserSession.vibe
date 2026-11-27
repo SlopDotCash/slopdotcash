@@ -103,7 +103,7 @@ export const browserSession = Layer.effect(BrowserSession, effect {
     signOut: effect () => {
       try call(pointsSignOut, { body: {} }, { limitBytes: signOutLimitBytes })
       try settled(0, undefined, false)
-      try observe("changed")
+      try session.clear()
     },
     sessionEnded: effect () => {
       try settled(0, undefined, true)

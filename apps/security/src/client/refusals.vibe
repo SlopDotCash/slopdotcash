@@ -470,13 +470,6 @@ export const getSecurityProgramsByIdIntake = {
   },
 } as const
 
-export const getSecurityCases = {
-  ...withUnauthorizedAndInvalidExpectedActorV4,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
 export const postSecurityCases = {
   ...withOriginForbiddenAndInvalidContentLength,
   invalidRequestInvalidMode: { status: 400, error: "invalid_request", message: "Invalid mode", headers: jsonPrivateNoStoreRobotsTag },
@@ -834,10 +827,6 @@ export const postVettingEvidenceByAssessmentByRunByShaFinalize = {
   ...withEvidencePending,
 } as const
 
-export const postOperatorVettingEvidenceByAssessmentByRunByShaDownloadGrant = {
-  ...withOriginForbiddenAndInvalidContentLengthV2,
-} as const
-
 export const getOperatorVettingEvidenceByAssessmentByRunByShaDownload = {
   ...withNotFoundEvidenceRouteNotFound,
   originForbiddenDownloadsRequireAFresh: { status: 403, error: "origin_forbidden", message: "Downloads require a fresh same-origin browser request without ranges", headers: jsonPrivateNoStoreRobotsTag },
@@ -853,14 +842,6 @@ export const getOperatorVettingEvidenceByAssessmentByRunByShaDownload = {
 
 export const postOperatorVettingEvidenceByAssessmentByRunByShaGrant = {
   ...withOriginForbiddenAndInvalidContentLengthV2,
-} as const
-
-export const getOperatorVettingEvidenceByAssessmentByRunByShaBody = {
-  ...withNotFoundEvidenceRouteNotFound,
-  ...withForbiddenTheEvidenceOperatorChanged,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
 } as const
 
 export const getProjectFlagsById = {
@@ -937,10 +918,6 @@ export const postAdminVettingAssessments = {
 } as const
 
 export const getVettingSandbox = {
-  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIs,
-} as const
-
-export const postVettingSandbox = {
   ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIs,
 } as const
 

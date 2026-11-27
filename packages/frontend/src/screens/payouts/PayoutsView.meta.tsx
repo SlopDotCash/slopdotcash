@@ -5,6 +5,15 @@ import type { PayoutsViewProps } from "./PayoutsPage.tsx";
 
 export const meta: ComponentMeta<PayoutsViewProps> = {
   args: { loading: false, signedOut: false, loginHref: "/login?next=%2Fearnings", account: payouts, onRetry: () => undefined },
+  decorator: (story) => (
+    <div
+      onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest("a") !== null) event.preventDefault();
+      }}
+    >
+      {story()}
+    </div>
+  ),
   examples: {
     Loading: { loading: true, account: undefined },
     Empty: { account: noPayouts },
@@ -16,7 +25,11 @@ export const meta: ComponentMeta<PayoutsViewProps> = {
     Default: async () => {
       await expect(screen.getAllByText("Paid").length).toBe(1);
       await expect(["Submitted", "Queued", "Held", "Needs wallet", "Underfunded", "Received"].map((word) => screen.getAllByText(word).length > 0)).toEqual([true, true, true, true, true, true]);
-      await expect(screen.getByRole("link", { name: "Awaiting wallet: add or confirm your Base wallet" }).getAttribute("href")).toBe("/account#wallets");
+      await expect(screen.getByRole("link", { name: /Awaiting wallet: add or confirm your Base wallet/u }).getAttribute("href")).toBe("/account#wallets");
+    },
+    // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
+    Loading: async () => {
+      await expect(screen.getByRole("status", { name: "Checking your payouts" })).toBeTruthy();
     },
     // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
     Empty: async () => {

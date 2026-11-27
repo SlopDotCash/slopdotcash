@@ -93,12 +93,13 @@ export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo
   let previous: Entry | undefined
   let active: Alignment | undefined
   let observer: MutationObserver | undefined
-  let frame = 0
+  let resizer: ResizeObserver | undefined
 
   function settle() {
     observer?.disconnect()
     observer = undefined
-    cancelAnimationFrame(frame)
+    resizer?.disconnect()
+    resizer = undefined
     for (const type of readerInputs) removeEventListener(type, takeOver, true)
   }
 
@@ -148,8 +149,11 @@ export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo
     if (document.body !== null) {
       observer = new MutationObserver(align)
       observer.observe(document.body, { childList: true, subtree: true })
+      if (typeof ResizeObserver !== "undefined") {
+        resizer = new ResizeObserver(align)
+        resizer.observe(document.body)
+      }
     }
-    frame = requestAnimationFrame(align)
     align()
     if (document.fonts !== undefined) void document.fonts.ready.then(align)
   }

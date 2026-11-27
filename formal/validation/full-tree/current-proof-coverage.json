@@ -1,6 +1,30 @@
 {
   "baselineCommit": "9fe3682f10f7ca738b13748eb254886e7e9ba09e",
-  "qualification": "Current proof outcomes joined to canonical generated proof units. Each receipt completed the current obligation count without errors, resource exhaustion, unresolved premises, or unproved obligations. An exact generated transitive meaning plus proof digest, or exact source digests for the complete model import closure plus the local proof, binds each receipt. Earlier receipts remain applicable under those bindings. This inventory records modeled obligations and leaves runtime conformance and external evidence to the applicable acceptance records.",
+  "qualification": "Unit-level receipts below record the verified 14 November 2026 baseline (baselineCommit 9fe3682f: 104 specs, 94 Slop proof-bearing units + 1 scaffold unit, 4,946 proved obligations). Each recorded receipt completed its obligation count without errors, resource exhaustion, unresolved premises, or unproved obligations, bound by transitive generated meaning and proof digests. The active spec tree has since expanded (see currentTree below); full-tree proof refresh for the expanded tree is pending a complete `pnpm check` run.",
+  "currentTree": {
+    "sourceManifestMain": "bd8ab0f67fa344e04e06910ad15257184c6e41a2",
+    "documents": 281,
+    "stories": 446,
+    "formalRules": 1444,
+    "proofBearingSpecs": 269,
+    "navigationOnlySpecs": [
+      "spec/backend/index.md",
+      "spec/contracts/index.md",
+      "spec/contributor/index.md",
+      "spec/fees/index.md",
+      "spec/frontend/index.md",
+      "spec/index.md",
+      "spec/operations/index.md",
+      "spec/points/index.md",
+      "spec/security/index.md",
+      "spec/settlement/index.md",
+      "spec/settlement/recovery.md",
+      "spec/slopbot/index.md"
+    ],
+    "proofLibrarySha256": "87ffbd1ba01287c80ae55008a19318d091c382f4f38af3077d7e3763bb56a2d5",
+    "status": "full-tree-proof-refresh-pending",
+    "refreshCommand": "pnpm check"
+  },
   "specCatalog": {
     "path": "formal/spec-catalog.json",
     "sha256": "b3c4916cb2f2a5ba7a2ed648fedb7a77ebca02f1ab373f8dbea7f1019351f1e8",

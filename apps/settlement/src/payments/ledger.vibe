@@ -11,7 +11,7 @@ import { equalAmounts, legacyFloorFeeAmount, ordinaryFeeAmount } from "../../gen
 import { payoutAmountsAccepted } from "../kernels/fees.ts"
 import { maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { type ObligationRows, type PaidRecord, type Projection, type Reservation, obligationAggregate, paymentTermsOf, payoutOf, project, receiptOf, reservationOf, unreservedSettlement } from "./obligation.vibe"
-import { type EventReference, type FinalizedPaymentEvent, type PaymentDeployment, type VaultAsset, EvidenceRefused, bindingOf, limbs, networkOf, refused, sameAddress, sameEvidence, sameStoredAsset, storedEvidence } from "./terms.vibe"
+import { type EventReference, type FinalizedPaymentEvent, type PaymentDeployment, type VaultAsset, bindingOf, limbs, networkOf, refused, sameAddress, sameEvidence, sameStoredAsset, storedEvidence } from "./terms.vibe"
 import { authorizeBounty, bountyNotices } from "../securityScope/authorization.vibe"
 import { verifyFinalized } from "./verify.vibe"
 
@@ -278,4 +278,3 @@ export effect function reindexHeld(deployment: PaymentDeployment) {
   return outcomes
 }
 
-export { EvidenceRefused }

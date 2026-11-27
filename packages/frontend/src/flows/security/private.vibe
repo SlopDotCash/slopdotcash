@@ -83,13 +83,13 @@ function accessRefused(failure: CallFailure): boolean {
   return failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status)
 }
 
-export effect function privateCall<B, A, X extends Access>(owner: string, route: Route<B, A, X>, input: CallInput<B>, rows: (value: A) => number, ownerOf: (value: A) => string | undefined = () => undefined) {
+export effect function privateCall<B, A, X extends Access>(owner: string, route: Route<B, A, X>, input: CallInput<B>, rows: (value: A) => number, ownerOf: (value: A) => string | undefined = () => undefined, retryOnServerError?: boolean) {
   const browser = try BrowserSession
   const lifetime = try browser.lifetime()
   if (lifetime.actorId !== actorNumber(owner)) return { kind: "closed", message: privateMessages.closed } satisfies Private<A>
   const before = try verified(owner)
   if (before !== undefined) return before
-  const answered = Effect.map(call(route, input, { limitBytes: privateLimitBytes, expectedActor: owner }), (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
+  const answered = Effect.map(call(route, input, { limitBytes: privateLimitBytes, expectedActor: owner, ...(retryOnServerError === undefined ? {} : { retryOnServerError }) }), (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
   if (!answered.ok) {
     const failure = answered.failure
     if (failure._tag === "ActorChanged") {

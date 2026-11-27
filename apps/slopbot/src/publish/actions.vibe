@@ -17,11 +17,6 @@ export function actionStatement(record: ActionRecord, at: string): Statement {
     VALUES (${record.reviewKey}, ${record.repositoryId}, ${record.itemNodeId}, ${record.action}, ${record.detail}, ${at})`
 }
 
-export effect function actionStatements(records: ReadonlyArray<ActionRecord>) {
-  const at = try isoNow()
-  return records.map((record) => actionStatement(record, at))
-}
-
 export effect function recordAction(record: ActionRecord) {
   const at = try isoNow()
   return (try (try D1).run(actionStatement(record, at))) === 1

@@ -13,9 +13,9 @@ import { type EvmCall, bridgeCostWithin, bridgeTermsOf, derivedCall, pinnedRoute
 import { type EvmKey, evmKey, feeWalletEvmMarker } from "./evmKey.ts"
 import type { EvmNetwork } from "../evm/abi.ts"
 import type { EvmIntent, FeeIntent } from "../wallet/intents.ts"
-import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, SignRefused, type Signed, type SolanaPrepared, type SolanaSigned, reservationFacts, signedFacts } from "../wallet/service.vibe"
+import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, SignRefused, type Signed } from "../wallet/service.vibe"
 
-export { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, SignRefused, type Signed, type SolanaPrepared, type SolanaSigned, reservationFacts, signedFacts }
+export { type EvmSigned, FeeWallet, type Prepared }
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"

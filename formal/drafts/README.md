@@ -1,21 +1,20 @@
-# Unfinished specification work
+# Retired specification drafts
 
-These drafts are preserved for the next migration pass. The active Vibestack
-specification tree is under `spec/`. Verify each draft and its current source
-before integrating it into that tree.
+No unfinished drafts remain in `formal/drafts/`. Every draft created during the
+initial specification migration has been integrated into the active Vibestack
+specification tree under `spec/` and its temporary draft files removed:
 
-- [Shared Slopbot source leases](value-group-leases.md) drafts an all-or-none
-  claim across overlapping groups. Proof and replay certification is pending.
-- [Incomplete assessments in the private Inbox](assessment-inbox.md) drafts
-  gap coalescing and current-authority reads. The [partial report](assessment-inbox-partial.json)
-  records 24 generated replays for an earlier draft. Rerun verification
-  against the preserved revision before integration.
-- [Slopbot value history](../../spec/slopbot/valueHistory.md) is already on
-  the branch. Its [partial report](value-history-partial.json) and
-  [Quint witness](value-history-witness.qnt) preserve focused work.
-  The [witness log](value-history-witness.log) records five passing scenarios.
-  Verify the final proof, wire the spec into the index and refresh the catalog.
+- Shared Slopbot source leases (`value-group-leases.md`) →
+  [Slopbot value requests](../../spec/slopbot/valueRequests.md).
+- Incomplete assessments in the private Inbox (`assessment-inbox.md` and
+  `assessment-inbox-partial.json`) →
+  [Slopbot assessment Inbox](../../spec/slopbot/assessmentInbox.md).
+- Slopbot value history (`value-history-partial.json`,
+  `value-history-witness.qnt`, `value-history-witness.log`) →
+  [Slopbot value history](../../spec/slopbot/valueHistory.md).
+- EVM monthly reserve (`monthly-reserve.md`) →
+  [Settlement escrow](../../spec/settlement/escrow.md) and the contract units.
 
 The [source manifest](../source-manifest.json) records the application and
 requirements revisions. The [proof inventory](../validation/full-tree/current-proof-coverage.json)
-applies to its recorded source snapshot.
+tracks recorded full-tree proof coverage and its refresh command.

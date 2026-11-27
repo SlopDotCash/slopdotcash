@@ -16,11 +16,11 @@ import { digest58, jsonText, wideOf, withBytes } from "../solana/bytes.ts"
 import { FeeSolana, addressed, admittedMint, blockhashAnchor, networkFee, walletLamports } from "../solana/client.vibe"
 import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, type SolanaRefused, TOKEN_2022_PROGRAM, blockhashOf, computeBudgetProgram, messageOf, parsedTransaction, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
 import type { FeeIntent, JupiterSwap, SolanaDlnOrder, SolanaIntent } from "../wallet/intents.ts"
-import { FeeWallet, type Prepared, SignRefused, type SolanaReviewed, type SolanaSigned, type SolanaWalletOptions, solanaReservationFacts, solanaSignedFacts } from "../wallet/service.vibe"
+import { FeeWallet, type Prepared, SignRefused, type SolanaReviewed, type SolanaSigned, type SolanaWalletOptions, solanaReservationFacts } from "../wallet/service.vibe"
 import { KeyMismatch } from "./feeWallet.vibe"
 import { type SolanaKey, controlsWallet, feeWalletSolanaMarker, solanaKey } from "./solanaKey.ts"
 
-export { type SolanaReviewed, type SolanaWalletOptions, solanaReservationFacts, solanaSignedFacts }
+export { type SolanaWalletOptions, solanaReservationFacts }
 
 import { errorText } from "../kernels/verified.vibe"
 
