@@ -22,9 +22,9 @@ When a human approval commits a vault reservation, directly or after an
 approved related-party review, the private standard obligation is configured
 for that case's gross amount and reserves the vault in the same step. Its
 target names the case's reporter as the award actor, the case as the
-obligation, this bounty vault and the case's receipt-time asset. Only a
-committed standard 75/25 case holds that obligation, and every hold keeps
-matching its case. A case's revision count never goes below zero, so a
+obligation, this bounty vault and the case's receipt-time asset. Only a committed standard 75/25 case holds that obligation, and every hold keeps
+matching its case. Each root cause holds at most one hold, and a full award
+never binds a vault or direct hold. A case's revision count never goes below zero, so a
 received case always has a positive revision, and a finalized funds snapshot
 was observed at a positive time no later than the clock. The bounty's
 reserved total is exactly what the vault holds in reserve. The vault's free
@@ -47,7 +47,9 @@ terms of the amounts shown; without committed amounts within terms, a shown
 committed amount need not split exactly; without an observed snapshot, a new
 vault hold need not record a positive observation time; and without the paid
 notice and admission rules, a new obligation could start beside an earlier
-paid notice or paid direct legs. Each added rule states what every reachable
+paid notice or paid direct legs; and without one hold per root cause (and full
+awards binding no rail), a duplicate vault hold could survive a finalized
+payout. Each added rule states what every reachable
 state already keeps, and simulation checks it too.
 
 ```quint
@@ -158,7 +160,7 @@ pure def alwaysVaultAwardReserved(s: PrivateAward): bool =
     and caseOf(s, s.vaultCase).terms.split == T::StandardSplit
     and M::equalAmounts(p.gross, caseOf(s, s.vaultCase).grossChosen) and (SC::hasReserve(s.settlement) or p.phase == P::Paid))
 pure def alwaysHoldsKeepCaseRules(s: PrivateAward): bool = B::alwaysHoldsMatchCases(s.bounty) and B::alwaysCasesKeepAwardRules(s.bounty)
-  and B::alwaysReservedIsOpenVaultHolds(s.bounty)
+  and B::alwaysReservedIsOpenVaultHolds(s.bounty) and B::alwaysOneHoldPerRootCause(s.bounty) and B::alwaysFullAwardBindsNoVault(s.bounty)
 pure def alwaysFundsSnapshotObserved(s: PrivateAward): bool = B::alwaysFundsObserved(s.bounty)
 pure def alwaysCaseRevisionsCounted(s: PrivateAward): bool = B::caseIds.every(id => caseOf(s, id).revision >= 0)
 pure def alwaysVaultTargetMatchesAward(s: PrivateAward): bool = s.vaultCase > 0 implies

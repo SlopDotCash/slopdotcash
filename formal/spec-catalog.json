@@ -29360,7 +29360,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "50ad18a81033867428a61175e1c7b5a3f9275851b0f4e442bdd6d6ee2563a74b",
+      "sha256": "a7f10b1b43c742b94c8c1f5fae330a1a775d9b24dd24f7f3b01e85215c730d7d",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -29571,7 +29571,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 572,
+          "line": 581,
           "definitions": [
             "assetValues",
             "mintValues",
@@ -29726,11 +29726,11 @@
         },
         {
           "target": "./monthly.md",
-          "line": 474
+          "line": 475
         },
         {
           "target": "./escrow.md",
-          "line": 475
+          "line": 476
         }
       ]
     },
@@ -30480,7 +30480,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "b8dbbc514e7c12fca5edbf4b78c8b3f1e93132aaf8d82960f120674876e4eeb7",
+      "sha256": "ab19cc107660c984e0b6104c168368f9b8f36b738d85eec820c712e067f545e7",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -30489,11 +30489,11 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority",
-          "line": 203
+          "line": 205
         },
         {
           "heading": "Story: Show exact amounts and notify every party",
-          "line": 294
+          "line": 296
         }
       ],
       "rules": [
@@ -30564,7 +30564,7 @@
         },
         {
           "heading": "Story: Commit a private award with its funds / A finalized vault payout records the obligation paid, settles its hold and notifies the case",
-          "line": 183,
+          "line": 185,
           "definitions": [
             "canUpdateDelivery",
             "updateDelivery",
@@ -30575,7 +30575,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Direct payment actions require a current financial approver",
-          "line": 205,
+          "line": 207,
           "definitions": [
             "financialNow",
             "directCaseOf",
@@ -30598,7 +30598,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Each recorded direct leg and the paid award notify the case",
-          "line": 269,
+          "line": 271,
           "definitions": [
             "withDirectLegs",
             "legKeysValid",
@@ -30610,7 +30610,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Exact amounts are shown before authorization",
-          "line": 296,
+          "line": 298,
           "definitions": [
             "amountsFor",
             "amountsShownFor",
@@ -30626,7 +30626,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Award and payment progress notify the reporter, current maintainers and financial approvers",
-          "line": 344,
+          "line": 346,
           "definitions": [
             "AwardNotice",
             "noticeCode",
@@ -30643,7 +30643,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Simulation samples",
-          "line": 392,
+          "line": 394,
           "definitions": [
             "awardTerms",
             "idValues",
