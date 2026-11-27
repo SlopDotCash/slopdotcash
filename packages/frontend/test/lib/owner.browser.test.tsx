@@ -6,7 +6,7 @@ import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions";
 import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
-import { toAmount } from "@repo/settlement/kernels/amounts";
+import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
@@ -1102,9 +1102,10 @@ describe('Let anyone fund a project from its public page and see who funded (spe
   it("free funds of 253 USDC against 250 a month cover one month, less than 250 covers less than one, and a vault with no free balance on record shows nothing", () => {
     const now = periodContaining(nowSeconds());
     const covered = (freeBalance: string | null) => publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance }], () => true, now);
-    expect([covered("253000000"), covered("249999999"), covered(null), publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now)]).toEqual([
-      { tag: "Covers", months: toAmount(1n) },
-      { tag: "Covers", months: toAmount(0n) },
+    const coverage = [covered("253000000"), covered("249999999"), covered(null), publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now)];
+    expect(coverage.map((result) => result.tag === "Covers" ? { ...result, months: fromAmount(result.months) } : result)).toEqual([
+      { tag: "Covers", months: 1n },
+      { tag: "Covers", months: 0n },
       { tag: "NoCoverage" },
       { tag: "NoCoverage" },
     ]);
@@ -1202,7 +1203,7 @@ function replying(replies: Array<{ readonly status?: number; readonly body: unkn
   const asked: Asked[] = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    const text = input instanceof Request ? await input.clone().text() : typeof init?.body === "string" ? init.body : "";
+    const text = await (input instanceof Request ? input.clone() : new Response(init?.body)).text();
     asked.push({ method: (input instanceof Request ? input.method : init?.method) ?? "GET", path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
     const reply = replies.shift() ?? { status: 500, body: { error: "unexpected", message: "Unexpected" } };
     return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
@@ -1234,9 +1235,9 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       const plan = { kind: "evmRelease" as const, planId: ready.planId, call: { kind: "evmCall" as const, from: "0x0000000000000000000000000000000000000b0b", chainId: quantity(BigInt(chainId)), to: vault, data: "0x01", value: "0x0" } };
       yield* monthly.submit("Release", (beforePrompt) => Effect.as(beforePrompt(plan), hash("e")));
       const pending = yield* checkSavedRelease();
-      const kept = sessionStorage.length > 0;
+      const whilePending = [pending.status, (yield* monthly.machine.get()).release.phase, sessionStorage.length > 0];
       const finalized = yield* checkSavedRelease();
-      return { held, approved: approved.kind, pending: [pending.status, (yield* monthly.machine.get()).release.phase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
+      return { held, approved: approved.kind, pending: whilePending, finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
     }));
     expect({ ...result, checks: asked.slice(3).map((entry) => entry.body) }).toEqual({
       held: { kind: "held", message: "Total correct. Nothing to release." },
