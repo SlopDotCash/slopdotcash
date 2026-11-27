@@ -138,9 +138,11 @@ export function canonicalReceipt(receipt: WalletReceipt, hash: string, canonical
 export function canonicalReceiptAtIndex(receipt: WalletReceipt, hash: string, block: unknown): boolean {
   const index = receipt.transactionIndex;
   const transactions = record(block)?.transactions;
-  if (index === undefined || index > BigInt(Number.MAX_SAFE_INTEGER) || !Array.isArray(transactions) || blockNumberOf(block) !== receipt.blockNumber) return false;
+  const canonicalHash = blockHashOf(block);
+  if (canonicalHash === undefined || !hashPattern.test(canonicalHash)
+    || index === undefined || index > BigInt(Number.MAX_SAFE_INTEGER) || !Array.isArray(transactions) || blockNumberOf(block) !== receipt.blockNumber) return false;
   const at: unknown = transactions[Number(index)];
-  return typeof at === "string" && at.toLowerCase() === hash && canonicalReceipt(receipt, hash, blockHashOf(block));
+  return typeof at === "string" && at.toLowerCase() === hash && canonicalReceipt(receipt, hash, canonicalHash);
 }
 
 /** @throws {never} */
@@ -195,7 +197,7 @@ export function batchReport(reported: unknown, scope?: BatchReceiptScope): Batch
     const chain = typeof reply.chainId === "string" && /^0x[0-9a-fA-F]{1,64}$/u.test(reply.chainId) ? BigInt(reply.chainId) : undefined;
     if (modern && (reply.version !== "2.0.0" || reply.id !== scope.reference || chain !== scope.chainId
       || (kind === "landed" && reply.atomic !== true))) return { kind: "unrecognized" };
-    if (kind === "notSent" && Array.isArray(receipts) && receipts.length > 0) return { kind: "unrecognized" };
+    if (kind === "notSent" && "receipts" in reply && (!Array.isArray(receipts) || receipts.length > 0)) return { kind: "unrecognized" };
     if (Array.isArray(receipts) && receipts.length > 1) {
       if (!modern || receipts.length > scope.maxReceipts) return { kind: "unrecognized" };
       if (kind !== "landed") return { kind };

@@ -122,7 +122,8 @@ type Pledges = Map<number, { amount: bigint; open: boolean }>;
 type LockBatchReport =
   | "multiple" | "sameBlock" | "reversedIndex" | "stale" | "conflictingHead" | "duplicate" | "wrongMembership"
   | "wrongChain" | "wrongReference" | "wrongDeposit" | "wrongPledge"
-  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton" | "notSentWithReceipt";
+  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton"
+  | "notSentWithReceipt" | "notSentWithMalformedReceipt" | "malformedPledgeBlock";
 
 const monthAfter = (period: number, months: number) => {
   const index = Math.floor(period / 100) * 12 + (period % 100) - 1 + months;
@@ -135,9 +136,12 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
   const seen: string[] = [];
   let finalized = options.lockBatch === "conflictingHead" ? 10n : 0n;
   let lockBatch: { readonly id: string; readonly entries: ReadonlyArray<Mined> } | undefined;
+  const notSentWithReceipt = options.lockBatch === "notSentWithReceipt" || options.lockBatch === "notSentWithMalformedReceipt";
   const singleton = options.lockBatch === "legacySingleton" || options.lockBatch === "modernSingleton"
-    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton" || options.lockBatch === "notSentWithReceipt";
-  const blockHash = (block: bigint) => hash(block.toString(16).slice(-1));
+    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton" || notSentWithReceipt;
+  const blockHash = (block: bigint) => options.lockBatch === "malformedPledgeBlock"
+    && mined.some((entry) => entry.block === block && entry.input.startsWith(selector("pledgeMonths")))
+    ? "0x0" : hash(block.toString(16).slice(-1));
   const vaultOf = (to: string) => [nativeVault, tokenVault].find((vault) => vault.vault === to.toLowerCase());
   const read = (to: string, data: string): string => {
     const vault = vaultOf(to);
@@ -245,20 +249,21 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
         if (options.lockBatch === "duplicate" && secondEntry !== undefined) entries = [secondEntry, secondEntry, ...remaining];
         if (options.lockBatch === "reversedIndex" && firstEntry !== undefined && secondEntry !== undefined) entries = [secondEntry, firstEntry, ...remaining];
         const reportChain = options.lockBatch === "sameBlock" ? `0x0${chainId.toString(16)}` : quantity(BigInt(chainId));
+        const receipts = entries.map((entry) => ({
+          transactionHash: entry.hash,
+          blockNumber: quantity(entry.block),
+          blockHash: blockHash(entry.block),
+          status: options.failReceipts === true ? "0x0" : "0x1",
+          gasUsed: "0x5208",
+          logs: options.failReceipts === true ? [] : entry.logs,
+        }));
         return {
           version: "2.0.0",
           id: options.lockBatch === "wrongReference" ? `0x${"f".repeat(128)}` : lockBatch.id,
           chainId: options.lockBatch === "wrongChain" || options.lockBatch === "wrongSingletonChain" ? "0x1" : reportChain,
-          status: options.lockBatch === "notSentWithReceipt" ? 400 : options.failReceipts === true ? 500 : 200,
+          status: notSentWithReceipt ? 400 : options.failReceipts === true ? 500 : 200,
           atomic: options.lockBatch !== "nonAtomicSingleton",
-          receipts: entries.map((entry) => ({
-            transactionHash: entry.hash,
-            blockNumber: quantity(entry.block),
-            blockHash: blockHash(entry.block),
-            status: options.failReceipts === true ? "0x0" : "0x1",
-            gasUsed: "0x5208",
-            logs: options.failReceipts === true ? [] : entry.logs,
-          })),
+          receipts: options.lockBatch === "notSentWithMalformedReceipt" ? receipts[0] : receipts,
         };
       }
       if (method === "eth_getTransactionReceipt") {
@@ -892,7 +897,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
 
   it.each([
     "conflictingHead", "duplicate", "reversedIndex", "stale", "wrongChain", "wrongReference", "wrongDeposit", "wrongPledge", "wrongMembership",
-    "wrongSingletonChain", "nonAtomicSingleton", "notSentWithReceipt",
+    "wrongSingletonChain", "nonAtomicSingleton", "notSentWithReceipt", "notSentWithMalformedReceipt", "malformedPledgeBlock",
   ] as const)("a lock batch with %s evidence stays pending", async (shape) => {
     expect(await batched(shape)).toMatchObject({ phase: "LockChecking", reloads: 0, batches: 1, transactions: 0 });
   });
