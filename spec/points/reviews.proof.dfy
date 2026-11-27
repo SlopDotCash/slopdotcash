@@ -5,6 +5,7 @@ lemma recordReview_ensures(r: Reviews, evidence: ReviewEvidence)
   ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysUsefulBands(recordReview(r, evidence)))
   ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysDistinctReviewers(recordReview(r, evidence)))
   ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysCreditOnlyAfterMerge(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysCorrectionsOnlyAfterJournal(recordReview(r, evidence)))
   ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysPoolBound(recordReview(r, evidence)))
   ensures (inv(r) ==> canRecordReview(r, evidence) ==> stepMergeAndAuthorFixed(r, recordReview(r, evidence)))
 {

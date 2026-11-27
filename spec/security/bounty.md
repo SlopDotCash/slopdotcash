@@ -148,7 +148,9 @@ pure def settleVaultHold(b: Bounty, id: int, receipt: VaultPayout): Bounty =
 pure def openVaultGross(b: Bounty): M::Amount = b.holds.foldl(M::zero, (total, h) =>
   if (h.kind == VaultHold and h.settledReceipt == 0) M::addAmounts(total, caseOf(b, h.caseId).grossChosen) else total)
 pure def alwaysReservedIsOpenVaultHolds(b: Bounty): bool = M::equalAmounts(b.reserved, openVaultGross(b))
-  and b.holds.every(h => h.settledReceipt == 0 or h.kind == VaultHold)
+  and M::validAmount(b.reserved)
+  and b.holds.every(h => (h.settledReceipt == 0 or h.kind == VaultHold)
+    and (h.kind == VaultHold implies M::validAmount(caseOf(b, h.caseId).grossChosen) and M::positiveAmount(caseOf(b, h.caseId).grossChosen)))
 pure def stepVaultHoldsKept(before: Bounty, after: Bounty): bool = before.holds.every(h => h.kind != VaultHold
   or after.holds.some(g => g.caseId == h.caseId and g.kind == VaultHold and g.rootCause == h.rootCause and (h.settledReceipt == 0 or g == h)))
 pure def sometimesVaultHoldSettled(b: Bounty): bool = b.holds.some(h => h.settledReceipt > 0)
@@ -210,9 +212,10 @@ pure def alwaysHoldsMatchCases(b: Bounty): bool = b.holds.every(h => holdMatches
 pure def alwaysCasesKeepAwardRules(b: Bounty): bool = caseIds.every(id => C::alwaysProposalCommitsNothing(caseOf(b, id))
   and C::alwaysCommitmentMatchesAward(caseOf(b, id)) and C::alwaysFullAwardHeld(caseOf(b, id)) and C::alwaysStandardAwardRail(caseOf(b, id))
   and C::alwaysUnpaidHasNoAward(caseOf(b, id)) and C::alwaysVerifiedReceiptValid(caseOf(b, id))
-  and C::alwaysConfirmedHasRootCause(caseOf(b, id)) and C::alwaysAppealState(caseOf(b, id)))
+  and C::alwaysUnreceivedBlank(caseOf(b, id)) and C::alwaysConfirmedHasRootCause(caseOf(b, id)) and C::alwaysAppealState(caseOf(b, id)) and C::alwaysAppealSource(caseOf(b, id)) and C::alwaysCommittedFindingStands(caseOf(b, id)))
 pure def alwaysOneHoldPerRootCause(b: Bounty): bool =
-  b.holds.every(h => b.holds.every(g => (g.rootCause == h.rootCause or g.caseId == h.caseId) implies g == h))
+  b.holds.every(h => b.holds.every(g => (g.rootCause == h.rootCause or g.caseId == h.caseId) implies g == h)
+    and b.holds.select(g => g.caseId == h.caseId).length() == 1)
 pure def alwaysFullAwardBindsNoVault(b: Bounty): bool = b.holds.every(h => h.kind == VaultHold or h.kind == DirectHold implies
   caseOf(b, h.caseId).terms.split == T::StandardSplit)
 pure def stepHoldsNeedClearance(before: Bounty, after: Bounty): bool = after.holds.every(h => before.holds.includes(h)

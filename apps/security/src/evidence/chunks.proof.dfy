@@ -1,17 +1,22 @@
 // spec/security/evidence.md, "References, permanent admission and pending uploads are separate"
 lemma partCount_ensures(size: int, width: int)
-  requires ((size > 0) && (width > 0))
+  requires (size > 0)
+  requires (width > 0)
   ensures (partCount(size, width) > 0)
-  ensures ((((partCount(size, width) - 1) * width) < size) && (size <= (partCount(size, width) * width)))
+  ensures (((partCount(size, width) - 1) * width) < size)
+  ensures (size <= (partCount(size, width) * width))
 {
   assert JSTruncDiv((size - 1), width) == (size - 1) / width;
   assert size - 1 == ((size - 1) / width) * width + (size - 1) % width;
 }
 
 lemma partSize_ensures(size: int, width: int, index: int)
-  requires ((size > 0) && (width > 0))
-  requires ((index >= 0) && (index < partCount(size, width)))
-  ensures ((partSize(size, width, index) > 0) && (partSize(size, width, index) <= width))
+  requires (size > 0)
+  requires (width > 0)
+  requires (index >= 0)
+  requires (index < partCount(size, width))
+  ensures (partSize(size, width, index) > 0)
+  ensures (partSize(size, width, index) <= width)
   ensures (((index * width) + partSize(size, width, index)) <= size)
   ensures ((index < (partCount(size, width) - 1)) ==> (partSize(size, width, index) == width))
   ensures ((index == (partCount(size, width) - 1)) ==> (((index * width) + partSize(size, width, index)) == size))

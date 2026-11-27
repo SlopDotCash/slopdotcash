@@ -3,18 +3,18 @@
 lemma slopPerStableScaled_ensures(sqrtPriceX96: int)
   requires (sqrtPriceX96 >= 0)
   ensures (slopPerStableScaled(sqrtPriceX96) >= 0)
-  ensures ((slopPerStableScaled(sqrtPriceX96) * 6277101735386680763835789423207666416102355444464034512896) <= ((sqrtPriceX96 * sqrtPriceX96) * 1000000))
-  ensures (((sqrtPriceX96 * sqrtPriceX96) * 1000000) < ((slopPerStableScaled(sqrtPriceX96) + 1) * 6277101735386680763835789423207666416102355444464034512896))
+  ensures ((slopPerStableScaled(sqrtPriceX96) * Q192) <= ((sqrtPriceX96 * sqrtPriceX96) * 1000000))
+  ensures (((sqrtPriceX96 * sqrtPriceX96) * 1000000) < ((slopPerStableScaled(sqrtPriceX96) + 1) * Q192))
 {
   var square := sqrtPriceX96 * sqrtPriceX96;
   assert square >= 0;
   var numerator := square * 1000000;
   assert numerator >= 0;
-  DivisionBounds(numerator, 6277101735386680763835789423207666416102355444464034512896);
-  var quotient := numerator / 6277101735386680763835789423207666416102355444464034512896;
-  var remainder := numerator % 6277101735386680763835789423207666416102355444464034512896;
-  assert 0 <= remainder < 6277101735386680763835789423207666416102355444464034512896;
-  assert numerator == quotient * 6277101735386680763835789423207666416102355444464034512896 + remainder;
+  DivisionBounds(numerator, Q192);
+  var quotient := numerator / Q192;
+  var remainder := numerator % Q192;
+  assert 0 <= remainder < Q192;
+  assert numerator == quotient * Q192 + remainder;
   assert slopPerStableScaled(sqrtPriceX96) == quotient;
 }
 

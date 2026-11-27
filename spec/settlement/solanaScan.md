@@ -61,8 +61,10 @@ atomically with page insert and progress, including for an empty result.
 ```quint
 type PageCoverage = FullPage | ShortPage | UnavailablePage
 pure val tenSignatures = List("f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9")
-pure val hundredSignatures = tenSignatures.foldl(List(), (acc, ignored) => acc.concat(tenSignatures))
-pure val fullPageSample = tenSignatures.foldl(List(), (acc, ignored) => acc.concat(hundredSignatures))
+pure def repeatTen(items: List[str]): List[str] =
+  tenSignatures.foldl(List(), (acc, ignored) => acc.concat(items))
+pure val hundredSignatures = repeatTen(tenSignatures)
+pure val fullPageSample = repeatTen(hundredSignatures)
 pure val coverageValues = Set(FullPage, ShortPage, UnavailablePage)
 pure val oldestFirstValues = Set(List(), List("a"), List("b", "c")).union(Set(fullPageSample))
 pure val generationValues = Set(1, 2, 3)

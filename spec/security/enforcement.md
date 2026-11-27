@@ -219,6 +219,7 @@ pure def alwaysLatestIdsRequested(e: Enforcement): bool =
   e.repositories.every(r => latestOf(e, r).state == NotAssessed or
     (e.assessmentIds.contains(latestOf(e, r).id) and latestOf(e, r).repository == r))
 pure def alwaysSequencedRequests(e: Enforcement): bool =
+  e.clockDay >= 0 and e.epoch >= 0 and e.revision >= 0 and
   e.repositories.every(r => latestOf(e, r).requestedAt <= e.clockDay and latestOf(e, r).requestEpoch <= e.epoch and
     latestOf(e, r).revision <= e.revision and latestOf(e, r).identity <= identityOf(e, r))
 ```
@@ -290,7 +291,9 @@ pure val scanOutcomeValues = Set(
   { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::NoConfirmation, reused: false, retained: true },
   { assessment: 1, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true })
 pure def alwaysMaliceBanned(e: Enforcement): bool =
-  e.repositories.some(r => latestOf(e, r).state == AMalicious) implies (e.restriction == ServiceBan or e.restriction == ModeratorBan)
+  (e.repositories.some(r => latestOf(e, r).state == AMalicious) implies (e.restriction == ServiceBan or e.restriction == ModeratorBan)) and
+  e.repositories.every(r => latestOf(e, r).state == AMalicious implies latestOf(e, r).requestEpoch < e.epoch) and
+  e.recorded.every(a => e.repositories.includes(a.repository) and a.requestEpoch <= latestOf(e, a.repository).requestEpoch)
 pure def alwaysServiceBanFindings(e: Enforcement): bool = e.restriction == ServiceBan implies e.findings.size() > 0
 ```
 
@@ -337,7 +340,8 @@ composition refuses every owner append while it is restricted.
 pure def canAppendRepository(e: Enforcement, repository: int): bool =
   repository > 0 and not(e.repositories.includes(repository))
 pure def appendRepository(e: Enforcement, repository: int): Enforcement =
-  { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed) }
+  { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed),
+    identities: e.identities.put(repository, 1) }
 pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool =
   not(e.latest.keys().contains(repository)) implies
     (latestOf(e, repository).state == NotAssessed and
@@ -401,7 +405,7 @@ type StewardCheck = { actor: int, repository: int, access: Access }
 type GrantRequest = { id: int, repository: int, revision: int, manifestDigest: int, steward: int,
   check: StewardCheck, decision: int, reason: int, confirmed: bool }
 pure def canGrantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): bool =
-  e.administrators.contains(by) and by != e.steward and by != e.creator and fenced(e, fence) and e.restriction == Clear and
+  e.administrators.contains(by) and by != e.steward and by != e.creator and e.revision > 0 and fenced(e, fence) and e.restriction == Clear and
   e.repositories.includes(request.repository) and request.id > 0 and not(e.grants.some(g => g.id == request.id)) and
   not(e.exempt.contains(request.repository)) and request.revision == e.revision and request.steward == e.steward and
   (request.check.actor == e.steward or request.check.actor == e.creator) and request.check.repository == request.repository and
@@ -425,7 +429,7 @@ pure def alwaysExemptionGranted(e: Enforcement): bool =
   e.exempt.forall(r => e.repositories.includes(r) and grantOf(e, r).id > 0 and grantOf(e, r).repository == r and
     grantOf(e, r).steward > 0)
 pure def alwaysGrantsAudited(e: Enforcement): bool =
-  e.grants.every(g => g.id > 0 and e.administrators.contains(g.approver) and g.manifestDigest > 0 and g.decision > 0 and
+  e.grants.every(g => g.id > 0 and e.repositories.includes(g.repository) and e.administrators.contains(g.approver) and g.manifestDigest > 0 and g.decision > 0 and
     g.reason > 0 and g.at <= e.clockDay and
     g.identity <= identityOf(e, g.repository))
 ```

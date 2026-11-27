@@ -124,7 +124,8 @@ pure def projectDecision(a: Access, enforcement: int): Enforcement =
 pure def released(a: Access, b: Ban): bool = a.releases.some(r => r.enforcement == b.enforcement and r.target == b.target)
 pure def banned(a: Access, actor: int): bool = a.bans.some(b => b.target == actor and not(released(a, b)))
 pure def alwaysBansDecidedOnConfirmedMalice(a: Access): bool = a.bans.every(b =>
-  projectDecision(a, b.enforcement).project == b.project and projectDecision(a, b.enforcement).decidedBy == b.decidedBy
+  b.enforcement > 0 and projectDecision(a, b.enforcement).id == b.enforcement
+    and projectDecision(a, b.enforcement).project == b.project and projectDecision(a, b.enforcement).decidedBy == b.decidedBy
     and isModerator(a, b.decidedBy) and b.target != b.decidedBy and b.target > 0
     and a.bans.select(o => o.enforcement == b.enforcement and o.target == b.target).length() == 1)
 pure def stepBanRecordsPermanent(before: Access, after: Access): bool =
@@ -246,7 +247,7 @@ pure def denyAppeal(a: Access, by: int, project: int, decision: int, projectRequ
   { ...a, decisions: a.decisions.append(decision),
     appeals: a.appeals.listMap(p => if (p.status == AppealOpen and p.project == project) { ...p, status: AppealDenied, decidedBy: by } else p) }
 pure def appealAccess(a: Access, actor: int): bool = a.bans.some(b => b.target == actor)
-pure def alwaysAppealsDecidedByModerators(a: Access): bool = a.lastAppeal >= 0 and a.appeals.every(p =>
+pure def alwaysAppealsDecidedByModerators(a: Access): bool = a.lastAppeal >= 0 and not(a.moderators.contains(0)) and a.appeals.every(p =>
   p.id > 0 and p.id <= a.lastAppeal and p.project > 0 and a.bans.some(b => b.project == p.project and b.target == p.target)
     and (p.status == AppealOpen iff p.decidedBy == 0)
     and (p.status == AppealGranted implies a.releases.some(r => r.target == p.target and r.decidedBy == p.decidedBy

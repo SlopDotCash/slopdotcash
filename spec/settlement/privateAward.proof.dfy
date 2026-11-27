@@ -120,6 +120,7 @@ lemma observeRoute_ensures(s: PrivateAward, route: security__bounty_RouteObserva
   ensures (inv(s) ==> canObserveRoute(s, route) ==> stepAuthorizationFollowsDisplay(s, "observeRoute", observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> stepNoticesPermanent(s, observeRoute(s, route)))
 {
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
   if inv(s) && canObserveRoute(s, route) {
     security__bounty_observeRoute_ensures(s.bounty, route);
   }
@@ -149,15 +150,56 @@ lemma receive_ensures(s: PrivateAward, id: int, source: security__cases_ReceiptS
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> stepAuthorizationFollowsDisplay(s, "receive", receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> stepNoticesPermanent(s, receive(s, id, source, terms, reportVersion)))
 {
+  hide *;
   if inv(s) && canReceive(s, id, source, terms, reportVersion) {
-    security__bounty_receive_ensures(s.bounty, id, source, terms, reportVersion);
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
+    ReceivePart1(s, id, source, terms, reportVersion);
+    ReceivePart2(s, id, source, terms, reportVersion);
   }
+}
+
+lemma ReceivePart1(s: PrivateAward, id: int, source: security__cases_ReceiptSource, terms: security__terms_ReceiptTerms, reportVersion: int)
+  requires inv(s) && canReceive(s, id, source, terms, reportVersion)
+  ensures alwaysHoldsKeepCaseRules(receive(s, id, source, terms, reportVersion))
+  ensures alwaysFundsSnapshotObserved(receive(s, id, source, terms, reportVersion))
+  ensures alwaysBountyReserveIsVaultReserve(receive(s, id, source, terms, reportVersion))
+  ensures alwaysBountyCoverIsVaultFree(receive(s, id, source, terms, reportVersion))
+  ensures alwaysCoverAmountsValid(receive(s, id, source, terms, reportVersion))
+  ensures alwaysVaultAwardReserved(receive(s, id, source, terms, reportVersion))
+  ensures alwaysCaseRevisionsCounted(receive(s, id, source, terms, reportVersion))
+  ensures alwaysVaultTargetMatchesAward(receive(s, id, source, terms, reportVersion))
+  ensures alwaysNothingAuthorizedBeforeAdmission(receive(s, id, source, terms, reportVersion))
+  ensures alwaysDirectJournalBound(receive(s, id, source, terms, reportVersion))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  security__bounty_receive_ensures(s.bounty, id, source, terms, reportVersion);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma ReceivePart2(s: PrivateAward, id: int, source: security__cases_ReceiptSource, terms: security__terms_ReceiptTerms, reportVersion: int)
+  requires inv(s) && canReceive(s, id, source, terms, reportVersion)
+  ensures alwaysShownAmountsExact(receive(s, id, source, terms, reportVersion))
+  ensures alwaysCommittedWithinTerms(receive(s, id, source, terms, reportVersion))
+  ensures alwaysShownCaseReceived(receive(s, id, source, terms, reportVersion))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(receive(s, id, source, terms, reportVersion))
+  ensures alwaysCommitmentNotified(receive(s, id, source, terms, reportVersion))
+  ensures alwaysPaidNoticeOnlyWhenPaid(receive(s, id, source, terms, reportVersion))
+  ensures alwaysPaidNotified(receive(s, id, source, terms, reportVersion))
+  ensures stepVaultReservationNeedsCommitment(s, "receive", receive(s, id, source, terms, reportVersion))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "receive", receive(s, id, source, terms, reportVersion))
+  ensures stepAuthorizationFollowsDisplay(s, "receive", receive(s, id, source, terms, reportVersion))
+  ensures stepNoticesPermanent(s, receive(s, id, source, terms, reportVersion))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 lemma claim_ensures(s: PrivateAward, id: int, by_: int)
@@ -329,15 +371,56 @@ lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> stepAuthorizationFollowsDisplay(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> stepNoticesPermanent(s, rejectLink(s, id, by_, checkedEpoch)))
 {
+  hide *;
   if inv(s) && canRejectLink(s, id, by_, checkedEpoch) {
-    security__bounty_rejectLink_ensures(s.bounty, id, by_, checkedEpoch);
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
+    RejectLinkPart1(s, id, by_, checkedEpoch);
+    RejectLinkPart2(s, id, by_, checkedEpoch);
   }
+}
+
+lemma RejectLinkPart1(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
+  requires inv(s) && canRejectLink(s, id, by_, checkedEpoch)
+  ensures alwaysHoldsKeepCaseRules(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysFundsSnapshotObserved(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysBountyReserveIsVaultReserve(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysBountyCoverIsVaultFree(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysCoverAmountsValid(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysVaultAwardReserved(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysCaseRevisionsCounted(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysVaultTargetMatchesAward(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysNothingAuthorizedBeforeAdmission(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysDirectJournalBound(rejectLink(s, id, by_, checkedEpoch))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  security__bounty_rejectLink_ensures(s.bounty, id, by_, checkedEpoch);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma RejectLinkPart2(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
+  requires inv(s) && canRejectLink(s, id, by_, checkedEpoch)
+  ensures alwaysShownAmountsExact(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysCommittedWithinTerms(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysShownCaseReceived(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysCommitmentNotified(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysPaidNoticeOnlyWhenPaid(rejectLink(s, id, by_, checkedEpoch))
+  ensures alwaysPaidNotified(rejectLink(s, id, by_, checkedEpoch))
+  ensures stepVaultReservationNeedsCommitment(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch))
+  ensures stepAuthorizationFollowsDisplay(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch))
+  ensures stepNoticesPermanent(s, rejectLink(s, id, by_, checkedEpoch))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 lemma recordAttested_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms, confirmed: bool)
@@ -510,12 +593,51 @@ lemma observeAuthority_ensures(s: PrivateAward, snapshot: security__cases_Author
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> stepAuthorizationFollowsDisplay(s, "observeAuthority", observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> stepNoticesPermanent(s, observeAuthority(s, snapshot)))
 {
+  hide *;
   if inv(s) && canObserveAuthority(s, snapshot) {
-    security__bounty_observeAuthority_ensures(s.bounty, snapshot);
-    assert 1 in security__bounty_caseIds && 2 in security__bounty_caseIds;
-    assert security__cases_canObserveAuthority(s.bounty.first, snapshot) && security__cases_canObserveAuthority(s.bounty.second, snapshot);
-    assert directCaseOf(s).authority.epoch < snapshot.epoch;
+    ObserveAuthorityPart1(s, snapshot);
+    ObserveAuthorityPart2(s, snapshot);
   }
+}
+
+lemma ObserveAuthorityPart1(s: PrivateAward, snapshot: security__cases_Authority)
+  requires inv(s) && canObserveAuthority(s, snapshot)
+  ensures alwaysHoldsKeepCaseRules(observeAuthority(s, snapshot))
+  ensures alwaysFundsSnapshotObserved(observeAuthority(s, snapshot))
+  ensures alwaysBountyReserveIsVaultReserve(observeAuthority(s, snapshot))
+  ensures alwaysBountyCoverIsVaultFree(observeAuthority(s, snapshot))
+  ensures alwaysCoverAmountsValid(observeAuthority(s, snapshot))
+  ensures alwaysVaultAwardReserved(observeAuthority(s, snapshot))
+  ensures alwaysCaseRevisionsCounted(observeAuthority(s, snapshot))
+  ensures alwaysVaultTargetMatchesAward(observeAuthority(s, snapshot))
+  ensures alwaysNothingAuthorizedBeforeAdmission(observeAuthority(s, snapshot))
+  ensures alwaysDirectJournalBound(observeAuthority(s, snapshot))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  security__bounty_observeAuthority_ensures(s.bounty, snapshot);
+  assert 1 in security__bounty_caseIds && 2 in security__bounty_caseIds;
+  assert security__cases_canObserveAuthority(s.bounty.first, snapshot) && security__cases_canObserveAuthority(s.bounty.second, snapshot);
+  assert directCaseOf(s).authority.epoch < snapshot.epoch;
+}
+
+lemma ObserveAuthorityPart2(s: PrivateAward, snapshot: security__cases_Authority)
+  requires inv(s) && canObserveAuthority(s, snapshot)
+  ensures alwaysShownAmountsExact(observeAuthority(s, snapshot))
+  ensures alwaysCommittedWithinTerms(observeAuthority(s, snapshot))
+  ensures alwaysShownCaseReceived(observeAuthority(s, snapshot))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(observeAuthority(s, snapshot))
+  ensures alwaysCommitmentNotified(observeAuthority(s, snapshot))
+  ensures alwaysPaidNoticeOnlyWhenPaid(observeAuthority(s, snapshot))
+  ensures alwaysPaidNotified(observeAuthority(s, snapshot))
+  ensures stepVaultReservationNeedsCommitment(s, "observeAuthority", observeAuthority(s, snapshot))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "observeAuthority", observeAuthority(s, snapshot))
+  ensures stepAuthorizationFollowsDisplay(s, "observeAuthority", observeAuthority(s, snapshot))
+  ensures stepNoticesPermanent(s, observeAuthority(s, snapshot))
+{
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds;
+  assert 1 in security__bounty_caseIds && 2 in security__bounty_caseIds;
+  assert security__cases_canObserveAuthority(s.bounty.first, snapshot) && security__cases_canObserveAuthority(s.bounty.second, snapshot);
+  assert directCaseOf(s).authority.epoch < snapshot.epoch;
 }
 
 // A finding is decided only on an open receipt, which has neither a commitment nor a pending proposal.
@@ -618,6 +740,14 @@ lemma DecideAwardPart1b(s: PrivateAward, id: int, by_: int, checkedEpoch: int, a
   requires inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount)
   ensures alwaysVaultAwardReserved(decideAward(s, id, by_, checkedEpoch, amount))
 {
+  hide security__bounty_alwaysOneHoldPerRootCause, security__bounty_alwaysReservedIsOpenVaultHolds,
+    security__bounty_alwaysCasesKeepAwardRules, security__bounty_alwaysFullAwardBindsNoVault,
+    security__bounty_alwaysFundsObserved, alwaysShownAmountsExact, alwaysCommittedWithinTerms,
+    alwaysShownCaseReceived, alwaysAwardNoticesArePrivateCaseNotices, alwaysCommitmentNotified,
+    alwaysPaidNoticeOnlyWhenPaid, alwaysPaidNotified, alwaysDirectJournalBound,
+    alwaysNothingAuthorizedBeforeAdmission, alwaysBountyReserveIsVaultReserve,
+    alwaysBountyCoverIsVaultFree, alwaysCoverAmountsValid, alwaysCaseRevisionsCounted,
+    alwaysVaultTargetMatchesAward;
   var b := s.bounty;
   var c := caseOf(s, id);
   var clearance := security__bounty_clearanceFor(b, id, amount);
@@ -1612,41 +1742,6 @@ lemma HoldlessCase(b: security__bounty_Bounty, id: int)
   }
 }
 
-// Replacing a case that holds nothing by one that is still uncommitted and has no pending proposal keeps the bounty's case rules.
-lemma PutHoldlessCaseKeepsRules(b: security__bounty_Bounty, id: int, after: security__cases_PrivateCase)
-  requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b) && security__bounty_alwaysReservedIsOpenVaultHolds(b) && id in security__bounty_caseIds
-  requires !security__cases_committed(security__bounty_caseOf(b, id)) && !security__bounty_caseOf(b, id).relatedReview.ReviewPending?
-  requires !security__cases_committed(after) && !after.relatedReview.ReviewPending?
-  requires security__cases_alwaysProposalCommitsNothing(after) && security__cases_alwaysCommitmentMatchesAward(after)
-    && security__cases_alwaysFullAwardHeld(after) && security__cases_alwaysStandardAwardRail(after)
-    && security__cases_alwaysUnpaidHasNoAward(after) && security__cases_alwaysVerifiedReceiptValid(after)
-    && security__cases_alwaysConfirmedHasRootCause(after) && security__cases_alwaysAppealState(after)
-  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_putCase(id, after, b)) && security__bounty_alwaysCasesKeepAwardRules(security__bounty_putCase(id, after, b)) && security__bounty_alwaysReservedIsOpenVaultHolds(security__bounty_putCase(id, after, b))
-{
-  var nb := security__bounty_putCase(id, after, b);
-  HoldlessCase(b, id);
-  assert forall h :: h in b.holds ==> security__bounty_caseOf(nb, h.caseId) == security__bounty_caseOf(b, h.caseId);
-  OpenVaultGrossFrame(b, nb);
-  forall h | h in nb.holds ensures security__bounty_holdMatches(nb, h) {
-    assert security__bounty_holdMatches(b, h);
-  }
-  forall x | x in security__bounty_caseIds
-    ensures security__bounty_hasHold(nb, x) == (security__cases_committed(security__bounty_caseOf(nb, x)) || security__bounty_caseOf(nb, x).relatedReview.ReviewPending?)
-    ensures security__cases_alwaysProposalCommitsNothing(security__bounty_caseOf(nb, x)) && security__cases_alwaysCommitmentMatchesAward(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysFullAwardHeld(security__bounty_caseOf(nb, x)) && security__cases_alwaysStandardAwardRail(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysUnpaidHasNoAward(security__bounty_caseOf(nb, x)) && security__cases_alwaysVerifiedReceiptValid(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysConfirmedHasRootCause(security__bounty_caseOf(nb, x)) && security__cases_alwaysAppealState(security__bounty_caseOf(nb, x))
-  {
-    if x == id {
-      assert security__bounty_caseOf(nb, x) == after;
-      assert !security__bounty_hasHold(nb, x);
-    } else {
-      assert security__bounty_caseOf(nb, x) == security__bounty_caseOf(b, x);
-      CaseRulesOf(b, x);
-    }
-  }
-}
-
 // The funds snapshot read from the vault (free plus reserved) less the reserved total the bounty counts, which equals
 // the vault's reserve, never exceeds the vault's free amount.
 lemma ObservedCoverIsVaultFree(vf: seq<int>, vr: seq<int>, r: seq<int>)
@@ -1751,61 +1846,6 @@ lemma WithHoldGross(id: int, after: security__cases_PrivateCase, amount: seq<int
   FoldWithoutCase(b, nb, id, b.holds, settlement__money_zero);
   ProofLib.FoldLeftAppend((total: settlement__money_Amount, h: security__bounty_Hold) => (if (h.kind.VaultHold? && (h.settledReceipt == 0)) then settlement__money_addAmounts(total, security__bounty_caseOf(nb, h.caseId).grossChosen) else total), settlement__money_zero, kept, nh);
   assert security__bounty_caseOf(nb, id) == after;
-}
-
-// Recording the hold of a committed award or a pending proposal keeps every hold matching its case.
-lemma RecordedHoldKeepsMatch(id: int, after: security__cases_PrivateCase, amount: seq<int>, b: security__bounty_Bounty)
-  requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b) && id in security__bounty_caseIds
-  requires after.rootCause == security__bounty_caseOf(b, id).rootCause && after.rootCause > 0
-  requires security__cases_committed(after) || after.relatedReview.ReviewPending?
-  requires after.commitment.NoCommitment? ==> after.relatedReview.ReviewPending?
-  requires after.commitment.VaultReservation? ==> b.funds.observedAt > 0
-  requires security__cases_alwaysProposalCommitsNothing(after) && security__cases_alwaysCommitmentMatchesAward(after)
-    && security__cases_alwaysFullAwardHeld(after) && security__cases_alwaysStandardAwardRail(after)
-    && security__cases_alwaysUnpaidHasNoAward(after) && security__cases_alwaysVerifiedReceiptValid(after)
-    && security__cases_alwaysConfirmedHasRootCause(after) && security__cases_alwaysAppealState(after)
-  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_withHold(id, after, amount, b))
-  ensures security__bounty_alwaysCasesKeepAwardRules(security__bounty_withHold(id, after, amount, b))
-  ensures forall h :: h in security__bounty_withHold(id, after, amount, b).holds ==> (h in b.holds && h.caseId != id) || h == security__bounty_holdFor(b, id, after)
-  ensures forall h :: h in b.holds && h.caseId != id ==> h in security__bounty_withHold(id, after, amount, b).holds
-{
-  var nb := security__bounty_withHold(id, after, amount, b);
-  var nh := security__bounty_holdFor(b, id, after);
-  forall x
-    ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == nh
-  {
-    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
-  }
-  assert security__bounty_caseOf(nb, id) == after;
-  forall h | h in nb.holds ensures security__bounty_holdMatches(nb, h) {
-    if h != nh {
-      assert h in b.holds && h.caseId != id;
-      assert security__bounty_holdMatches(b, h);
-      assert security__bounty_caseOf(nb, h.caseId) == security__bounty_caseOf(b, h.caseId);
-    }
-  }
-  forall x | x in security__bounty_caseIds
-    ensures security__bounty_hasHold(nb, x) == (security__cases_committed(security__bounty_caseOf(nb, x)) || security__bounty_caseOf(nb, x).relatedReview.ReviewPending?)
-    ensures security__cases_alwaysProposalCommitsNothing(security__bounty_caseOf(nb, x)) && security__cases_alwaysCommitmentMatchesAward(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysFullAwardHeld(security__bounty_caseOf(nb, x)) && security__cases_alwaysStandardAwardRail(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysUnpaidHasNoAward(security__bounty_caseOf(nb, x)) && security__cases_alwaysVerifiedReceiptValid(security__bounty_caseOf(nb, x))
-    && security__cases_alwaysConfirmedHasRootCause(security__bounty_caseOf(nb, x)) && security__cases_alwaysAppealState(security__bounty_caseOf(nb, x))
-  {
-    if x == id {
-      assert nh in nb.holds;
-    } else {
-      assert security__bounty_caseOf(nb, x) == security__bounty_caseOf(b, x);
-      CaseRulesOf(b, x);
-      if security__bounty_hasHold(b, x) {
-        var h :| h in b.holds && h.caseId == x;
-        assert h in nb.holds;
-      }
-      if security__bounty_hasHold(nb, x) {
-        var h :| h in nb.holds && h.caseId == x;
-        assert h in b.holds;
-      }
-    }
-  }
 }
 
 // A refusal keeps exactly the other cases' holds, through the library's filter view.

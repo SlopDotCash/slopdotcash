@@ -21,7 +21,7 @@ export function twoSignificant(value: bigint): bigint {
   //@ requires value > 0
   //@ ensures \result > 0
   const unit = significantUnit(value);
-  return ((value + unit / 2n) / unit) * unit;
+  return unit > 0n ? ((value + unit / 2n) / unit) * unit : 0n;
 }
 
 /** @throws {never} */

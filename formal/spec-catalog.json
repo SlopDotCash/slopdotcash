@@ -88,7 +88,7 @@
     },
     {
       "path": "spec/backend/access.md",
-      "sha256": "14dfa46354d72a00dca5a64503a1adf725b9f59240b9b9b359814d502144caae",
+      "sha256": "fdca11579fc0e76fc779eaeaccafe2a9a8dba1c0b8fe87323507feb5a19fb1be",
       "module": "backend__access",
       "stories": [
         {
@@ -145,7 +145,7 @@
         },
         {
           "heading": "Story: Ban an account from new participation while preserving funded awards and appeals / One moderator decision reinstates selected accounts, each on its own appeal or the project's open request",
-          "line": 140,
+          "line": 141,
           "definitions": [
             "selectedBans",
             "openAppeal",
@@ -162,7 +162,7 @@
         },
         {
           "heading": "Story: Ban an account from new participation while preserving funded awards and appeals / A banned account keeps its appeal and an independent moderator decides it",
-          "line": 213,
+          "line": 214,
           "definitions": [
             "canAppeal",
             "appeal",
@@ -181,7 +181,7 @@
         },
         {
           "heading": "Story: Ban an account from new participation while preserving funded awards and appeals / A ban blocks new awards while funded awards stay payable",
-          "line": 269,
+          "line": 270,
           "definitions": [
             "mayStartParticipation",
             "canReserveAward",
@@ -196,7 +196,7 @@
         },
         {
           "heading": "Story: Ban an account from new participation while preserving funded awards and appeals / Bans, releases, appeals and funded payments are reachable together",
-          "line": 303,
+          "line": 304,
           "definitions": [
             "sometimesProjectReinstatedAccountStillBanned",
             "sometimesSecondMaliceCycle",
@@ -243,15 +243,15 @@
         },
         {
           "target": "../security/enforcement.md",
-          "line": 152
+          "line": 153
         },
         {
           "target": "./projectComposition.md",
-          "line": 161
+          "line": 162
         },
         {
           "target": "../security/enforcement.md",
-          "line": 221
+          "line": 222
         }
       ]
     },
@@ -2494,7 +2494,7 @@
     },
     {
       "path": "spec/backend/projects.md",
-      "sha256": "c2a64002dd526f3a1caada4e78f7826b4ed275ceebafa1d96a4fc55d915c3a67",
+      "sha256": "f20281f204e84f86f166d623d0cc3333756155f6e71865bb535c0cc4b8521b6e",
       "module": "backend__projects",
       "stories": [
         {
@@ -2507,7 +2507,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval",
-          "line": 695
+          "line": 696
         }
       ],
       "rules": [
@@ -2669,7 +2669,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Appending a repository pauses the project and its work counts from next month",
-          "line": 473,
+          "line": 474,
           "definitions": [
             "appendable",
             "facts2",
@@ -2684,7 +2684,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / Automatic-closure consent changes only by an owner revision or an administrator exception",
-          "line": 510,
+          "line": 511,
           "definitions": [
             "lawConsentOnlySaveRecordsConsentChange",
             "stepConsentChangesOnlyByOwnerOrAdministratorRevision"
@@ -2692,7 +2692,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A current maintainer removes a project and a lost reply can be retried",
-          "line": 534,
+          "line": 535,
           "definitions": [
             "Removal",
             "canRemove",
@@ -2706,7 +2706,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A finalized owner vault registration appends one revision for the current maintainer",
-          "line": 573,
+          "line": 574,
           "definitions": [
             "VaultPurpose",
             "VaultRegistration",
@@ -2723,7 +2723,7 @@
         },
         {
           "heading": "Story: Maintain a live project with current GitHub authority / A current repository administrator moves the integration branch with a committed declaration",
-          "line": 630,
+          "line": 631,
           "definitions": [
             "BranchChange",
             "canMoveBranch",
@@ -2738,7 +2738,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Administrators hold, delist, change the steward or place a project",
-          "line": 697,
+          "line": 698,
           "definitions": [
             "Exception",
             "exceptionAppendsValid",
@@ -2757,7 +2757,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / A restriction retires the listing and reinstatement restores only a paused Community listing",
-          "line": 821,
+          "line": 822,
           "definitions": [
             "retirableForRestriction",
             "withRestrictionRetirement",
@@ -2770,7 +2770,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Funding is a fact of the current revision and the clock only advances",
-          "line": 850,
+          "line": 851,
           "definitions": [
             "canAdvanceMonth",
             "advanceMonth",
@@ -2781,7 +2781,7 @@
         },
         {
           "heading": "Story: Administrators handle exceptions and restrictions, not routine approval / Reachable registry outcomes",
-          "line": 876,
+          "line": 877,
           "definitions": [
             "listed",
             "sometimesCreatedPaused",
@@ -2879,15 +2879,15 @@
         },
         {
           "target": "./projectComposition.md",
-          "line": 541
+          "line": 542
         },
         {
           "target": "../settlement/vaultSnapshots.md",
-          "line": 595
+          "line": 596
         },
         {
           "target": "./projectComposition.md",
-          "line": 640
+          "line": 641
         }
       ]
     },
@@ -8443,7 +8443,7 @@
     },
     {
       "path": "spec/fees/composition.md",
-      "sha256": "6454ba7a6ba235ce675f1ac2b5b4c81b1d2895bcdb1716f4425406f24d9045af",
+      "sha256": "87dbc4abc26ab642a6f969c15ce697bb1fd6e9028fdad2a21ce535c7c5bc687c",
       "module": "fees__composition",
       "stories": [
         {
@@ -8456,7 +8456,7 @@
         },
         {
           "heading": "Story: Count each buyback income once, from its own receipt",
-          "line": 147
+          "line": 148
         }
       ],
       "rules": [
@@ -8528,7 +8528,7 @@
         },
         {
           "heading": "Story: Count each buyback income once, from its own receipt / Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee",
-          "line": 149,
+          "line": 150,
           "definitions": [
             "entryFor",
             "outputFor",
@@ -14744,7 +14744,7 @@
     },
     {
       "path": "spec/operations/backup.md",
-      "sha256": "c1390ee62f4d226c3538c57840d9188fe8ea6d9520effdbf3d369daddc168557",
+      "sha256": "7f4e3d5f445ccaa2806438db0970039354e0c7a30d9bab12a03d8b4785e56355",
       "module": "operations__backup",
       "stories": [
         {
@@ -22246,7 +22246,7 @@
     },
     {
       "path": "spec/security/bounty.md",
-      "sha256": "ca7c9367aff6b4634648385daf142575ca307f90762cb1f73daf38c28744e810",
+      "sha256": "e8370c20f456032265ae5a937cfcef9de09f5977e12e9e0961df47aa2aa509f4",
       "module": "security__bounty",
       "stories": [
         {
@@ -22334,7 +22334,7 @@
         },
         {
           "heading": "Story: Award each underlying finding once, to its first qualifying report / Awards, related-party reviews and appeals go through the case with project clearance",
-          "line": 157,
+          "line": 159,
           "definitions": [
             "rootCauseFreeFor",
             "canDecide",
@@ -22353,7 +22353,7 @@
         },
         {
           "heading": "Story: Award each underlying finding once, to its first qualifying report / One root cause holds at most one proposal or award obligation",
-          "line": 194,
+          "line": 196,
           "definitions": [
             "holdMatches",
             "alwaysHoldsMatchCases",
@@ -22371,7 +22371,7 @@
         },
         {
           "heading": "Story: Award each underlying finding once, to its first qualifying report / Simulation samples cover both orders of receipt, stale funds and both routes",
-          "line": 230,
+          "line": 233,
           "definitions": [
             "idValues",
             "receiptTerms",
@@ -22866,7 +22866,7 @@
     },
     {
       "path": "spec/security/enforcement.md",
-      "sha256": "8a614b8d304ed11d6c8a4b0bfe139f6cd32ad8029abd6f34fc8666659161ea00",
+      "sha256": "c3b2f533c7bbcaaf4731a7eab5c8191aaa0becaf17e860e06521f838f3d23ce2",
       "module": "security__enforcement",
       "stories": [
         {
@@ -22875,15 +22875,15 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant",
-          "line": 360
+          "line": 364
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it",
-          "line": 459
+          "line": 463
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently",
-          "line": 635
+          "line": 639
         }
       ],
       "rules": [
@@ -22967,7 +22967,7 @@
         },
         {
           "heading": "Story: Clear each repository by its own admission before work / A recorded result updates its repository once and confirmed malice bans at once",
-          "line": 226,
+          "line": 227,
           "definitions": [
             "RevisionPlan",
             "resultState",
@@ -22986,7 +22986,7 @@
         },
         {
           "heading": "Story: Clear each repository by its own admission before work / Retained evidence is checked when clearance relies on it",
-          "line": 297,
+          "line": 300,
           "definitions": [
             "EvidenceRead",
             "canObserveEvidence",
@@ -22996,7 +22996,7 @@
         },
         {
           "heading": "Story: Clear each repository by its own admission before work / An appended repository needs its own admission and the registry mirror stays current",
-          "line": 324,
+          "line": 327,
           "definitions": [
             "canAppendRepository",
             "appendRepository",
@@ -23014,7 +23014,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / The frozen migration-0075 rows cover only original repositories",
-          "line": 362,
+          "line": 366,
           "definitions": [
             "FrozenRow",
             "canRecognizeFrozen",
@@ -23025,7 +23025,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / An administrator records an audited exemption only for a current authorized steward",
-          "line": 376,
+          "line": 380,
           "definitions": [
             "Access",
             "StewardCheck",
@@ -23042,7 +23042,7 @@
         },
         {
           "heading": "Story: Exempt only by the frozen set or an audited owner-approved grant / Revocation is its own audited record and restores ordinary admission",
-          "line": 433,
+          "line": 437,
           "definitions": [
             "RevokeRequest",
             "canRevokeExemption",
@@ -23053,7 +23053,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / Flagger standing is read at filing time and bound to the current revision",
-          "line": 461,
+          "line": 465,
           "definitions": [
             "StandingRead",
             "FlagStanding",
@@ -23065,7 +23065,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / The second distinct active flag quarantines a clear project and later flags only record",
-          "line": 485,
+          "line": 489,
           "definitions": [
             "canFlag",
             "flag",
@@ -23084,7 +23084,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction",
-          "line": 525,
+          "line": 529,
           "definitions": [
             "FlagView",
             "flagView",
@@ -23095,7 +23095,7 @@
         },
         {
           "heading": "Story: Two eligible contributors pause a project and a fresh clean scan resumes it / A fresh clean scan of every repository lifts a flag-only pause",
-          "line": 551,
+          "line": 555,
           "definitions": [
             "PinState",
             "PinRead",
@@ -23119,7 +23119,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / A moderator quarantines a clear project or bans it, and decides a service ban",
-          "line": 637,
+          "line": 641,
           "definitions": [
             "independent",
             "canQuarantine",
@@ -23136,7 +23136,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / The steward, the listing account or a moderator files one open project appeal",
-          "line": 688,
+          "line": 692,
           "definitions": [
             "canRequestAppeal",
             "requestAppeal",
@@ -23146,7 +23146,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Account entries share the project journal without changing its restriction",
-          "line": 715,
+          "line": 719,
           "definitions": [
             "activeAccountBan",
             "accountAppealOpenFor",
@@ -23166,7 +23166,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / An independent moderator reinstates only after fresh clean scans of every repository",
-          "line": 798,
+          "line": 802,
           "definitions": [
             "canObservePins",
             "observePins",
@@ -23180,7 +23180,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Restriction state, appeals and findings stay consistent",
-          "line": 830,
+          "line": 834,
           "definitions": [
             "alwaysClearHoldsNoRestrictionState",
             "alwaysRestrictedEpoch",
@@ -23199,7 +23199,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Journals only append and lifting a human restriction needs its decision",
-          "line": 855,
+          "line": 859,
           "definitions": [
             "keeps",
             "stepJournalsOnlyAppend",
@@ -23211,7 +23211,7 @@
         },
         {
           "heading": "Story: Moderators restrict, decide malice and decide appeals independently / Reachable outcomes",
-          "line": 893,
+          "line": 897,
           "definitions": [
             "sometimesFlagPaused",
             "sometimesFlagPauseLifted",
@@ -23282,11 +23282,11 @@
         },
         {
           "target": "../backend/access.md",
-          "line": 649
+          "line": 653
         },
         {
           "target": "../backend/access.md",
-          "line": 752
+          "line": 756
         }
       ]
     },
@@ -32135,7 +32135,7 @@
     },
     {
       "path": "spec/settlement/solanaScan.md",
-      "sha256": "291521b7e750773409eaea7dd6be7666676c12df694fe55e57881b141cd93679",
+      "sha256": "ad8b0be368f7bbb9cdc95be3e570e084867f6930718f572494ca08f4ee2bbb28",
       "module": "settlement__solanaScan",
       "stories": [
         {
@@ -32144,7 +32144,7 @@
         },
         {
           "heading": "Story: Checkpoint only after a fully observed transaction",
-          "line": 81
+          "line": 83
         }
       ],
       "rules": [
@@ -32173,6 +32173,7 @@
           "definitions": [
             "PageCoverage",
             "tenSignatures",
+            "repeatTen",
             "hundredSignatures",
             "fullPageSample",
             "coverageValues",
@@ -32186,7 +32187,7 @@
         },
         {
           "heading": "Story: Checkpoint only after a fully observed transaction / Stale or partial work leaves the authoritative prefix intact",
-          "line": 83,
+          "line": 85,
           "definitions": [
             "Observation",
             "signatureValues",
@@ -36831,7 +36832,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "226e036503fb24a219d18bb03c967a5df6b61ef5789e275ef9f8d6581c6dd4f3",
+      "sha256": "05abaa48f4b4ec653f25649b3a245be45735165bba965d03c24d7aec1abe824f",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36850,6 +36851,7 @@
             "pullCommitRouteLimit",
             "listedItems",
             "lastPage",
+            "fullPages",
             "pagesWellFormed",
             "capReached",
             "listingComplete",
@@ -36862,7 +36864,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Absence is proved only by a hash-verified tree, never by a 404",
-          "line": 78,
+          "line": 79,
           "definitions": [
             "TreeRead",
             "PathLookup",
@@ -36879,7 +36881,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / A blob, tree or binary claim counts only when its git object hash matches the bytes read",
-          "line": 123,
+          "line": 124,
           "definitions": [
             "ObjectKind",
             "ObjectRead",
@@ -36901,7 +36903,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals",
-          "line": 184,
+          "line": 185,
           "definitions": [
             "LineSource",
             "FileLines",
@@ -36921,7 +36923,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 254,
+          "line": 255,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36935,7 +36937,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 294,
+          "line": 295,
           "definitions": [
             "CensusPull",
             "CensusQuery",

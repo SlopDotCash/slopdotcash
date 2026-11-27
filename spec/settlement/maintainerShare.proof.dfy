@@ -1,13 +1,13 @@
 // The proposal splits a positive share only among the month's weights, which leave out every excluded account.
 lemma propose_ensures(m: ShareMonth, by_: string)
+  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysMaintainersSplitTheShare(propose(m, by_)))
+  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysShareOnlyFromCompleteRead(propose(m, by_)))
+  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysCompleteReadIsTheMonth(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> alwaysExcludedReceivesNothing(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> alwaysReadOnlyForAShare(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> alwaysShareWithinLimits(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> alwaysAmountValid(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> alwaysProposalIsTheAmount(propose(m, by_)))
-  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysMaintainersSplitTheShare(propose(m, by_)))
-  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysShareOnlyFromCompleteRead(propose(m, by_)))
-  ensures (inv(m) ==> canPropose(m, by_) ==> alwaysCompleteReadIsTheMonth(propose(m, by_)))
   ensures (inv(m) ==> canPropose(m, by_) ==> stepShareStartsNextMonth(m, "propose", propose(m, by_)))
 {
   if inv(m) && canPropose(m, by_) {
