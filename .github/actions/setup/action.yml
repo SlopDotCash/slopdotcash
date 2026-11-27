@@ -294,7 +294,7 @@ runs:
         key: ${{ steps.spec-cache.outputs.key }}
         restore-keys: ${{ steps.spec-cache.outputs.restore }}
     - id: turbo-cache
-      if: inputs.publication != 'true' && inputs.job != 'contracts' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && inputs.job == 'verify' && env.TURBO_CACHE == 'local:rw'))
+      if: inputs.publication != 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-') && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && inputs.job == 'verify' && env.TURBO_CACHE == 'local:rw'))
       shell: bash
       env:
         JOB: ${{ inputs.job }}

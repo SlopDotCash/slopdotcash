@@ -438,7 +438,7 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 
 | When | Runs |
 |---|---|
-| Configured pull request and push triggers for `develop`, `development` and `main` | `pnpm verify --concurrency=4 --continue=dependencies-successful --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
+| Configured pull request and push triggers for `develop`, `staging` and `main` | `pnpm verify --concurrency=3 --continue=dependencies-successful --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
 | Native contract checks | Forge formatting and size checks, Foundry tests and SMT checks, locked Cargo tests, and a separate reproducible Solana artifact build |
 | Nightly on the default branch | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 
