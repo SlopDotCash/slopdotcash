@@ -1,4 +1,5 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
+import { sha256Hex } from "@repo/platform/crypto"
 import { answered, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
@@ -7,6 +8,7 @@ import {
   notifyPostV1ActivityNotificationsEligibility,
   notifyPostV1ActivityNotificationsReconcile,
   notifyPostV1EmailCapabilities,
+  notifyPostV1EmailUnsubscribe,
   notifyPostV1EmailVerification,
   notifyPostV1SecurityNotificationsDispatch,
   notifyPostV1SecurityNotificationsReconcile,
@@ -42,11 +44,12 @@ const activityDispatchPath: Internal = { path: "/v1/activity-notifications/dispa
 const activityReconcilePath: Internal = { path: "/v1/activity-notifications/reconcile", limitKib: 8 }
 const emailCapabilitiesPath: Internal = { path: "/v1/email/capabilities", limitKib: 2 }
 const emailVerificationPath: Internal = { path: "/v1/email/verification", limitKib: 2 }
+const emailUnsubscribePath: Internal = { path: "/v1/email/unsubscribe", limitKib: 2 }
 const projectApplicationsPath: Internal = { path: projectApplicationNoticePath, limitKib: 8 }
 const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
 const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
 
-const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
+const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, emailUnsubscribePath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
 
 export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
@@ -69,6 +72,7 @@ function plainJson(body: unknown) {
 const security = { ...notifyPostV1SecurityNotificationsDispatch, ...notifyPostV1SecurityNotificationsReconcile }
 const activity = { ...notifyPostV1ActivityNotificationsEligibility, ...notifyPostV1ActivityNotificationsDispatch, ...notifyPostV1ActivityNotificationsReconcile }
 const verification = notifyPostV1EmailVerification
+const unsubscribeRows = notifyPostV1EmailUnsubscribe
 
 export effect function internalRequest() {
   const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
@@ -140,6 +144,19 @@ effect function capabilities() {
   return plainJson({ enrollmentAvailable: enrollmentOpen((try NotifySettings).activity) })
 }
 
+effect function unsubscribe() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const limitBytes = emailUnsubscribePath.limitKib * 1024
+  const length = request.headers["content-length"]
+  if (length !== undefined && !/^\d+$/u.test(length)) return answer(unsubscribeRows.status500)
+  const bytes = try provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(limitBytes))
+  const body: unknown = try Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)))
+  if (typeof body !== "object" || body === null || Array.isArray(body) || !("token" in body) || typeof body.token !== "string" || Object.keys(body).join() !== "token") return answer(unsubscribeRows.status400)
+  if (!/^[a-f0-9]{64}\.[a-f0-9]{64}$/u.test(body.token)) return answer(unsubscribeRows.status409)
+  const hash = try sha256Hex(body.token)
+  return answer((try (try EmailEnrollment).withdrawForUnsubscribeToken(hash)) ? { status: 204, headers: plain } : unsubscribeRows.status409)
+}
+
 effect function securityPilot() {
   return (try NotifySettings).security
 }
@@ -185,6 +202,7 @@ export const notifyRoutes = Layer.mergeAll(
   }),
   served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
   served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
+  served(emailUnsubscribePath, unsubscribeRows.status500, unsubscribeRows.otherMethods.status405, () => unsubscribe()),
   served(projectApplicationsPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("application")),
   served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
   served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),

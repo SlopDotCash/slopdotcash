@@ -226,6 +226,7 @@ export interface VerificationMark {
 export service EmailEnrollment {
   registered(githubId: string): (RegisteredDestination | undefined)!ReadFailure
   unsubscribeIssued(issued: IssuedUnsubscribe): Statement!!
+  withdrawForUnsubscribeToken(tokenHash: string): boolean!ReadFailure
   pendingVerification(read: VerificationRead): (PendingVerification | undefined)!ReadFailure
   markVerification(mark: VerificationMark): boolean!ReadFailure
 }
