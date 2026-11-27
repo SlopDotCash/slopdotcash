@@ -20,7 +20,7 @@ const asset = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 const vault = "11111111111111111111111111111111"
 const manifest = JSON.stringify({
   id: "eliza", status: "active",
-  reward: { kind: "monthly-pool", monthlyCapMinor: "1000000000", rewardStartAt: "2026-07-07T00:00:00.000Z" },
+  reward: { kind: "monthly-pool", monthlyCapMinor: "1000000000", cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "0" }], rewardStartAt: "2026-07-07T00:00:00.000Z" },
   escrow: { chain: "solana", effectiveCycle: "2026-10", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "solana-mainnet", vault, asset }] },
 })
 function awardsFixture() {
@@ -123,6 +123,9 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         assert.equal(consumed.state.revision.asset, asset)
         assert.deepEqual(consumed.rows.proposed.map((row) => [row.github_user_id, row.github_login, row.gross_base, row.source_digest]),
           awards.map((row) => [row.githubUserId, row.login, row.grossBase, row.sourceDigest]))
+        assert.equal(consumed.state.reviewedOctober, true)
+        assert.equal(fromAmount(consumed.state.revision.monthlyAmount), 0n)
+        assert.equal(fromAmount(consumed.state.currentRevision.monthlyAmount), 0n)
         assert.equal(canFinalize(consumed.state, 0, { actor: 2, role: "RepositoryAdmin", banned: false, revision: 1 }), true)
         assert.equal(canAutoFreeze(consumed.state), false)
       })

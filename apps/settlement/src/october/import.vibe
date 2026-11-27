@@ -20,7 +20,7 @@ export function octoberStatements(proposal: Proposal, manifest: string, captured
   const { id, period, revision, manifestSha256, sourceSnapshotSha256, grossBase, pointsBatch, enforcementGeneration, awards } = proposal
   const scope = sql`project_id = ${id} AND period = ${period}`
   const hasBase = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope}`)
-  const exactHeader = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope} AND manifest = ${manifest} AND manifest_sha256 = ${manifestSha256} AND source_snapshot_sha256 = ${sourceSnapshotSha256} AND cap_base = ${grossBase} AND recipient_count = ${awards.length} AND early_close_at IS NULL`)
+  const exactHeader = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope} AND manifest = ${manifest} AND manifest_sha256 = ${manifestSha256} AND source_snapshot_sha256 = ${sourceSnapshotSha256} AND cap_base = ${grossBase} AND recipient_count = ${awards.length} AND early_close_at IS NULL AND reviewed_october = 1`)
   const packed = JSON.stringify(awards.map((award) => [award.githubUserId, award.login, award.grossBase, award.sourceDigest]))
   const exactCount = sql`(SELECT COUNT(*) FROM monthly_reward_base_rows WHERE ${scope}) = ${awards.length}`
   const exactRows = sql`NOT EXISTS (
@@ -40,8 +40,8 @@ export function octoberStatements(proposal: Proposal, manifest: string, captured
   const preflight = [...fresh.map((condition) => sql`${hasBase} OR ${condition}`), ...readback.map((condition) => sql`NOT ${hasBase} OR ${condition}`)]
   const writes = [
     ...guardQueries(preflight).map(requireSql),
-    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at)
-      VALUES (${id}, ${period}, ${manifest}, ${manifestSha256}, ${sourceSnapshotSha256}, ${grossBase}, ${awards.length}, ${capturedAt}) ON CONFLICT (project_id, period) DO NOTHING`,
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at, reviewed_october)
+      VALUES (${id}, ${period}, ${manifest}, ${manifestSha256}, ${sourceSnapshotSha256}, ${grossBase}, ${awards.length}, ${capturedAt}, 1) ON CONFLICT (project_id, period) DO NOTHING`,
     sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest)
       SELECT ${id}, ${period}, json_extract(w.value, '$[0]'), json_extract(w.value, '$[1]'), json_extract(w.value, '$[2]'), json_extract(w.value, '$[3]')
       FROM json_each(${packed}) w WHERE ${exactHeader} ON CONFLICT (project_id, period, github_user_id) DO NOTHING`,
