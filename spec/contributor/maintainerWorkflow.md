@@ -277,10 +277,48 @@ pure def stepFinishedIsFinal(before: MaintainerSession, via: str, after: Maintai
     implies unchangedActions(before, after)
 pure def sometimesFinishedAfterPreparing(s: MaintainerSession): bool = s.phase == Finished and s.prepared.length() > 0
 pure val byValues = Set(user, agent, authorityService)
-pure val weight_siteAct = 20
-pure val weight_checkPermission = 8
-pure val weight_confirmSession = 4
-pure val weight_readBack = 4
-pure val weight_giveDecision = 4
 pure val repositoryIdValues = Set(0, 7)
+pure val eval_witness_sometimesRefusedWithoutHumanDecision = (
+  ("requestTask", user, ManageCases, true),
+  ("resolveRepository", agent, 7, false),
+  ("siteAct", agent, RecordDecision, TechnicalAcceptance, false, Applied))
+pure val eval_witness_sometimesAccountChangeDiscardedCase = (
+  ("requestTask", user, ManageCases, true),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, CaseAccess, true),
+  ("confirmSession", authorityService, SlopBrowserSession),
+  ("siteAct", agent, ReadCase, NoDecision, false, Applied),
+  ("changeAccount", authorityService))
+pure val eval_witness_sometimesSetupCheckApplied = (
+  ("requestTask", user, AddOrResume, true),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, Steward, true),
+  ("confirmSession", authorityService, SlopBrowserSession),
+  ("siteAct", agent, RunSetupCheck, NoDecision, false, Applied))
+pure val eval_witness_sometimesUncertainReadBackApplied = (
+  ("requestTask", user, AddOrResume, true),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, Steward, true),
+  ("confirmSession", authorityService, SlopBrowserSession),
+  ("siteAct", agent, RunSetupCheck, NoDecision, false, Uncertain),
+  ("readBack", agent, true))
+pure val eval_witness_sometimesDecisionRecorded = (
+  ("requestTask", user, ManageCases, true),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, CaseAccess, true),
+  ("confirmSession", authorityService, SlopBrowserSession),
+  ("giveDecision", user, TechnicalAcceptance),
+  ("siteAct", agent, RecordDecision, TechnicalAcceptance, false, Applied))
+pure val eval_witness_sometimesReviewedWithoutMerge = (
+  ("requestTask", user, ReviewIncoming, false),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, RepoWrite, true),
+  ("repoWrite", agent, PostReview),
+  ("repoWrite", agent, MergePR))
+pure val eval_witness_sometimesAuthorizedMerge = (
+  ("requestTask", user, ReviewIncoming, false),
+  ("resolveRepository", agent, 7, false),
+  ("checkPermission", authorityService, RepoWrite, true),
+  ("authorizeWrite", user, MergePR),
+  ("repoWrite", agent, MergePR))
 ```

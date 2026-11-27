@@ -1022,4 +1022,44 @@ pure val weight_releaseMonthlyAward = 30
 pure val weight_releaseMonthlyReserve = 12
 pure val weight_vetoBinding = 15
 pure val weight_tick = 10
+pure val eval_witness_sometimesPledgeOpenAfterAdmission = (
+  ("upgradeProgram", "upgrader"),
+  ("initializeConfig", "attester", "fees", "rotator", "upgrader"),
+  ("initialize", { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary }, noMint, "owner"),
+  ("deposit", 100, { kind: ClassicSpl, initialized: true, extensions: List() }, true, "owner"),
+  ("setMonthlyCommitment", 100, true, "owner"),
+  ("pledgeMonth", 202612, 4, "owner"),
+  ("tick", 1799020800, "owner"),
+  ("commitMonthly", { period: 202612, root: "r", total: 54, frozenAt: 1799020800,
+    leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }), attested: true, pledgeAccount: false }, "owner"))
+pure val eval_witness_sometimesAwardReleased = (
+  ("upgradeProgram", "upgrader"),
+  ("initializeConfig", "attester", "fees", "rotator", "upgrader"),
+  ("initialize", { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary }, noMint, "owner"),
+  ("deposit", 100, { kind: ClassicSpl, initialized: true, extensions: List() }, true, "owner"),
+  ("setMonthlyCommitment", 100, true, "owner"),
+  ("tick", 1796342400, "owner"),
+  ("commitMonthly", { period: 202611, root: "r", total: 54, frozenAt: 1796342400,
+    leaves: List({ actor: 0, gross: 54, source: 12 }), attested: true, pledgeAccount: false }, "owner"),
+  ("releaseMonthlyAward", 202611, { actor: 0, gross: 54, source: 12 }, "owner"))
+pure val eval_witness_sometimesLeafCommitted = (
+  ("upgradeProgram", "upgrader"),
+  ("initializeConfig", "attester", "fees", "rotator", "upgrader"),
+  ("initialize", { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary }, noMint, "owner"),
+  ("deposit", 100, { kind: ClassicSpl, initialized: true, extensions: List() }, true, "owner"),
+  ("setMonthlyCommitment", 100, true, "owner"),
+  ("tick", 1796342400, "owner"),
+  ("commitMonthly", { period: 202611, root: "r", total: 54, frozenAt: 1796342400,
+    leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }), attested: true, pledgeAccount: false }, "owner"),
+  ("commitMonthlyAward", 202611, { actor: 1, gross: 50, source: 10 }, "owner"))
+pure val eval_witness_sometimesWholeReserveReleased = (
+  ("upgradeProgram", "upgrader"),
+  ("initializeConfig", "attester", "fees", "rotator", "upgrader"),
+  ("initialize", { project: "slop", network: "solana", identity: "attester", feeRecipient: "fees", delay: 0, rotationDelay: 0, purpose: L::Ordinary }, noMint, "owner"),
+  ("deposit", 100, { kind: ClassicSpl, initialized: true, extensions: List() }, true, "owner"),
+  ("setMonthlyCommitment", 100, true, "owner"),
+  ("tick", 1796342400, "owner"),
+  ("commitMonthly", { period: 202611, root: "r", total: 60, frozenAt: 1796342400,
+    leaves: List({ actor: 1, gross: 50, source: 10 }, { actor: 2, gross: 4, source: 11 }), attested: true, pledgeAccount: false }, "owner"),
+  ("releaseMonthlyReserve", 202611, 60, 60, true, "owner"))
 ```

@@ -567,10 +567,34 @@ pure val attemptValues = Set(1, 2)
 pure val resultValues = Set(T::standardTerms, T::unpaidTerms(1, 2), T::pausedTerms).fold(Set(TriageFailedResult, TriageUnavailableResult), (results, t) => results.union(Set(
   Drafted({ returnCase: true, confidencePercent: 95, exclusions: T::receiptExclusions(t) }),
   Drafted({ returnCase: false, confidencePercent: 40, exclusions: T::receiptExclusions(t) }))))
-pure val weight_decide = 8
-pure val weight_decideAward = 8
-pure val weight_appeal = 6
-pure val weight_finishTriage = 6
-pure val weight_decideAppeal = 5
-pure val weight_observeAuthority = 3
+pure val weight_decide = 2
+pure val weight_decideAward = 2
+pure val weight_appeal = 2
+pure val weight_finishTriage = 2
+pure val weight_decideAppeal = 2
+pure val eval_witness_sometimesRelatedApproved = (
+  ("observeAuthority", staff, 1),
+  ("receive", SlopReceived, T::standardTerms, NewReceipt, M::zero, 1, 1),
+  ("decide", 2, 1, 1, { finding: Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true, spam: false }),
+  ("decideAward", 2, 1, List(100), { caseRevision: 2, firstQualifying: true, rootCauseFree: true, rail: DirectRail }),
+  ("reviewRelated", 4, 1, true, { caseRevision: 3, firstQualifying: true, rootCauseFree: true, rail: DirectRail }))
+pure val eval_witness_sometimesFullAwardHeld = (
+  ("observeAuthority", staff, 1),
+  ("receive", SlopReceived, T::fullTerms, NewReceipt, M::zero, 1, 1),
+  ("decide", 2, 1, 1, { finding: Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("decideAward", 2, 1, List(101), { caseRevision: 2, firstQualifying: true, rootCauseFree: true, rail: NoRail }))
+pure val eval_witness_sometimesLegacyApproved = (
+  ("observeAuthority", staff, 1),
+  ("receive", SlopReceived, T::historicalTerms, ImportedReservation, List(4), 1, 1),
+  ("approveReservedAward", 2, 1, List(4)))
+pure val eval_witness_sometimesStandardApproved = (
+  ("observeAuthority", staff, 1),
+  ("receive", SlopReceived, T::standardTerms, NewReceipt, M::zero, 1, 1),
+  ("decide", 2, 1, 1, { finding: Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("decideAward", 2, 1, List(100), { caseRevision: 2, firstQualifying: true, rootCauseFree: true, rail: DirectRail }))
+pure val eval_witness_sometimesInformationProvided = (
+  ("observeAuthority", staff, 1),
+  ("receive", SlopReceived, T::standardTerms, NewReceipt, M::zero, 1, 1),
+  ("requestInformation", 2, 1),
+  ("reviseReport", 1, 2))
 ```

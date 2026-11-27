@@ -630,4 +630,7 @@ pure val checkedRevisionValues = Set(-1, 0, 1)
 pure val suppliedVersionValues = Set(0, 900, 1001)
 pure val nextStateValues = Set(E::Sending, E::Sent, E::DeliveryUnknown)
 pure val choiceValues = Set(E::KeepSecurity, E::SecurityOn, E::SecurityOff)
+pure val eval_witness_sometimesOwnerWeekSession = (
+  ("signIn", 1, 0),
+  ("signIn", 2, 0))
 ```

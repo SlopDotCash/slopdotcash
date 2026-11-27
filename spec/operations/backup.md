@@ -405,30 +405,181 @@ pure val dayValues = Set(1, 31, 95, 400)
 pure val idValues = Set(1, 2, 3, 4, 5)
 pure val retentionValues = Set(true, false)
 pure val byValues = Set("releaseWorkflow", "operator", "other")
-pure val weight_copyPage = 6
-pure val weight_verifyPage = 6
-pure val weight_finish = 6
-pure val weight_beginRestore = 5
-pure val weight_checkChain = 5
-pure val weight_writeDestination = 5
-pure val weight_readDestination = 5
-pure val weight_retain = 10
-pure val weight_failPage = 12
-pure val weight_replayFailed = 6
-pure val weight_start = 6
-pure val weight_classify = 10
-pure val weight_writeMissingMarker = 10
-pure val weight_beginCleanup = 10
-pure val weight_setRetention = 10
+pure val weight_copyPage = 2
+pure val weight_verifyPage = 2
+pure val weight_finish = 2
+pure val weight_retain = 2
+pure val weight_failPage = 2
+pure val weight_start = 2
+pure val weight_classify = 2
+pure val weight_writeMissingMarker = 2
+pure val weight_beginCleanup = 2
+pure val weight_setRetention = 2
 pure val generationValues = Set(1, 2)
 pure val keyValues = Set(1, 2)
 pure val exactValues = Set(true, false)
 pure val releasedValues = Set(true, false)
-pure val weight_reserveTarget = 1
-pure val weight_freezeGeneration = 15
-pure val weight_markTarget = 15
-pure val weight_recordRetirement = 15
-pure val weight_retireGeneration = 15
-pure val weight_settleReference = 15
-pure val weight_setRetirementRelease = 10
+pure val weight_freezeGeneration = 2
+pure val weight_markTarget = 2
+pure val weight_recordRetirement = 2
+pure val weight_retireGeneration = 2
+pure val weight_settleReference = 2
+pure val weight_setRetirementRelease = 2
+pure val eval_witness_sometimesHeld = (
+  ("advanceDay", 1, "operator"),
+  ("closeCase", 3, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("advanceDay", 95, "operator"),
+  ("beginCleanup", "operator"),
+  ("retain", 3, "operator"))
+pure val eval_witness_sometimesDeleted = (
+  ("advanceDay", 1, "operator"),
+  ("closeCase", 1, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("advanceDay", 95, "operator"),
+  ("beginCleanup", "operator"),
+  ("classify", 1, "operator"),
+  ("retain", 1, "operator"))
+pure val eval_witness_sometimesAdmissionKept = (
+  ("advanceDay", 1, "operator"),
+  ("closeCase", 2, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("advanceDay", 95, "operator"),
+  ("beginCleanup", "operator"),
+  ("retain", 2, "operator"))
+pure val eval_witness_sometimesDeletionReceipt = (
+  ("advanceDay", 1, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("setRetirementRelease", true, "releaseWorkflow"),
+  ("beginCleanup", "operator"),
+  ("freezeGeneration", 1, "operator"),
+  ("markTarget", 1, true, "operator"),
+  ("recordRetirement", 1, "operator"),
+  ("retireGeneration", 1, "operator"),
+  ("settleReference", 1, "operator"))
+pure val eval_witness_sometimesGenerationRetired = (
+  ("advanceDay", 1, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("setRetirementRelease", true, "releaseWorkflow"),
+  ("beginCleanup", "operator"),
+  ("freezeGeneration", 1, "operator"),
+  ("markTarget", 1, true, "operator"),
+  ("recordRetirement", 1, "operator"),
+  ("retireGeneration", 1, "operator"))
+pure val eval_witness_sometimesWaitingDayStarted = (
+  ("advanceDay", 1, "operator"),
+  ("start", 0, 5, "operator"),
+  ("advanceDay", 31, "operator"),
+  ("queueDay", "operator"),
+  ("finish", 5, "operator"),
+  ("advanceDay", 95, "operator"),
+  ("start", 0, 6, "operator"))
+pure val eval_witness_sometimesMissingAfterMarker = (
+  ("advanceDay", 1, "operator"),
+  ("closeCase", 5, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("advanceDay", 95, "operator"),
+  ("beginCleanup", "operator"),
+  ("writeMissingMarker", 5, "operator"),
+  ("classify", 5, "operator"),
+  ("retain", 5, "operator"))
+pure val eval_witness_sometimesLateWriteBacked = (
+  ("advanceDay", 1, "operator"),
+  ("closeCase", 5, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("advanceDay", 95, "operator"),
+  ("beginCleanup", "operator"),
+  ("lateWrite", 5, 7, "operator"),
+  ("classify", 5, "operator"))
+pure val eval_witness_sometimesFrozenWithLateWrite = (
+  ("advanceDay", 1, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("setRetirementRelease", true, "releaseWorkflow"),
+  ("beginCleanup", "operator"),
+  ("closeReferences", 2, "operator"),
+  ("freezeGeneration", 2, "operator"),
+  ("writeTarget", 2, "operator"))
+pure val eval_witness_sometimesTargetMissingRecorded = (
+  ("advanceDay", 1, "operator"),
+  ("start", 1, 5, "operator"),
+  ("copyPage", 5, "operator"),
+  ("verifyPage", 5, "operator"),
+  ("finish", 5, "operator"),
+  ("beginRestore", 5, "operator"),
+  ("checkChain", 5, List(5), "operator"),
+  ("writeDestination", RestoreCheckPrefix, 0, "operator"),
+  ("readDestination", 5, "operator"),
+  ("setRetention", true, "releaseWorkflow"),
+  ("setRetirementRelease", true, "releaseWorkflow"),
+  ("beginCleanup", "operator"),
+  ("closeReferences", 2, "operator"),
+  ("freezeGeneration", 2, "operator"),
+  ("markTarget", 2, true, "operator"),
+  ("recordRetirement", 2, "operator"),
+  ("retireGeneration", 2, "operator"),
+  ("settleReference", 2, "operator"))
 ```

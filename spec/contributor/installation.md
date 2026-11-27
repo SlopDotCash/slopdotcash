@@ -339,4 +339,44 @@ pure val weight_retain = 10
 pure val weight_commit = 13
 pure val weight_confirm = 11
 pure val weight_finish = 10
+pure val eval_witness_sometimesNewRevisionAfterRisk = (
+  ("begin", v1, false, false, { project: 1, view: openView }),
+  ("download", admittedRead),
+  ("inspectRisk", RiskReported),
+  ("cleanup", true),
+  ("finish", true),
+  ("begin", { ...v1, revision: 2, digest: "m2" }, false, false, { project: 1, view: openView }),
+  ("download", { ...admittedRead, selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 2, registryDigest: "m2" }, checked: SA::exactCheck(v1.template, "m2") }),
+  ("inspectRisk", InspectClear),
+  ("verify", { project: 1, view: openView }, false),
+  "retain",
+  "prepareLink",
+  ("commit", true, true),
+  ("confirm", true),
+  "emitActivation",
+  ("cleanup", true),
+  ("finish", true))
+pure val eval_witness_sometimesUpgradeNeedsNewAuthorization = (
+  ("begin", v1, false, false, { project: 1, view: openView }),
+  ("download", admittedRead),
+  ("inspectRisk", InspectClear),
+  ("verify", { project: 1, view: openView }, false),
+  "retain",
+  "prepareLink",
+  ("commit", true, true),
+  ("confirm", true),
+  "emitActivation",
+  ("cleanup", true),
+  ("finish", true),
+  ("begin", { ...v1, revision: 2, digest: "m2" }, false, false, { project: 1, view: openView }),
+  ("download", { ...admittedRead, selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 2, registryDigest: "m2" }, checked: SA::exactCheck(v1.template, "m2") }),
+  ("inspectRisk", InspectClear),
+  ("verify", { project: 1, view: openView }, false),
+  "retain",
+  "prepareLink",
+  ("commit", true, true),
+  ("confirm", true),
+  "emitActivation",
+  ("cleanup", true),
+  ("finish", true))
 ```

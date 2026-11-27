@@ -378,4 +378,78 @@ pure val weight_send = 8
 pure val weight_walletReply = 8
 pure val weight_ask = 8
 pure val weight_answer = 10
+pure val eval_witness_sometimesReceived = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Signed, "h1", adapter),
+  ("ask", AutoCheck, timer),
+  ("answer", ReceivedRead, chainReader))
+pure val eval_witness_sometimesFinished = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Uncertain, "", adapter),
+  ("enterHash", "h2", payer),
+  ("ask", PayerCheck, payer),
+  ("answer", FinalRead, chainReader))
+pure val eval_witness_sometimesBlockedWithinHour = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Signed, "h1", adapter),
+  ("ask", AutoCheck, timer),
+  ("answer", FinalRead, chainReader))
+pure val eval_witness_sometimesUnclearKept = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Uncertain, "", adapter))
+pure val eval_witness_sometimesWrongWalletRefused = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("connectWallet", false, adapter))
+pure val eval_witness_sometimesAutoChecked = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Signed, "h1", adapter),
+  ("ask", AutoCheck, timer))
+pure val eval_witness_sometimesUnsentCleared = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Uncertain, "", adapter),
+  ("confirmUnsent", payer))
+pure val eval_witness_sometimesAnotherWalletAfterDecline = (
+  ("openPage", PullRequestFee, true, true, true, bundle),
+  ("observeRecord", dueFee, true, reader),
+  ("connectWallet", true, adapter),
+  ("review", payer),
+  ("confirmDue", SameDue, reader),
+  ("send", "d1", true, payer),
+  ("walletReply", "d1", WA::Declined, "", adapter),
+  ("disconnectWallet", payer))
 ```

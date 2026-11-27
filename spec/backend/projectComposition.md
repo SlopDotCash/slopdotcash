@@ -659,4 +659,23 @@ pure val weight_remove = 3
 pure val weight_decideMalice = 6
 pure val weight_journalAccountAppeal = 6
 pure val weight_journalAccountDenial = 8
+pure val eval_witness_sometimesFlagPausedActiveManifest = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }),
+  ("readSetup", 1),
+  ("activate", 1, { authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }),
+  ("flag", 2, 1, { ...goodStanding, actor: 2, revision: 2 }),
+  ("flag", 3, 2, { ...goodStanding, actor: 3, revision: 2 }))
+pure val eval_witness_sometimesOwnerExcludedFromNextMonth = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("publishOwnerRevision", 1, { ...P::change1, presentation: false, financial: true, exclusionsChanged: true, expectedRevision: 1, clearance: P::ClearanceMissing }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, List(ownerExcluded), List()))
+pure val eval_witness_sometimesRestoredAfterRestriction = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("quarantine", 6, { revision: 1, sequence: 1 }, { revision: 1, result: PolicyAccepts }),
+  ("requestAppeal", 1),
+  ("requestAssessment", 5, 1, E::AdminInvestigation, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 2, result: PolicyAccepts }),
+  ("observePins", -1, List({ repository: 1, assessment: 1, pin: E::PinMatches })),
+  ("reinstate", 5, { revision: 2, sequence: 3 }))
 ```

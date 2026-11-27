@@ -459,6 +459,40 @@ pure val weight_checkGenesis = 12
 pure val weight_readTotals = 12
 pure val weight_readPrior = 12
 pure val weight_write = 12
+pure val eval_witness_sometimesServerFinishes = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, { ...baseCreation, status: PendingCreation }),
+  ("saveCreation", 1, 1, 1),
+  ("repeatSaved", 1, 2, 121, true),
+  ("checkCreation", 2, baseCreation),
+  ("commitRegistration", 2, true),
+  ("closeRegisteredCreation", 1))
+pure val eval_witness_sometimesExpiredWaitsAgain = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, { ...baseCreation, status: PendingCreation }),
+  ("saveCreation", 1, 1, 1),
+  ("repeatSaved", 1, 2, 121, true),
+  ("expireSaved", 1, 172802),
+  ("beginRegistration", 3, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 3, { ...baseCreation, status: PendingCreation }),
+  ("saveCreation", 3, 2, 172802))
+pure val eval_witness_sometimesTrustedRecovery = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Solana", 1, 7, true),
+  ("checkCreation", 1, { ...baseCreation, identity: solana }),
+  ("commitRegistration", 1, true),
+  ("beginRecovery", 2, true),
+  ("pinGenesis", 2, "genesis"),
+  ("checkGenesis", 2, "genesis"),
+  ("readTotals", 2, solanaRead, true),
+  ("readPrior", 2),
+  ("write", 2, WriteAcknowledged))
+pure val eval_witness_sometimesSavedRefused = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, { ...baseCreation, status: PendingCreation }),
+  ("saveCreation", 1, 1, 1),
+  ("repeatSaved", 1, 2, 121, true),
+  ("checkCreation", 2, { ...baseCreation, status: UnverifiedCreation }),
+  ("endSavedRefused", 1, 2))
 ```
 
 ## Story: Keep each vault's first read of the month

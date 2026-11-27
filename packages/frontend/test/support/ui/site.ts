@@ -18,7 +18,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { feeNetworks } from "@repo/backend/client";
-import { escrowStack, word } from "@repo/settlement/testing/evm";
+import { FEE_RECIPIENT, escrowStack, word } from "@repo/settlement/testing/evm";
 import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
 import { type Wallets, homeChainId, injectWallets } from "./wallets.ts";
@@ -254,7 +254,7 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
       ...roles,
       SLOP_ENVIRONMENT: "production",
       PUBLIC_SITE_URL: site,
-      PAYMENT_NETWORKS: "[]",
+      PAYMENT_NETWORKS: JSON.stringify([vaultNetwork]),
       MONTHLY_PAYMENT_SCHEDULE: '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
       SLOP_PRIVATE_INTAKE_MODE: "on",
       SECURITY_REPORT_DEPOSIT: "live",
@@ -503,14 +503,28 @@ type Fields = Readonly<Record<string, unknown>>;
 const fieldsOf = (value: unknown): Fields | undefined => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Fields) : undefined);
 
 function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose, now: string): Fields {
-  if (purpose === "ordinary") return { ...manifest, escrow: { ...fieldsOf(manifest.escrow), chain: "base", deployments: [deployment] } };
+  if (purpose === "ordinary") {
+    return {
+      ...manifest,
+      escrow: {
+        schemaVersion: "1",
+        effectiveCycle: now.slice(0, 7),
+        chain: "base",
+        feeBasisPoints: 200,
+        withdrawalFeeBasisPoints: 200,
+        feeMode: "deduct-from-gross",
+        ...fieldsOf(manifest.escrow),
+        deployments: [deployment],
+      },
+    };
+  }
   const program = fieldsOf(manifest.securityBounty);
   const amount = fieldsOf(program?.amount);
   if (amount?.network !== vaultNetwork || amount.currency !== "USDC") throw new Error(`site: the project has no USDC bounty on ${vaultNetwork}`);
   const settlement = fieldsOf(program?.settlement) ?? {};
   return {
     ...manifest,
-    securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: vaultNetwork, feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
+    securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: "base", feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
   };
 }
 
@@ -530,11 +544,24 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
     );
     await stack.send(depositor.address, stack.dollar, encodeFunctionData({ abi: mintAbi, functionName: "mint", args: [depositor.address, depositorFunds] }));
     const block = await stack.head();
+    chain.setFinalized(block);
+    const codeDigest = async (at: string) => sha256(Buffer.from(String(await chain.rpc("eth_getCode", [at, "latest"])).slice(2), "hex"));
+    const [codeSha256, vaultImplementationCodeSha256] = await Promise.all([codeDigest(created), codeDigest(stack.implementation)]);
     const [record] = await started.rows("SELECT revision, manifest FROM projects WHERE id = ?", [projectId]);
     const [author] = await started.rows("SELECT actor_github_id, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision LIMIT 1", [projectId]);
     if (record === undefined || author === undefined) throw new Error(`site: no project ${projectId}`);
     const recorded = fieldsOf(JSON.parse(String(record.manifest))) ?? {};
-    const deployment = { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
+    const deployment = {
+      network: vaultNetwork,
+      vault: created,
+      asset: stack.dollar,
+      owner: ownerAddress,
+      factory: stack.factory,
+      feeRecipient: FEE_RECIPIENT,
+      bindingDelaySeconds: "0",
+      codeSha256,
+      evmUpgrade: { vaultImplementation: stack.implementation, vaultImplementationCodeSha256 },
+    };
     const now = new Date().toISOString();
     const active = { ...recorded, status: "active" };
     const revisions = [

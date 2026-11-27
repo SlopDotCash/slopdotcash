@@ -246,4 +246,40 @@ pure val weight_sign = 8
 pure val weight_signReply = 16
 pure val weight_post = 8
 pure val weight_postReply = 14
+pure val eval_witness_sometimesDialogAccepted = (
+  ("signIn", 1, "", 1),
+  ("announce", 1, true, discovery),
+  ("openReview", W::Base, PayoutDialog, "w1", 1),
+  ("connect", 1, 1),
+  ("connectReply", 2, "w1", adapter),
+  ("prepare", 1),
+  ("prepareReply", 3, "m1", "m1", 1, server),
+  ("sign", 1),
+  ("signReply", 4, "m1", { wallet: "w1", signer: "w1", intent: 1 }, adapter),
+  ("post", 1),
+  ("postReply", 5, PostAccepted, server))
+pure val eval_witness_sometimesSignInAgain = (
+  ("signIn", 1, "", 1),
+  ("announce", 1, true, discovery),
+  ("openReview", W::Base, PayoutDialog, "w1", 1),
+  ("connect", 1, 1),
+  ("connectReply", 2, "w1", adapter),
+  ("prepare", 1),
+  ("prepareReply", 3, "m1", "m1", 1, server),
+  ("sign", 1),
+  ("signReply", 4, "m1", { wallet: "w1", signer: "w1", intent: 1 }, adapter),
+  ("post", 1),
+  ("postReply", 5, PostUnauthorized, server))
+pure val eval_witness_sometimesAccepted = (
+  ("signIn", 1, "", 1),
+  ("announce", 1, true, discovery),
+  ("openReview", W::Base, WalletsPage, "", 1),
+  ("connect", 1, 1),
+  ("connectReply", 2, "w1", adapter),
+  ("prepare", 1),
+  ("prepareReply", 3, "m1", "m1", 1, server),
+  ("sign", 1),
+  ("signReply", 4, "m1", { wallet: "w1", signer: "w1", intent: 1 }, adapter),
+  ("post", 1),
+  ("postReply", 5, PostAccepted, server))
 ```
