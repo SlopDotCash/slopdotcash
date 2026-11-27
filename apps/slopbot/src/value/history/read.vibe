@@ -1,6 +1,6 @@
 // spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"
 import { sha256Hex } from "@repo/platform/crypto"
-import { first, rows, sql } from "@repo/platform/d1"
+import { first, sql } from "@repo/platform/d1"
 import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
 import { feedPageSize, hasNextPage, pageRecords } from "../../../gen/slopbot__publicFeeds.effect.vibe"
 
@@ -125,14 +125,6 @@ const storedColumns = sql`sequence, record_digest, assessment_key, record_json, 
 
 export effect function recordByDigest(digest: string) {
   return try first(StoredRecord, sql`SELECT ${storedColumns} FROM slopbot_value_journal WHERE record_digest = ${digest}`)
-}
-
-export effect function predecessorsOf(digest: string) {
-  return try rows(StoredRecord, sql`WITH RECURSIVE chain(record_digest, supersedes) AS (
-      SELECT record_digest, supersedes FROM slopbot_value_journal WHERE record_digest = ${digest}
-      UNION ALL
-      SELECT j.record_digest, j.supersedes FROM slopbot_value_journal j JOIN chain c ON j.record_digest = c.supersedes)
-    SELECT ${storedColumns} FROM slopbot_value_journal WHERE record_digest IN (SELECT record_digest FROM chain) AND record_digest <> ${digest} ORDER BY sequence`)
 }
 
 export effect function recordDigest(recordJson: string) {

@@ -42,7 +42,7 @@ function registryOfSnapshot(snapshot: LeaderboardSnapshot): RepositoryRegistry {
     nodeId: snapshot.source.repositories.find((row) => row.id === id)?.repositoryId ?? "",
     aliases: id === `${owner}/${name}` ? [] : [`${owner}/${name}`],
   }));
-  return { registered: targets, targets, projects: [...new Set(targets.map((target) => target.projectId))].map((id) => ({ id, skillSourcePath: "SKILL.md" })) };
+  return { registered: targets, targets, projects: [...new Set(targets.map((target) => target.projectId))].map((id) => ({ id, skillSourcePath: `skills/contribute-to-${id}` })) };
 }
 
 function padded(bytes: Uint8Array): Uint8Array {

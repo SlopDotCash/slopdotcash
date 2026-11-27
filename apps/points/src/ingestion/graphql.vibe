@@ -17,7 +17,7 @@ export const maxGraphqlResponseBytes = 64 * 1024 * 1024
 export const minimumStartingRateLimit = 900
 export const graphqlUserAgent = "eliza-computer-leaderboard"
 
-const gatewayFailures: ReadonlyArray<number> = [502, 503, 504]
+const gatewayFailures: ReadonlyArray<number> = [500, 502, 503, 504]
 const comparisonTimeout = "Server Error: Sorry, this diff is taking too long to generate."
 const decimalHeader = /^\d+$/u
 const unresolvedNodeMessage = "GitHub could not resolve an enumerated source node; a fresh complete census is required"
@@ -341,7 +341,14 @@ export function graphqlClient(options: GraphqlOptions) {
         requests += 1
         const exchange = try exchanged(outgoing(document, active, restPath), label)
         if (exchange.kind === "transient") {
-          if (attempt === maxGraphqlRequestAttempts) throw new GraphqlFailed({ message: exchange.timedOut ? `${label} request timed out after ${timeoutMs}ms (${attempt}/${maxGraphqlRequestAttempts})` : `${label} network request failed (${attempt}/${maxGraphqlRequestAttempts})` })
+          if (attempt === maxGraphqlRequestAttempts) {
+            const message = exchange.timedOut
+              ? `${label} request timed out after ${timeoutMs}ms (${attempt}/${maxGraphqlRequestAttempts}${describePageSize(active)})`
+              : `${label} network request failed (${attempt}/${maxGraphqlRequestAttempts})`
+            if (exchange.timedOut && restPath === undefined) throw new GraphqlUpstream({ message, status: 504 })
+            throw new GraphqlFailed({ message })
+          }
+          if (exchange.timedOut && restPath === undefined) active = narrowedPageSize(active) ?? active
           try backoff(attempt)
           continue
         }

@@ -2,13 +2,12 @@
 import { hexToBytes } from "@noble/hashes/utils.js"
 import { networkTerms } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { resolverMaySign } from "../../gen/fees__submissionFeeSends.effect.vibe"
-import { type ResolveTransaction, type ResolverEnv, type ResolverSigner, ResolverSignRefused, SubmissionFeeSigners, resolverSecret } from "../submissionFee/chain.vibe"
+import { type ResolveTransaction, type ResolverSigner, ResolverSignRefused, SubmissionFeeSigners } from "../submissionFee/chain.vibe"
 import { SubmissionFeeConfigInvalid } from "../submissionFee/config.vibe"
 import { STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_LEDGER, STANDING_DEPOSIT_NETWORK } from "../submissionFee/standingTerms.ts"
 import { type ResolverKey, resolveManyOf, resolverKey } from "./resolverKey.ts"
 import { solanaSeedKey } from "./solanaKey.ts"
 
-export { type ResolverEnv, resolverSecret }
 
 effect function signWith(network: string, key: ResolverKey, transaction: ResolveTransaction) {
   const intent = resolveManyOf(network, transaction)

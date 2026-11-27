@@ -11,7 +11,7 @@ import { type AwardAccount, type BindingAccount, type ProjectAccount, decodeAwar
 import { type Digest, type U64, digest, i64, u64 } from "../chain/solana/bytes.ts"
 import { bindingMessage } from "../chain/solana/messages.ts"
 import { awardAddress, awardId, bindingAddress } from "../chain/solana/pda.ts"
-import { SolanaReadRefused, type SolanaStatus, broadcastSolana as broadcastSolanaRaw, finalizedAccount, finalizedProject as finalizedProjectRaw, statusOf as statusOfRaw } from "../chain/solana/reads.vibe"
+import { SolanaReadRefused, broadcastSolana as broadcastSolanaRaw, finalizedAccount, finalizedProject as finalizedProjectRaw, statusOf as statusOfRaw } from "../chain/solana/reads.vibe"
 import { completesPrepared, transactionId, unsignedTransaction, withSignature } from "../chain/solana/transactions.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey } from "../kernels/networks.ts"
@@ -25,7 +25,7 @@ import { AttemptHeld, DeploymentRefused, NotActivated, SIGNER_STACKS, SignerUnav
 import type { IntentKind } from "./intents.ts"
 import type { SignerScope } from "./privateScope.vibe"
 
-export { SolanaPin, type SolanaStatus, finalizedAccount }
+export { SolanaPin }
 
 export const solanaSignerMarker = "slop-signer:solana-identity-attester"
 

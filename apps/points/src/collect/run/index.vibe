@@ -7,10 +7,16 @@ export { type LocalAnswer, type LocalGitObjects, type LocalGitStats, localGitObj
 export { type IngestionGitHubOptions, type TransportOptions, ingestionGitHub } from "../../ingestion/read.vibe"
 export { actionsToken, collectorRenewal } from "../../ingestion/token.vibe"
 export { ValueFeedUnavailable } from "../feeds/authoritative.vibe"
-export { audited } from "../../../gen/points__collectionMemo.effect.vibe"
-export { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AttributionPullDependency, type AttributionReferenceDependency, type AuthorRow, type CollectionMemoFile, type CommitLineRow, type LiveAnswer, MemoInvalid, MemoRefused, type MemoSession, type MemoStats, type OpenedMemo, auditSample, canonicalJson, collectionMemoFormat, openMemoFromEnv, sameFence, writeMemo } from "../memo/memo.vibe"
+export { audited, auditedAt } from "../../../gen/points__collectionMemo.effect.vibe"
+export {
+  ATTRIBUTION_RULES_VERSION, IMPLEMENTATION_MEMO_RULES_VERSION, type AttributionLog, type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult,
+  type AttributionPullDependency, type AttributionReferenceDependency, type AuthorRow, type CollectionMemoFile, type CommitLineRow, type LiveAnswer, MemoInvalid, MemoRefused,
+  type MemoSession, type MemoStats, type OpenedMemo, type RulesSource, attributionAuditOneIn, attributionChangedCodeAuditOneIn, attributionRefreshAge, attributionRefreshMs,
+  attributionRulesVersion, auditSample, canonicalJson, collectionMemoFormat, collectionMemoStatsLines, implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn,
+  implementationMemoRulesVersion, openMemoFromEnv, rulesDigest, sameFence, slowAttributionMs, watchAttribution, writeMemo,
+} from "../memo/memo.vibe"
 export { type ImplementationCollected, type ImplementationRequest, implementationFacts, publishedJournalReader } from "../implementation/facts.vibe"
-export { implementationCodeDigest, openImplementationMemo, writeImplementationMemo } from "../implementation/memo.vibe"
+export { ImplementationMemoAudit, type ImplementationMemoStats, implementationCodeDigest, implementationMemoRulesDigest, implementationMemoRulesHash, implementationMemoRulesSources, openImplementationMemo, writeImplementationMemo } from "../implementation/memo.vibe"
 export { nativeProofReader } from "../implementation/native.vibe"
 export { EvidenceUnavailable } from "../evidence/artifacts.vibe"
 export { type HistoryPage, type HistorySource, type JointPage, valueHistoryPage, workUnitHistory, workUnitHistoryPage } from "../feeds/value.vibe"

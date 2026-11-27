@@ -107,6 +107,27 @@ export type HomePageProps = HomeReads & {
   runtime: PageRuntime;
 };
 
+export function HomeHero({ runtime }: { runtime?: PageRuntime }) {
+  const journey = journeyOf(new URL(useAddress(), "https://slop.invalid"));
+  const onJourney = (chosen: HomeAudience) => {
+    if (!audienceChanges(journey, chosen)) return;
+    navigateWithin(journeyAddress(new URL(location.href), chosen).toString());
+  };
+  const onCopy = (text: string) =>
+    runtime !== undefined
+      ? runtime.runPromise(copyText(text))
+      : typeof navigator !== "undefined" && navigator.clipboard !== undefined
+        ? navigator.clipboard.writeText(text)
+        : Promise.resolve();
+  return (
+    <section className="flex flex-col items-start pt-12 pb-18 lg:pt-13 lg:pb-23 xl:pt-18 xl:pb-32">
+      <JourneySwitch journey={journey} onJourney={onJourney} />
+      <CampaignHeading key={`heading ${journey}`} journey={journey} />
+      <InstallPanel key={`install ${journey}`} journey={journey} origin={pageOrigin()} onCopy={onCopy} />
+    </section>
+  );
+}
+
 export function HomePage({ runtime, ...reads }: HomePageProps) {
   const journey = journeyOf(new URL(useAddress(), "https://slop.invalid"));
   const onJourney = (chosen: HomeAudience) => {

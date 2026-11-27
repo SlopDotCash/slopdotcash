@@ -5,6 +5,4 @@ import { webhook, webhookLimitBytes } from "./webhook.vibe"
 
 export const webhookRoute = route({ method: "POST", path: "/github/webhook", access: "public", limitKib: webhookLimitBytes / 1024, request: undefined, answer: Schema.String, rejected: "rejected", cache: "no-store" })
 
-export const ingressApi = [webhookRoute]
-
 export const ingressRoutes = handleRaw(webhookRoute, () => webhook())

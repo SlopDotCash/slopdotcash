@@ -2,9 +2,9 @@
 import * as Hex from "effect/encoding/Hex"
 import { utf8 } from "@repo/platform/crypto"
 import { runningSha256 } from "@repo/platform/digest"
-import { type Award, type Journal, type KeyParts, type Revision, type RevisionBody, journalText, keyText, revisionBodyText, revisionText } from "./canonical.ts"
+import { type Award, type Journal, type KeyParts, type Revision, type RevisionBody, journalText, keyText, revisionBodyText } from "./canonical.ts"
 import { coverageOrdered, revisionFault } from "./chain.ts"
-import { PointRevision, PointsJournal } from "./records.schema.ts"
+import { PointsJournal } from "./records.schema.ts"
 
 export error JournalBytesDiffer
 export error RevisionMismatch { id: string; check: string }
@@ -12,7 +12,6 @@ export error CoverageUnordered { repository: string }
 
 const workUnitPattern = /^wu_[a-f0-9]{64}$/u
 const pullPath = /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*$/u
-const decodeRevision = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
 const decodeJournal = Schema.decodeUnknownEffect(Schema.fromJsonString(PointsJournal))
 
 function digestHex(text: string) {
@@ -43,10 +42,6 @@ function keyHolds(award: Award) {
   return award.category === "merged-pull-request" && workUnitPattern.test(award.workUnitId) && award.key === keyDigest({ ...parts, workUnitId: award.workUnitId })
 }
 
-export effect function awardKeyHolds(award: Award) {
-  return keyHolds(award)
-}
-
 function sourceFault(award: Award): string {
   const url = URL.parse(award.sourceUrl)
   if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") return "source"
@@ -69,18 +64,6 @@ function mismatch(digest: Digested, prior: Revision | null, asOf: string): strin
   if (!digest.keyHolds) return "key"
   const fault = revisionFault(digest.revision, prior, asOf)
   return fault === "" ? sourceFault(digest.revision.award) : fault
-}
-
-effect function verify(revision: Revision, prior: Revision | null, asOf: string) {
-  const check = mismatch(digested(revision), prior, asOf)
-  if (check !== "") throw new RevisionMismatch({ id: revision.id, check })
-}
-
-export effect function storedRevision(stored: { text: string; prior: Revision | null; asOf: string }) {
-  const revision = try decodeRevision(stored.text, { onExcessProperty: "error" })
-  if (revisionText(revision) !== stored.text) throw new RevisionMismatch({ id: revision.id, check: "bytes" })
-  try verify(revision, stored.prior, stored.asOf)
-  return revision
 }
 
 export effect function journalFile(text: string) {

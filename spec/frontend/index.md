@@ -41,6 +41,7 @@ design tokens of the shared component library.
 - [Ready-label settings control](./readyLabelForm.md)
 - [Refundable deposit pay pages](./feePages.md)
 - [Requested repos page](./requestedRepos.md)
+- [Public record pages](./recordPages.md)
 
 Source requirements are PRD sections 2–4 and 6–10. The retained UI models under
 `reference/slop-main/formal/models/ui/` provide the individual legacy races and

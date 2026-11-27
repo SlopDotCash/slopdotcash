@@ -1,7 +1,7 @@
 // spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import { Address, Alert, Button, Card, CardTitle, DataState, Dialog, DialogContent, DialogTitle, ExternalLink, NetworkMark, Spinner, WalletChooser } from "@repo/ui";
 import { Check, Eye, Pencil, Plus, TriangleAlert, Wallet } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { type Chain, NETWORKS } from "@repo/settlement/kernels/networks";
 import { CHAIN_NAMES, formatAssetAmount, networkLabel } from "../../kernels/assetText.ts";
 import type { Family, WalletOffer } from "../../wallets/core/discovery.vibe";
@@ -54,10 +54,11 @@ function Confirmed({ ok }: { ok: boolean }) {
 type FamilyCardProps = Pick<WalletManagementProps, "panel" | "onConfirmChange" | "onKeepSaved" | "onCopy"> & {
   account: PaymentsAccount;
   family: Family;
-  onPick: () => void;
+  onPick: (trigger: HTMLButtonElement) => void;
 };
 
 function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSaved, onCopy }: FamilyCardProps) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const label = familyLabels[family];
   const rows = familyChains(family).map((chain) => ({
     chain,
@@ -122,12 +123,13 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
             ) : null}
           </div>
           <Button
+            ref={triggerRef}
             variant="secondary"
             size="icon"
             loading={busy}
             disabled={panel.busy !== undefined || panel.change !== undefined}
             aria-label={busy ? "Confirm in your wallet…" : `${changing ? "Change" : "Connect"} ${label} wallet`}
-            onClick={onPick}
+            onClick={(event) => onPick(event.currentTarget)}
           >
             {busy ? null : changing ? <Pencil aria-hidden className="size-4" /> : <Plus aria-hidden className="size-4" />}
           </Button>
@@ -159,7 +161,13 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
             </p>
             <div className="flex flex-wrap gap-2">
               <Button onClick={onConfirmChange}>Register</Button>
-              <Button variant="secondary" onClick={onKeepSaved}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  onKeepSaved();
+                  triggerRef.current?.focus();
+                }}
+              >
                 Keep saved
               </Button>
             </div>
@@ -191,16 +199,29 @@ function Downloads({ family }: { family: Family }) {
 /** The payout wallet of each family, its confirmation on each chain, and the way to connect or change it. */
 export function WalletManagement({ panel, offers, signInHref, onReload, onConnect, onConfirmChange, onKeepSaved, onCopy }: WalletManagementProps) {
   const [picker, setPicker] = useState<Family | undefined>(undefined);
+  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const picking = families.find((family) => family.id === picker);
   const failure = [panel.error, panel.loadError].filter((text) => text !== "");
   const account = panel.account;
   return (
     <div className="flex flex-col gap-4">
-      <Dialog open={picking !== undefined} onOpenChange={(open) => {
-          if (!open) setPicker(undefined);
-        }}>
+      <Dialog
+        open={picking !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPicker(undefined);
+            pickerTriggerRef.current?.focus();
+          }
+        }}
+      >
         {picking ? (
-          <DialogContent closeLabel="Close wallet picker">
+          <DialogContent
+            closeLabel="Close wallet picker"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              pickerTriggerRef.current?.focus();
+            }}
+          >
             <DialogTitle>
               Connect {picking.article} {familyLabels[picking.id]} wallet
             </DialogTitle>
@@ -242,7 +263,19 @@ export function WalletManagement({ panel, offers, signInHref, onReload, onConnec
         <DataState status={failure.length > 0 ? "Stale" : "Current"}>
           <section aria-label="Payout wallets" className="flex flex-col gap-4">
             {families.map(({ id }) => (
-              <FamilyCard key={id} account={account} family={id} panel={panel} onPick={() => setPicker(id)} onConfirmChange={onConfirmChange} onKeepSaved={onKeepSaved} onCopy={onCopy} />
+              <FamilyCard
+                key={id}
+                account={account}
+                family={id}
+                panel={panel}
+                onPick={(trigger) => {
+                  pickerTriggerRef.current = trigger;
+                  setPicker(id);
+                }}
+                onConfirmChange={onConfirmChange}
+                onKeepSaved={onKeepSaved}
+                onCopy={onCopy}
+              />
             ))}
           </section>
         </DataState>

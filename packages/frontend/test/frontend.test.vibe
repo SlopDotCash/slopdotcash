@@ -33,7 +33,7 @@ import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import { paymentNetworks, reservedAwardFeedAccess, settlement } from "@repo/settlement/live"
 import { api as slopbotApi } from "@repo/slopbot/client"
 import { slopbot } from "@repo/slopbot/live"
-import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
+import { type Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { Machine as EmailActions } from "../gen/frontend__emailAction.effect.vibe"
 import { readEntry } from "../gen/frontend__snapshotCache.effect.vibe"
 import { decideDispute, listDisputes, openDispute, readDispute } from "../src/flows/account/disputes.vibe"
@@ -353,7 +353,7 @@ module accountWorld {
     const sent: Array<Sent> = []
     const requests: Array<string> = []
     const hooks = new Map<string, () => void>()
-    const answers = new Map<string, number>()
+    const answers = new Map<string, number[]>()
     let jar = ""
     let served: Served | undefined = undefined
     const mf: StartedWorker = startWorker({
@@ -383,9 +383,10 @@ module accountWorld {
         hooks.delete(route)
         hook()
       }
-      const answered = answers.get(route)
+      const queued = answers.get(route)
+      const answered = queued?.shift()
       if (answered !== undefined) {
-        answers.delete(route)
+        if (queued !== undefined && queued.length === 0) answers.delete(route)
         return answer(answered, { error: "unavailable" })
       }
       const headers: Record<string, string> = { ...Object.fromEntries(request.headers), "cf-connecting-ip": address }
@@ -408,7 +409,9 @@ module accountWorld {
         hooks.set(route, act)
       },
       answerNext: (route, status) => {
-        answers.set(route, status)
+        const queued = answers.get(route) ?? []
+        queued.push(status)
+        answers.set(route, queued)
       },
       serveOperations: (handler) => {
         served = handler
@@ -976,10 +979,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 
 {
   type Session = SessionArea
-  const Request = MiniflareRequest
-  type Request = MiniflareRequest
   const Response = MiniflareResponse
-  type Response = MiniflareResponse
 
   const appRoot = new URL("../../../apps/app/", import.meta.url).pathname
   const roles = { ADMIN_GITHUB_IDS: "18633264,202660855", PROJECT_MODERATOR_GITHUB_IDS: "18633264,202660855" }
@@ -1017,7 +1017,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 
   const served: { html: string } = { html: shell }
 
-  function assets(request: Request) {
+  function assets(request: MiniflareRequest) {
     const { pathname } = new URL(request.url)
     if (pathname.endsWith(".png")) return new Response("png", { headers: { "content-type": "image/png" } })
     return new Response(served.html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=0" } })
@@ -1419,10 +1419,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 }
 
 {
-  const Request = MiniflareRequest
-  type Request = MiniflareRequest
   const Response = MiniflareResponse
-  type Response = MiniflareResponse
 
   const shell = `<!doctype html><html lang="en"><head><title>Slop</title></head><body><div id="root"></div></body></html>`
 
@@ -1442,7 +1439,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
   }
 
   function recorder(name: string, asked: string[]) {
-    return (request: Request) => {
+    return (request: MiniflareRequest) => {
       asked.push(`${name} ${request.method} ${new URL(request.url).pathname}`)
       return new Response(null, { status: 503 })
     }
@@ -1585,7 +1582,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       provide page(world, stores) {
         const browser = try BrowserSession
         const erased: Array<number> = []
-        try stores.session.values.set("slop-report-compose:1", "private report text")
         try scoped(effect {
           try browser.onAccountChange((actorId) => effect {
             erased.push(actorId)
@@ -1603,6 +1599,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           const lifetime = try browser.lifetime()
           const received = try browser.acceptPrivate(lifetime, 3, true)
           const began = try browser.compose({ type: "beginReport", projectId: 1 })
+          try stores.session.values.set("slop-report-compose:1", "private report text")
           const writing = try shape()
           try browser.observe("revalidate")
           const refreshed = try shape()
@@ -1658,13 +1655,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const { world } = try Browser
       const stores = try tab()
       const opened = <A, E, R>(steps: A!E!R) => onPage(world, stores, steps)
-      const octoCookie = try opened(effect {
+      try opened(effect {
         try signedInAs(world, "octo")
         const request = { email: "octo@example.test", enabled: true, idempotencyKey: "octo-request-0001", securityEnabled: true }
         try call(emailVerification, { body: request }, { limitBytes: 4096, expectedActor: "7" })
-        const cookie = world.cookie()
         try (try BrowserSession).signOut()
-        return cookie
       })
       const token = world.sent.find((mail) => mail.githubId === "7")?.token ?? ""
       const first = try opened(effect {
@@ -1679,6 +1674,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const afterSignIn = try actions.get()
         return { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] }
       })
+      const octoCookie = world.cookie()
       const reloaded = try opened(effect {
         const link = try EmailLink
         const actions = try EmailActions
@@ -1732,7 +1728,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 
 {
   const Response = MiniflareResponse
-  type Response = MiniflareResponse
 
   const origin = "https://slop.test"
   const generatedAt = "2026-11-01T00:00:00.000Z"
@@ -2060,7 +2055,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 
 {
   const Response = MiniflareResponse
-  type Response = MiniflareResponse
 
   const origin = "https://slop.test"
   const generatedAt = "2026-11-01T00:00:00.000Z"
@@ -2272,13 +2266,15 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const now = new Date(generatedMs)
       const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
       const slop = projects[0]
+      if (slop === undefined) throw new Error("expected slop project")
+      const reward = slop.reward as Record<string, unknown>
       const pinnedPositive = {
         ...slop,
-        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), monthlyCapUsd: 0, cycleCaps: { [month]: 500 } } },
+        reward: { ...reward, monthlyCapMinor: "0", cycleCaps: [{ cycleId: month, monthlyCapMinor: "500000000" }] },
       }
       const pinnedZero = {
         ...slop,
-        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), cycleCaps: { [month]: 0 } } },
+        reward: { ...reward, cycleCaps: [{ cycleId: month, monthlyCapMinor: "0" }] },
       }
       try same(try orDie(Effect.try(() => [...projects.map((project) => [project.id, publishedShare(project, now)]), ["pinnedPositive", publishedShare(pinnedPositive, now)], ["pinnedZero", publishedShare(pinnedZero, now)]])), [
         ["slop", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
@@ -2450,6 +2446,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           recipient: (try inbox.view()).recipient,
         }
         world.answerNext("GET /api/v1/notifications", 503)
+        const recoveredFrom = world.requests.length
+        try returnToTab(browser, inbox)
+        const recoveredReturn = { ...shape(try inbox.view()), lists: world.requests.slice(recoveredFrom).filter((sent) => sent === "GET /api/v1/notifications").length }
+        world.answerNext("GET /api/v1/notifications", 503)
+        world.answerNext("GET /api/v1/notifications", 503)
         const failedFrom = world.requests.length
         try returnToTab(browser, inbox)
         const failedReturn = { ...shape(try inbox.view()), lists: world.requests.slice(failedFrom).filter((sent) => sent === "GET /api/v1/notifications").length }
@@ -2465,7 +2466,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const switched = viewActor(try session.view())
         const otherInbox = shape(try readyFor(inbox.changes, other))
         const incompleteReads = requestsOf(world, "GET /api/v1/notifications/incomplete-assessments")
-        const steps = { signedOut, signedOutLists, incompleteReads, loaded: shape(loaded), unread, returned, failedReturn, retried, marked, acknowledged, ignoredKeys, raced, awardReadAt, switched, otherInbox }
+        const steps = { signedOut, signedOutLists, incompleteReads, loaded: shape(loaded), unread, returned, recoveredReturn, failedReturn, retried, marked, acknowledged, ignoredKeys, raced, awardReadAt, switched, otherInbox }
         try same(steps, {
           signedOut: { status: "signedOut", recipient: null, unread: undefined, rows: undefined, message: undefined, done: undefined, actionError: undefined, busy: false },
           signedOutLists: 0,
@@ -2489,6 +2490,17 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
             keptSession: true,
             recipient: reader,
           },
+          recoveredReturn: {
+            status: "ready",
+            recipient: reader,
+            unread: 3,
+            rows: [["security-case:account-1", false, false], ["project-revision:account-1", false, "none"], ["award-reserved:account-1", false, "none"]],
+            message: undefined,
+            done: undefined,
+            actionError: undefined,
+            busy: false,
+            lists: 2,
+          },
           failedReturn: {
             status: "failed",
             recipient: reader,
@@ -2498,7 +2510,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
             done: undefined,
             actionError: undefined,
             busy: false,
-            lists: 1,
+            lists: 2,
           },
           retried: {
             status: "ready",
@@ -2940,7 +2952,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const reason = try (try D1).all(sql`SELECT reason FROM project_revisions WHERE project_id = ${id} AND revision = 3`)
         const application = "app_journey00001"
         const text = JSON.stringify(try manifest("journey-pending", "other", otherId))
-        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent')`)
+        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z')`)
         const cancelled = (try cancelProjectApplication(application, steward)).status
         try same({
           owned: owned.includes(`member-${stewardId}/tool`),
@@ -2969,7 +2981,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           checked: ["ready", "none", 2, "active"],
           revised: [3, ["headline"]],
           stale: ["Refused", 409, "stale_revision"],
-          reason: [{ reason: "Clearer headline" }],
+          reason: [{ reason: "Owner update by @member-41: presentation (headline) published. Clearer headline" }],
           cancelled: "cancelled",
           unexpected: [],
         })

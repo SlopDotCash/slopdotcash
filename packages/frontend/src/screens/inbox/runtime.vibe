@@ -34,11 +34,11 @@ function forgetPrivateQuery() {
 
 effect function forgottenOnRecipientChange(inbox: Inbox.Shape) {
   let held: string | null = null
-  for try (const view of inbox.changes) {
+  try Stream.runForEach(inbox.changes, (view) => effect {
     const settled = view.recipient !== null || view.status === "signedOut"
     if (settled && held !== null && view.recipient !== held) forgetPrivateQuery()
     if (settled) held = view.recipient
-  }
+  })
 }
 
 const inboxWatch = Layer.effectDiscard(effect {
@@ -75,7 +75,7 @@ export function inboxRuntime(page: PageRuntime): InboxRuntime {
 }
 
 export effect function watchInbox(show: (view: InboxView) => void!!) {
-  for try (const view of (try Inbox).changes) try show(view)
+  try Stream.runForEach((try Inbox).changes, show)
 }
 
 export effect function loadInbox() {

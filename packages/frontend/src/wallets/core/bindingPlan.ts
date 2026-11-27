@@ -1,5 +1,5 @@
 // spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
-import { type Address, type Blockhash, base58Encode, isAddress, isBlockhash } from "@repo/platform/chain/solana";
+import { type Address, base58Encode, isAddress, isBlockhash } from "@repo/platform/chain/solana";
 import { bytes32, evmAddress } from "@repo/settlement/chain/evm/abi";
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks";
 import { bindingTypedData } from "@repo/settlement/chain/evm/typedData";
@@ -134,6 +134,6 @@ export function expectedSolanaMessage(prepared: Uint8Array, context: SolanaBindi
     expiresAt,
   });
   if (built.kind !== "built") return undefined;
-  const compiled = compileLegacy({ payer, blockhash: blockhash as Blockhash, instructions: [built.value] });
+  const compiled = compileLegacy({ payer, blockhash, instructions: [built.value] });
   return compiled.kind === "compiled" ? compiled.bytes : undefined;
 }

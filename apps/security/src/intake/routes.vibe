@@ -2,7 +2,7 @@
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { randomId, randomToken, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, Caller, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
 import { Registry, Restrictions } from "@repo/ports/backend"
 import { Rejected as CaseRejected, mayReadBody } from "../../gen/security__cases.effect.vibe"
 import type { Intake } from "../../gen/security__intake.ts"
@@ -10,6 +10,7 @@ import { Rejected, reportBytesAccepted } from "../../gen/security__intake.effect
 import { Rejected as ScreeningRejected, canReplace, revisionPermitted } from "../../gen/security__screening.effect.vibe"
 import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
 import { intakeReadiness, reviseReport, submitReport } from "../client/intake.vibe"
+import { IntakeApp } from "../forwarding/grant.vibe"
 import { directCreated } from "../forwarding/routes.vibe"
 import { postSecuritySubmissions as createRows, postSecuritySubmissionsByIdReport as reviseRows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -107,8 +108,10 @@ effect function reportingRepository(id: string) {
   return { project, program, repository: index + 1 }
 }
 
-effect function create(actor: Actor) {
+effect function create() {
   const body = try requestObject(submitReport.limitKib, createRows.invalidRequestRequestBodyMustBe)
+  if (!Object.hasOwn(body, "report") && body.origin !== "slop" && (try IntakeApp).app === undefined) throw refuse(404, "not_found", "Submission not found")
+  const actor = try (try Caller).current(submitReport)
   const settings = try IntakeSettings
   if (!Object.hasOwn(body, "report") && body.origin === "slop") throw refused(createRows.reportRequired)
   if (!Object.hasOwn(body, "report")) return try directCreated(actor, body)
@@ -247,7 +250,7 @@ effect function revise(actor: Actor, id: string) {
 }
 
 export const intakeRoutes = Layer.mergeAll(
-  handleRaw(submitReport, (input) => create(input.actor)),
+  handleRaw({ ...submitReport, access: "public" }, () => create()),
   handleRaw(reviseReport, (input) => revise(input.actor, input.params.id ?? "")),
   handleRaw(intakeReadiness, (input) => cachedReadiness(input.params.id ?? "")),
 )

@@ -2,7 +2,6 @@
 // spec/settlement/referrals.md, "Poster gas has transaction and UTC-day ceilings"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
 
 export const PER_TRANSACTION_WEI = 200000000000000n;
-export const PER_DAY_WEI = 2000000000000000n;
 
 /** @throws {never} */
 export function gasLimitWithMargin(estimate: bigint): bigint {

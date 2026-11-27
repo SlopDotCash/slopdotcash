@@ -5,17 +5,17 @@ import { EvmRpc, type Hex, evmRpc, keccak } from "@repo/platform/chain/evm"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import { type ServiceNetwork, type Stack, attesterTransactionAllowed, gasCeilingValid, reviewedActivation, stackMaySign } from "../../gen/settlement__signer.effect.vibe"
 import { type EvmAddress, bytes32, decodeAddress, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
-import { type SignedType2, type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
+import { type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
 import { parseBaseUnits, parseNativeCostLimit, toAmount } from "../kernels/amounts.ts"
 import { MAX_FEE_PER_GAS, gasWithMargin, sendFees } from "../kernels/attesterLimits.ts"
 import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import type { Entries } from "../journal/journal.vibe"
 import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
-import { PinnedDeployment, PinnedReview, PinnedSupersededReview, PinnedUpgrade, SIGNER_STACKS, type StackSecrets } from "../vault/pins.vibe"
+import { PinnedDeployment, PinnedReview, SIGNER_STACKS } from "../vault/pins.vibe"
 import type { EvmDeployment, EvmUpgrade, SupersededReview } from "../vault/policy.vibe"
 import { type IntentKind, intentOperation } from "./intents.ts"
 
-export { PinnedDeployment, PinnedReview, PinnedSupersededReview, PinnedUpgrade, SIGNER_STACKS, type StackSecrets }
+export { PinnedDeployment, SIGNER_STACKS }
 
 export const signerMarker = "slop-signer:identity-attester"
 
@@ -360,4 +360,3 @@ export effect function plainSigner(deployment: Deployment) {
   if ((try (try EvmRpc).code(deployment.identityAuthority, "latest")) !== "0x") throw new AttemptHeld({ reason: "Cancellation requires a plain signer account" })
 }
 
-export type { SignedType2 }

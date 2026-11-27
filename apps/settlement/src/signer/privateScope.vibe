@@ -1,19 +1,9 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
 import { ConfigInvalid } from "@repo/platform/config"
-import { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopeKind, type ScopedPins, type SignerScope, scopeOfPath, securityJournal } from "../journal/scopes.vibe"
+import { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopedPins, type SignerScope, scopeOfPath } from "../journal/scopes.vibe"
 import { type AttesterVars, attesterConfig } from "./evm.vibe"
-import type { IntentKind } from "./intents.ts"
 
-export { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopeKind, type ScopedPins, type SignerScope, scopeOfPath, securityJournal }
-
-export error OutOfScope { scope: ScopeKind; intent: IntentKind }
-
-const ordinaryOnly: ReadonlySet<IntentKind> = new Set(["SignMonthlyRoot", "ApproveReserveRelease"])
-
-export effect function admitIntent(scope: SignerScope, intent: IntentKind) {
-  if (scope.kind === "security-bounty" && ordinaryOnly.has(intent)) throw new OutOfScope({ scope: scope.kind, intent })
-  return scope
-}
+export { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopedPins, type SignerScope, scopeOfPath }
 
 export effect function scopedAttesterConfig(scope: SignerScope, vars: AttesterVars, pins: ScopedPins) {
   const text = pins[scope.pinsVar]

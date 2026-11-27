@@ -281,8 +281,6 @@ effect function gather(job: ValueRequest, claim: Claim) {
   }
 }
 
-export type Consumed = Awaited<ReturnType<typeof recordOutcome>> | "not-claimed" | "lease-lost"
-
 export effect function consumeValueRequest(job: ValueRequest, run: Run) {
   const claimed = try claimRequest(run, job.deliveryId)
   if (claimed === undefined) return { outcome: "not-claimed", run } as const

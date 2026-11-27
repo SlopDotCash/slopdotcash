@@ -34,7 +34,7 @@ export const workflowPathCheckCatchesRenamedGithubPaths = exactly<ReadonlyArray<
 
 export const projectManifestIntegrationBranchRequiresExactPilotIdentity = exactly<string, unknown>([
   [
-    Buffer.from(JSON.stringify({ repository: { fullName: pilotRepository, id: String(pilotRepositoryId), integrationBranch: "development" } })).toString("base64"),
+    Buffer.from(JSON.stringify({ repository: { fullName: pilotRepository, id: String(pilotRepositoryId), integrationBranch: "develop" } })).toString("base64"),
     { ok: true, value: true },
   ],
   [
@@ -42,14 +42,14 @@ export const projectManifestIntegrationBranchRequiresExactPilotIdentity = exactl
     { ok: true, value: false },
   ],
   [
-    Buffer.from(JSON.stringify({ repository: { fullName: "other/repo", id: String(pilotRepositoryId), integrationBranch: "development" } })).toString("base64"),
+    Buffer.from(JSON.stringify({ repository: { fullName: "other/repo", id: String(pilotRepositoryId), integrationBranch: "develop" } })).toString("base64"),
     { ok: true, value: false },
   ],
   [
     Buffer.from("not-json").toString("base64"),
-    { ok: false, reason: ".github/slop-project.json on development is not valid JSON" },
+    { ok: false, reason: ".github/slop-project.json on develop is not valid JSON" },
   ],
-], (content) => parseRegisteredIntegrationBranch({ encoding: "base64", content }, pilotRepository, "development"));
+], (content) => parseRegisteredIntegrationBranch({ encoding: "base64", content }, pilotRepository, "develop"));
 
 export const labelEventRequiresSlopbotWithoutForcePush = exactly<ReadonlyArray<unknown>, boolean>([
   [[{ event: "labeled", created_at: "2026-11-25T10:05:00Z", label: { name: readyLabelName }, actor: { id: slopbotBotId, login: slopbotBotLogin, type: "Bot" } }], true],

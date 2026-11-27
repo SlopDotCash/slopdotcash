@@ -312,9 +312,3 @@ export effect function settlementView(context: CaseContext) {
     },
   } satisfies DirectSettlementView
 }
-
-export const directPaymentActions = {
-  "consent-payment": consentPayment,
-  "prepare-payment": preparePayment,
-  "verify-payment": verifyPayment,
-}

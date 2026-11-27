@@ -117,6 +117,26 @@ export function openMonthScores(request: GlobalRequest): { readonly events: Read
   return { events, penalties, deductions: penaltyDeductions(registryOf(request.registry), events, penalties) };
 }
 
+/** @throws {RangeError} */
+export function penaltyAppliedThirds(request: GlobalRequest, journalApplied?: ReadonlyMap<string, number>): Map<string, number> {
+  const projectOf = projectOfRepository(request);
+  const archived = new Set(request.cycles.map((cycle) => cycleKey(cycle.projectId, cycle.cycleId)));
+  const open = openMonthScores(request).deductions.byPenalty;
+  const applied = new Map<string, number>();
+  for (const penalty of request.snapshot.penalties ?? []) {
+    const journalThirds = journalApplied?.get(penalty.id);
+    if (journalThirds !== undefined) {
+      applied.set(penalty.id, journalThirds);
+      continue;
+    }
+    const project = projectOf(penalty.repository);
+    if (!archived.has(cycleKey(project.id, penalty.occurredAt.slice(0, 7)))) {
+      applied.set(penalty.id, open.get(penalty.id) ?? 0);
+    }
+  }
+  return applied;
+}
+
 function talliesOf(request: GlobalRequest): { readonly tallies: ReadonlyArray<Tally>; readonly entries: ReadonlyArray<StandingEntry> } {
   const projectOf = projectOfRepository(request);
   const current = new Map(request.snapshot.leaders.map((leader) => [leader.actor.id, leader.actor]));

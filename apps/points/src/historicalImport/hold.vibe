@@ -2,7 +2,7 @@
 import type { Journal } from "../kernels/records/canonical.ts"
 import { batchDigest } from "../kernels/records/ids.vibe"
 import { compareCodeUnits } from "../client/snapshot/checks.vibe"
-import { type Completion, type Event, type Imports, type Reconciliation, Machine, canInvalidate, find, held, includesSource, initial, machineOver } from "../../gen/points__historicalImport.effect.vibe"
+import { type Completion, type Event, type Imports, type Reconciliation, Machine, canInvalidate, held, initial, machineOver } from "../../gen/points__historicalImport.effect.vibe"
 
 export error HoldRecordInvalid { id: number; message: string }
 
@@ -74,11 +74,4 @@ export effect function historicalHolds(journal: Journal, records: ReadonlyArray<
 
 export function publicationHeld(holds: Holds) {
   return holds.state.ids.some((id) => held(holds.state, id))
-}
-
-export function releaseOf(holds: Holds, sourceNodeId: string) {
-  const source = holds.sourceNumbers.get(sourceNodeId)
-  if (source === undefined) return undefined
-  const importId = holds.state.released.find((id) => includesSource(find(holds.state, id), source))
-  return importId === undefined ? undefined : { importId, imported: find(holds.state, importId), source }
 }

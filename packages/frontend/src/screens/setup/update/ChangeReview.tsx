@@ -38,8 +38,8 @@ function ChangeValue({ field, value }: { field: ChangeField; value: string }) {
       </Chip>
     );
   }
-  if (field === "image") return value ? <img src={value} alt="Custom avatar" width={32} height={32} /> : "GitHub avatar";
-  return value;
+  if (field === "image") return value ? <img src={value} alt="Custom avatar" width={32} height={32} /> : <span>GitHub avatar</span>;
+  return <span>{value}</span>;
 }
 
 /** What publishing does: each value now beside the value proposed with its effect, and the effects of changes that have no row of their own. */

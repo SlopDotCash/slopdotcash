@@ -21,8 +21,6 @@ export interface LineWeight { actorId: string; lines: number }
 
 export type LineWeights = { kind: "weights"; weights: LineWeight[] } | { kind: "incomplete" };
 
-export const agentCommitAccountIds: string[] = ["MDQ6VXNlcjgxODQ3", "U_kgDOD-0LXg", "U_kgDOC972lw"];
-
 /** @throws {never} */
 //@ pure
 export function isAgentAccount(id: string): boolean {
@@ -39,13 +37,6 @@ export function commitActorKind(actor: CommitActor): ActorKind {
 //@ pure
 export function isCreditEligibleCommitAuthor(actor: CommitActor | null): boolean {
   return actor !== null && actor.kind !== "Bot" && !isAgentAccount(actor.id);
-}
-
-/** @throws {never} */
-export function eligibleAuthorKind(actor: CommitActor): boolean {
-  //@ ensures \result === isCreditEligibleCommitAuthor(actor)
-  //@ ensures \result === eligibleKind(commitActorKind(actor))
-  return eligibleKind(commitActorKind(actor));
 }
 
 /** @throws {never} */

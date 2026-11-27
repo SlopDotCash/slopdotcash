@@ -1,6 +1,7 @@
 // spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { Coverage, PointRevision } from "../kernels/records/records.schema.ts"
+import { POINTS_PER_THIRD } from "./units/scoreUnits.ts"
 
 export const pointsRule = "slop-points-v1"
 export const shardCount = 16
@@ -49,6 +50,27 @@ export schema PointsSummary {
   readonly indexDigest: string
   readonly totals: SummaryTotals
   readonly contributors: ReadonlyArray<SummaryContributor>
+}
+
+interface PenaltyRevision {
+  readonly award: {
+    readonly key: string
+    readonly category: string
+    readonly amount: number
+    readonly workUnitId: string
+  }
+}
+
+export function journalPenaltyAppliedThirds(journal: { readonly revisions: ReadonlyArray<PenaltyRevision> }): Map<string, number> {
+  const latest = new Map<string, PenaltyRevision>()
+  for (const revision of journal.revisions) latest.set(revision.award.key, revision)
+  const applied = new Map<string, number>()
+  for (const revision of latest.values()) {
+    const { award } = revision
+    if (award.category !== "slopbot-penalty") continue
+    applied.set(award.workUnitId, Math.abs(award.amount) / POINTS_PER_THIRD)
+  }
+  return applied
 }
 
 export const pointsJournal = route({ method: "GET", path: "/api/v1/points/journal", access: "public", limitKib: 1, request: undefined, answer: JournalPage, rejected: "points_unavailable", cache: "no-store" })
