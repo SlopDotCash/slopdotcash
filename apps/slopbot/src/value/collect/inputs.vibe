@@ -4,7 +4,7 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { Git } from "@repo/platform/git"
 import type { MergeRecipe } from "@repo/platform/git/evidence"
 import { GitHub } from "@repo/platform/github"
-import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, audited, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
+import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, auditedAt, collectionMemoStatsLines, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
 import { type AttributionHold, type CensusOutcome, type HeldWorkUnit, type HistoricalClosedContext, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
 import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
@@ -485,19 +485,6 @@ effect function timedAttribution<A, E, R>(pull: string, log: AttributionLog | un
   })
 }
 
-export function collectionMemoStatsLines(session: MemoSession): string {
-  const { reused, read } = session.commitLines.counts
-  const { stats } = session
-  const counts = `[slop.cash] collection memo: commit statistics ${reused} reused, ${read} read; attributions ${stats.reused} reused, ${stats.live} computed live, ${stats.audited} audited, ${stats.auditMismatches} audit mismatches, ${stats.fenceMisses} changed since the last collection\n`
-  if (session.notReusable.size === 0) return counts
-  const reasons = [...session.notReusable]
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 20)
-    .map(([reason, count]) => `${count} x ${reason}`)
-    .join("; ")
-  return `${counts}[slop.cash] attributions not recorded for reuse: ${reasons}\n`
-}
-
 effect function attributions(run: Run, outcomes: ReadonlyArray<CensusOutcome>, owners: ReadonlyMap<string, string>) {
   const found: Attribution = { credits: [], holds: [] }
   const memo = run.options.memo
@@ -509,7 +496,7 @@ effect function attributions(run: Run, outcomes: ReadonlyArray<CensusOutcome>, o
     for (const outcome of outcomes) {
       if (!reusable.has(outcome.id)) continue
       const sample = try auditSample(outcome.id, memo.cutoffAt)
-      if (!audited(sample)) continue
+      if (!auditedAt(sample, memo.session.auditOneIn)) continue
       const pull = `${repositoryOf(outcome.url)}#${outcome.number}`
       const live = try timedAttribution(
         pull,

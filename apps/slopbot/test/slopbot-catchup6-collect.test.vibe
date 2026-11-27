@@ -1,4 +1,4 @@
-// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead beside the loop within a bounded window and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
+// spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced or when the attribution rules changed"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead beside the loop within a bounded window and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { webCrypto } from "@repo/platform/crypto"
@@ -9,7 +9,7 @@ import { temporaryFailure } from "@repo/platform/program"
 import type { GitHubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
-import { type AuthorRow, type OpenedMemo, auditSample, audited, graphqlClient, openMemoFromEnv, writeMemo } from "@repo/points/collect"
+import { type AuthorRow, type OpenedMemo, attributionChangedCodeAuditOneIn, attributionRulesDigest, attributionRulesHash, auditSample, audited, auditedAt, graphqlClient, openMemoFromEnv, writeMemo } from "@repo/points/collect"
 import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { historyOrigin } from "@repo/ports/slopbot"
 import type { RegisteredRepository } from "../src/value/evidence/types.vibe"
@@ -58,20 +58,24 @@ effect function attributionOutcome(world: Seeded) {
   return { id: pull.nodeId, url: `https://github.com/${repository}/pull/1`, number: 1, headRefOid: world.head, updatedAt: pull.updatedAt, mergedAt, closedAt: null, commits: [{ oid: world.head, author: null, parentCount: 1 }] } satisfies CensusOutcome
 }
 
-effect function memoFrom(input: string, output: string) {
+effect function memoFrom(input: string, output: string, digest = codeDigest) {
   provide ConfigProvider.layer(ConfigProvider.fromUnknown({ ...trustedMain, SLOP_COLLECTION_MEMO: input, SLOP_COLLECTION_MEMO_OUT: output })) {
-    const opened = try openMemoFromEnv(codeDigest)
+    const opened = try openMemoFromEnv(digest)
     if (opened === undefined) return try Effect.die(new Error("collection memo settings were not read"))
     return opened
   }
 }
 
-effect function cutoffWhere(outcomeId: string, wanted: boolean) {
+effect function cutoffMatching(outcomeId: string, match: (sample: number) => boolean) {
   for (let second = 0; second < 10_000; second += 1) {
     const cutoffAt = new Date(Date.UTC(2026, 10, 20, 0, 0, second)).toISOString()
-    if (audited(try auditSample(outcomeId, cutoffAt)) === wanted) return cutoffAt
+    if (match(try auditSample(outcomeId, cutoffAt))) return cutoffAt
   }
   return try Effect.die(new Error("no cutoff with the wanted audit sample"))
+}
+
+effect function cutoffWhere(outcomeId: string, wanted: boolean) {
+  return try cutoffMatching(outcomeId, (sample) => audited(sample) === wanted)
 }
 
 effect function attributed(reads: Reads, opened: OpenedMemo, cutoffAt: string, census: ValueCensus, options: Omit<ValueInputsOptions, "repositories" | "memo"> = {}) {
@@ -106,7 +110,7 @@ function credited(result: { readonly kind: string; readonly inputs?: { readonly 
   return (result.inputs?.retainedCommitCredits ?? []).map((credit) => [credit.commitSha, credit.actor.id, credit.actor.login])
 }
 
-describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => {
+describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced or when the attribution rules changed"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => {
   it.live("a live attribution records every fenced input, an unchanged one is reused with no discovery reads, and a reused author is read live", () => effect {
     provide NodeServices.layer, webCrypto {
       const fs = try FileSystem.FileSystem
@@ -151,6 +155,42 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
     }
   })
 
+  it.live("after an unrelated code change, 1-in-10 audit catches mismatches missed by 1-in-50, reports the active audit rate, and attribution rule sources match their pinned digest", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      const reads = widgetsReads(world)
+      const outcome = try attributionOutcome(world)
+      const census = { value: [], attribution: [outcome] } satisfies ValueCensus
+      const changedCodeCutoff = try cutoffMatching(outcome.id, (sample) => auditedAt(sample, attributionChangedCodeAuditOneIn) && !audited(sample))
+      try attributed(reads, try memoFrom("", `${directory}/first.json`), changedCodeCutoff, census)
+      const grace = try Effect.try(() => world.fake.world.account("grace"))
+      const earlier = try Effect.try(() => world.fake.world.pull(repository, 2))
+      try withAuthors(`${directory}/first.json`, `${directory}/authors.json`, [world.head, grace.nodeId, earlier.nodeId, `https://github.com/${repository}/pull/2`, world.base])
+      const lines: string[] = []
+      const before = requested(world, discoveryRead)
+      const opened = try memoFrom(`${directory}/authors.json`, `${directory}/audited-changed-code.json`, "b".repeat(64))
+      const audit = try attributed(reads, opened, changedCodeCutoff, census, { attributionLog: { thresholdMs: Number.MAX_SAFE_INTEGER, write: (line) => { lines.push(line) } } })
+      const pinnedHash = try attributionRulesHash(new URL("../../..", import.meta.url).pathname)
+      try same({
+        stats: audit.stats,
+        credits: credited(audit.result),
+        recorded: audit.recorded,
+        discovery: requested(world, discoveryRead) - before,
+        statsLineHasRefreshAndRate: lines.some((line) => line.includes("past their refresh age") && line.includes(`audited (1 in ${attributionChangedCodeAuditOneIn})`)),
+        pinnedHash,
+      }, {
+        stats: stats(0, 0, 1, 1, 0),
+        credits: [],
+        recorded: [outcome.id],
+        discovery: 1,
+        statsLineHasRefreshAndRate: true,
+        pinnedHash: attributionRulesDigest,
+      })
+    }
+  })
+
   it.live("a changed pull request, text reference or incoming reference list is computed live again", () => effect {
     provide NodeServices.layer, webCrypto {
       const fs = try FileSystem.FileSystem
@@ -179,22 +219,44 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
     }
   })
 
-  it.live("a recorded hold is reused with its limitations and no discovery reads, and stays recorded", () => effect {
+  it.live("a live fenced hold is recorded, reused with its limitations and no discovery reads, and compared on audit", () => effect {
     provide NodeServices.layer, webCrypto {
       const fs = try FileSystem.FileSystem
       const directory = try fs.makeTempDirectory()
       const world = try seeded()
+      try Effect.try(() => world.fake.world.addRepo({ id: 7399, owner: "ada", name: "secret", private: true, files: { "README.md": "private\n" } }))
+      try Effect.try(() => world.fake.world.addPull({ repo: "ada/secret", number: 1, author: "ada", title: "Private follow-up" }))
+      try Effect.try(() => world.fake.world.addTimelineEvent(repository, 1, { event: "cross-referenced", actor: "ada", createdAt: "2026-11-12T01:00:00Z", source: { repo: "ada/secret", number: 1 } }))
       const reads = widgetsReads(world)
       const outcome = try attributionOutcome(world)
       const census = { value: [], attribution: [outcome] } satisfies ValueCensus
       const cutoffAt = try cutoffWhere(outcome.id, false)
+      const auditCutoff = try cutoffWhere(outcome.id, true)
       const limitation = "Related private PR evidence is withheld"
-      try attributed(reads, try memoFrom("", `${directory}/first.json`), cutoffAt, census)
-      try withResult(`${directory}/first.json`, `${directory}/held.json`, { kind: "hold", limitations: [limitation] })
 
-      const before = requested(world, discoveryRead)
-      const reused = try attributed(reads, try memoFrom(`${directory}/held.json`, `${directory}/reused.json`), cutoffAt, census)
-      try same({ holds: heldSources(reused.result), stats: reused.stats, recorded: reused.recorded, discovery: requested(world, discoveryRead) - before }, { holds: [[outcome.id, limitation]], stats: stats(1, 0, 0, 0, 0), recorded: [outcome.id], discovery: 0 })
+      const first = try attributed(reads, try memoFrom("", `${directory}/first.json`), cutoffAt, census)
+      const beforeReuse = requested(world, discoveryRead)
+      const reused = try attributed(reads, try memoFrom(`${directory}/first.json`, `${directory}/reused.json`), cutoffAt, census)
+      const reuseDiscovery = requested(world, discoveryRead) - beforeReuse
+      const beforeCleanAudit = requested(world, discoveryRead)
+      const cleanAudit = try attributed(reads, try memoFrom(`${directory}/reused.json`, `${directory}/audited.json`), auditCutoff, census)
+      const cleanAuditDiscovery = requested(world, discoveryRead) - beforeCleanAudit
+      try withResult(`${directory}/reused.json`, `${directory}/tampered.json`, { kind: "hold", limitations: ["Different limitation"] })
+      const beforeMismatchedAudit = requested(world, discoveryRead)
+      const mismatchedAudit = try attributed(reads, try memoFrom(`${directory}/tampered.json`, `${directory}/mismatched.json`), auditCutoff, census)
+      const mismatchedAuditDiscovery = requested(world, discoveryRead) - beforeMismatchedAudit
+
+      try same({
+        first: { holds: heldSources(first.result), stats: first.stats, recorded: first.recorded },
+        reused: { holds: heldSources(reused.result), stats: reused.stats, recorded: reused.recorded, discovery: reuseDiscovery },
+        cleanAudit: { holds: heldSources(cleanAudit.result), stats: cleanAudit.stats, recorded: cleanAudit.recorded, discovery: cleanAuditDiscovery },
+        mismatchedAudit: { holds: heldSources(mismatchedAudit.result), stats: mismatchedAudit.stats, recorded: mismatchedAudit.recorded, discovery: mismatchedAuditDiscovery },
+      }, {
+        first: { holds: [[outcome.id, limitation]], stats: stats(0, 1, 0, 0, 0), recorded: [outcome.id] },
+        reused: { holds: [[outcome.id, limitation]], stats: stats(1, 0, 0, 0, 0), recorded: [outcome.id], discovery: 0 },
+        cleanAudit: { holds: [[outcome.id, limitation]], stats: stats(0, 0, 1, 0, 0), recorded: [outcome.id], discovery: 1 },
+        mismatchedAudit: { holds: [[outcome.id, limitation]], stats: stats(0, 0, 1, 1, 0), recorded: [outcome.id], discovery: 1 },
+      })
     }
   })
 
