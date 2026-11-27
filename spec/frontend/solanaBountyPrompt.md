@@ -57,7 +57,8 @@ pure val preparedBytes = "prepared-transaction"
 pure val initial: SolanaPrompt = { actor: 0, lifetime: 0, message: 0, lastValid: 0, height: 1, phase: NoPlan, awaiting: "",
   slots: Map(), messages: List(), used: List(), request: 0, notice: Quiet, memory: "" }
 pure val noKeyed: Keyed = { owner: 0, attempt: WA::noAttempt }
-pure def keyedAt(message: int, p: SolanaPrompt): Keyed = if (p.slots.keys().contains(message)) p.slots.get(message) else noKeyed
+pure def keyedAt(message: int, p: SolanaPrompt): Keyed =
+  if (p.messages.includes(message) and p.slots.keys().contains(message)) p.slots.get(message) else noKeyed
 pure def slotFor(message: int, owner: int, p: SolanaPrompt): WA::Attempt =
   if (keyedAt(message, p).owner == owner) keyedAt(message, p).attempt else WA::noAttempt
 pure def visible(p: SolanaPrompt): WA::Attempt = slotFor(p.message, p.actor, p)
@@ -162,6 +163,8 @@ pure def historyReply(p: SolanaPrompt, lifetime: int, request: int, history: His
 
 ### Rules
 
+Discovered by the proof: `keyedAt` reads only messages tracked in `messages` (matching every reachable state, since `writeVisible` always records the key), and `message` is always non-negative (`0` only when no plan is held).
+
 ```quint
 pure def stepSendOnlyBeforeExpiry(before: SolanaPrompt, after: SolanaPrompt): bool =
   (before.phase != Awaiting and after.phase == Awaiting) implies
@@ -177,7 +180,7 @@ pure def alwaysSlotsKeyed(p: SolanaPrompt): bool = p.messages.every(m => m > 0 a
     or (keyedAt(m, p).attempt.bytesId == preparedBytes and p.used.includes(keyedAt(m, p).attempt.identity))))
 pure def alwaysAwaitingSaved(p: SolanaPrompt): bool = p.phase == Awaiting implies
   p.awaiting != "" and visible(p).identity == p.awaiting
-pure def alwaysPlanBehindPhase(p: SolanaPrompt): bool = (p.phase != NoPlan implies p.message > 0)
+pure def alwaysPlanBehindPhase(p: SolanaPrompt): bool = p.message >= 0 and (p.phase != NoPlan implies p.message > 0)
   and ((p.awaiting != "") iff (p.phase == Awaiting))
   and ((p.phase != NoPlan and p.phase != Planned) implies p.actor > 0)
 pure def alwaysLiveAttemptVisible(p: SolanaPrompt): bool = (p.phase == Awaiting or p.phase == Submitted or p.phase == Uncertain

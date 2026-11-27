@@ -11243,7 +11243,7 @@
     },
     {
       "path": "spec/frontend/monthLock.md",
-      "sha256": "459786e61cf1e9f53682c56b463417e357a10d7a657f2e6539733795e7aa8424",
+      "sha256": "ff4501ba01b185d2727a9d1a839fe30484f666fae66096906916db059fa4322c",
       "module": "frontend__monthLock",
       "stories": [
         {
@@ -11501,7 +11501,7 @@
     },
     {
       "path": "spec/frontend/ownerMonthly.md",
-      "sha256": "ce25cb18374b0300e580a1d5e56efb8d4f104bd6070b8958056bb121d2ae92a1",
+      "sha256": "4d771ae5eef321a8227a2abb771076bad7b1ba370d866c9bef32b929652986c3",
       "module": "frontend__ownerMonthly",
       "stories": [
         {
@@ -11710,7 +11710,7 @@
     },
     {
       "path": "spec/frontend/ownerVault.md",
-      "sha256": "119d66190b35206d501db65f02c928784bd0a53e2d0220bffb70c39ae6f72591",
+      "sha256": "2fb4717e9dd42138b5972ff6acf53eb4771d360aa663a43f435a9215b534d56e",
       "module": "frontend__ownerVault",
       "stories": [
         {
@@ -12423,7 +12423,7 @@
     },
     {
       "path": "spec/frontend/projectDrafts.md",
-      "sha256": "1f8789634db6c96fdefcb4e0d79336726c79346366f07b7dee4367bb4ec8fec4",
+      "sha256": "55145b7ab009385b0b7e64d68fcef0ab5880fb62b2e7fd41092e36a2381903aa",
       "module": "frontend__projectDrafts",
       "stories": [
         {
@@ -13812,7 +13812,7 @@
     },
     {
       "path": "spec/frontend/solanaBountyPrompt.md",
-      "sha256": "6a5474af2553c239c1b75d7915be205a80e64f9d8cd88a271fc52c76e149bbb1",
+      "sha256": "3663f42154f1e9ab8ebbb7c3f428ffaa89d29dc0dd6312eb202d5bec4cdb8192",
       "module": "frontend__solanaBountyPrompt",
       "stories": [
         {
@@ -13859,7 +13859,7 @@
         },
         {
           "heading": "Story: Send each prepared message at most once and recover it after expiry / Verification and history recovery rechecks the account and never sends",
-          "line": 120,
+          "line": 121,
           "definitions": [
             "canVerify",
             "verify",
@@ -13874,7 +13874,7 @@
         },
         {
           "heading": "Story: Send each prepared message at most once and recover it after expiry / Rules",
-          "line": 163,
+          "line": 164,
           "definitions": [
             "stepSendOnlyBeforeExpiry",
             "stepHistoryCheckSendsNothing",

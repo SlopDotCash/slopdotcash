@@ -119,7 +119,7 @@ pure def stepImportIsMonotonic(before: SetupStore, after: SetupStore): bool = be
 pure def lawImportedLegacyIsNotReused(source: SetupSlot, pointer: Pointer, legacy: int): bool =
   source.value == 0 implies openingValue(source, pointer, true, legacy) == 0
 pure def lawPointerSkipsLegacy(source: SetupSlot, legacy: int): bool =
-  openingValue(source, EmptyPointer, false, legacy) == source.value or source.value == 0
+  openingValue(source, EmptyPointer, false, legacy) == (if (source.value > 0) source.value else 0)
 pure def sometimesMemoryOnly(s: SetupStore): bool = s.memory.length() > 0
 pure def sometimesLegacyImported(s: SetupStore): bool = s.imported and s.legacy > 0 and s.slots.some(x => x.value == s.legacy)
 pure val legacyDraftValues = Set(1, 2)

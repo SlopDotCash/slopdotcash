@@ -270,9 +270,11 @@ time, and finalizing it is refused until 24 hours later. With it a search
 found a month finalized after a cut within a few traces for each of two
 seeds.
 
+Discovered by the proof: the signed-in account ID is non-negative (`0` when signed out), an in-flight cut save carries a valid reason length, and a flow awaiting the wallet holds its exact unsigned `"prepared"` attempt.
+
 ```quint
 pure def flowSaved(flow: Flow): bool =
-  (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
+  (flow.phase == Awaiting implies flow.slot == { ...WA::noAttempt, identity: flow.awaiting, bytesId: "prepared" } and flow.awaiting != "")
   and ((flow.phase == Sent or flow.phase == Unclear) implies flow.slot != WA::noAttempt)
   and (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
   and ((flow.awaiting != "") iff (flow.phase == Awaiting))
@@ -281,9 +283,9 @@ pure def ownFlow(flow: Flow, account: int): bool =
   (flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == account
 pure def alwaysAttemptsOwnAccountOnly(v: OwnerMonthly): bool =
   ownFlow(v.commitment, v.owner) and ownFlow(v.setting, v.owner) and ownFlow(v.release, v.owner)
-pure def alwaysOnlyManagersEdit(v: OwnerMonthly): bool = (v.draftOpen or v.funds != FundsHidden) implies v.manages and v.owner > 0
+pure def alwaysOnlyManagersEdit(v: OwnerMonthly): bool = v.owner >= 0 and ((v.draftOpen or v.funds != FundsHidden) implies v.manages and v.owner > 0)
 pure def alwaysOneRequestAtATime(v: OwnerMonthly): bool = v.saving >= 0 and v.saving <= v.requests
-  and not(v.saving > 0 and v.finalizing)
+  and not(v.saving > 0 and v.finalizing) and ((v.saving > 0 and v.savingCut) implies reasonValid(v.reasonLength))
 pure def alwaysSignedOutShowsNothing(v: OwnerMonthly): bool = v.owner == 0 implies
   not(v.loaded) and v.saving == 0 and not(v.finalizing) and v.funds == FundsHidden
 pure def stepCutHasReasonAndNotice(before: OwnerMonthly, after: OwnerMonthly): bool =
