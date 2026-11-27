@@ -17,7 +17,7 @@ const projectId = "appeals-project"
 const moderators = [18633264, 202660855]
 const day = 86_400_000
 const week = 7 * day
-const authors = ["lia", "sam", "rex", "ban", "old", "kim", "jo", "pat", "aro", "mar", "nod"] as const
+const authors = ["lia", "sam", "rex", "ban", "old", "kim", "jo", "pat", "aro", "mar", "nod", "lin"] as const
 const scamText = "Send your wallet seed phrase to claim the airdrop now."
 const scamQuote = "Send your wallet seed phrase"
 const moderatorLabel = "slopbot: moderator"
@@ -390,14 +390,15 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
   it.effect('A retained maintainer reopen reverses the covered debit after a later merge without changing the pull request (spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit")', () => effect {
     const area = try Area
     const { fake, items } = try World
+    const login = "lin"
     try installed(area)
-    try found(area, "mar", "scam")
-    try closedForScam(area, "mar", "2026-11-23T13:50:21.000Z")
-    try reopenedBy("mar", "ada")
-    try delivered(area, "mar", 100, "2026-11-23T13:50:37.000Z")
+    try found(area, login, "scam")
+    try closedForScam(area, login, "2026-11-23T13:50:21.000Z")
+    try reopenedBy(login, "ada")
+    try delivered(area, login, 100, "2026-11-23T13:50:37.000Z")
     const mergedAt = "2026-11-23T13:50:45.000Z"
     try Effect.try(() => {
-      const pull = fake.world.pull(path, items.mar ?? 0)
+      const pull = fake.world.pull(path, items[login] ?? 0)
       const maintainer = fake.world.account("ada")
       pull.state = "closed"
       pull.closedAt = mergedAt
@@ -406,11 +407,11 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       fake.world.record(pull, "merged", maintainer)
       fake.world.record(pull, "closed", maintainer)
     })
-    const item = try itemOf("mar")
+    const item = try itemOf(login)
     const requestStart = fake.requests.length
-    const processed = try signal(area, "mar", "human_reopen", 100)
+    const processed = try signal(area, login, "human_reopen", 100)
     const penalty = try area.sql("SELECT reversal, reversed_at FROM slopbot_penalties WHERE item_node_id = ?", item.nodeId)
-    const replayed = try signal(area, "mar", "human_reopen", 100)
+    const replayed = try signal(area, login, "human_reopen", 100)
     const kept = try area.sql("SELECT reversal, reversed_at FROM slopbot_penalties WHERE item_node_id = ?", item.nodeId)
     try same({ processed, replayed, reversal: penalty[0]?.reversal, reversed: typeof penalty[0]?.reversed_at === "string" }, {
       processed: { result: "human_reopen; newer item state kept" },
@@ -419,7 +420,7 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       reversed: true,
     })
     try same(kept, penalty)
-    try same(try area.sql("SELECT reopen_confirmed_at IS NOT NULL AS confirmed FROM slopbot_deliveries WHERE delivery_id = ?", "human_reopen-mar-100"), [{ confirmed: 1 }])
+    try same(try area.sql("SELECT reopen_confirmed_at IS NOT NULL AS confirmed FROM slopbot_deliveries WHERE delivery_id = ?", `human_reopen-${login}-100`), [{ confirmed: 1 }])
     try same(fake.requests.slice(requestStart).filter((request) => request.method !== "GET"), [])
   })
 })
