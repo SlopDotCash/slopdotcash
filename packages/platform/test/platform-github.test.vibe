@@ -63,6 +63,10 @@ async function setUp() {
     const url = new URL(request.url)
     seen.push({ method: request.method, host: url.host, path: url.pathname, page: url.searchParams.get("page"), authorized: request.headers.has("authorization") })
     if (url.host === "elsewhere.test") return new Response("[]", { status: 200, headers: { "content-type": "application/json" } })
+    if (url.pathname === "/repos/octo/tool-1/commits/" + "1".repeat(40)) {
+      const accept = request.headers.get("accept")
+      return new Response(accept === "application/vnd.github.diff" ? "diff" : accept === "application/vnd.github.raw" ? "raw" : "unexpected media type")
+    }
     const altered = alterations.findIndex((alteration) => alteration.path === url.pathname)
     const alteration = altered === -1 ? undefined : alterations.splice(altered, 1)[0]
     if (alteration?.location !== undefined) return new Response(null, { status: 301, headers: { location: alteration.location } })
@@ -149,6 +153,11 @@ function sentTo(fake: Fake, path: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('GitHub patch reads keep the byte limit and preserve the default raw media type (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit\'s totals")', () => effect {
+    const result = try (try Harness).request("/bytes")
+    try Effect.try(() => assert.deepStrictEqual(result, { status: 200, body: ["raw", "diff", "GitHubMalformed"] }))
+  })
+
   it.effect('A list is read across its pages and the token never follows a link off the authority (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
     const harness = try Harness
     const paged = try harness.request("/pages/octo?perPage=2")

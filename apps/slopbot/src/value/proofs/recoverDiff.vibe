@@ -1,0 +1,117 @@
+// spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { GitHub } from "@repo/platform/github"
+import { utf8Text } from "@repo/platform/git/bytes"
+import { pathLookupLimit } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type Recovered, verifiedBlob } from "./blob.vibe"
+import { type FileChange, commitLinesAgree, fullComparisonCounts, hasCompleteValuePatch, valueAdditionCount, valueDeletionCount, verifiedText } from "./changes.vibe"
+import { isObjectId, isRegularFileMode, isSafePath } from "./gitObject.ts"
+import { modifiedDiffSection, patchMatchesTexts } from "./negotiatedDiff.ts"
+import { patchCounts } from "./patch.ts"
+import { type TreeProof, verifiedPaths, verifiedTree } from "./tree.vibe"
+
+const diffMediaType = "application/vnd.github.diff"
+const diffLimitBytes = 1024 * 1024
+
+interface PinnedDiff {
+  readonly repository: string
+  readonly baseSha: string
+  readonly headSha: string
+  readonly kind: "compare" | "commit"
+}
+
+function canReadSection(file: FileChange) {
+  return file.status === "modified" && file.patch === undefined && file.previous_filename === undefined &&
+    !/(^|\/)package\.json$/u.test(file.filename) && /^[\w./-]+$/u.test(file.filename) && isSafePath(file.filename)
+}
+
+effect function readPinnedDiff(source: PinnedDiff) {
+  const { repository, baseSha, headSha, kind } = source
+  if (!/^[\w.-]+\/[\w.-]+$/u.test(repository) || !isObjectId(baseSha) || !isObjectId(headSha) || baseSha === headSha) return undefined
+  const path = kind === "compare" ? `/repos/${repository}/compare/${baseSha}...${headSha}` : `/repos/${repository}/commits/${headSha}`
+  const github = try GitHub
+  const bytes: Uint8Array | undefined = github.bytes(path, diffLimitBytes, { accept: diffMediaType, followRenamed: false }) catch () => undefined
+  return bytes === undefined || bytes.byteLength > diffLimitBytes ? undefined : utf8Text(bytes)
+}
+
+export effect function recoverNegotiatedDiff(source: PinnedDiff, files: ReadonlyArray<FileChange>, listedBlobs: ReadonlyMap<string, string>, intern: (text: string) => string) {
+  const { repository, baseSha, headSha } = source
+  const candidates = files.filter((file) => canReadSection(file) && file.fullComparison === undefined &&
+    file.additions + file.deletions > 0 && isObjectId(listedBlobs.get(file.filename) ?? ""))
+  if (candidates.length === 0 || candidates.length > pathLookupLimit) return files
+  const diff = try readPinnedDiff(source)
+  if (diff === undefined) return files
+  const paths = candidates.map((file) => file.filename)
+  const reads = new Map<string, unknown>()
+  const before = try verifiedPaths(repository, baseSha, paths, reads)
+  const after = try verifiedPaths(repository, headSha, paths, reads)
+  if (before === undefined || after === undefined) return files
+  const patches = new Map<string, FileChange>()
+  for (const file of candidates) {
+    const section = modifiedDiffSection(diff, file.filename)
+    if (section === undefined) continue
+    const matched = { ...file, patch: intern(section.patch) }
+    if (!hasCompleteValuePatch(matched)) continue
+    const oldEntry = before.get(file.filename)
+    const newEntry = after.get(file.filename)
+    if (oldEntry?.kind !== "present" || newEntry?.kind !== "present" || oldEntry.entry.mode !== section.mode || newEntry.entry.mode !== section.mode ||
+      newEntry.entry.sha !== listedBlobs.get(file.filename) || oldEntry.entry.sha === newEntry.entry.sha ||
+      !oldEntry.entry.sha.startsWith(section.beforePrefix) || !newEntry.entry.sha.startsWith(section.afterPrefix)) continue
+    patches.set(file.filename, matched)
+  }
+  return files.map((file) => patches.get(file.filename) ?? file)
+}
+
+function modifiedFilesMatch(before: TreeProof, after: TreeProof, listedBlobs: ReadonlyMap<string, string>) {
+  if (before.entries.size !== after.entries.size) return false
+  let changed = 0
+  for (const [path, oldEntry] of before.entries) {
+    const newEntry = after.entries.get(path)
+    if (newEntry === undefined || oldEntry.mode !== newEntry.mode || oldEntry.type !== newEntry.type) return false
+    if (oldEntry.type === "tree" || oldEntry.sha === newEntry.sha) continue
+    if (!isRegularFileMode(oldEntry.mode) || listedBlobs.get(path) !== newEntry.sha) return false
+    changed += 1
+  }
+  return changed === listedBlobs.size
+}
+
+effect function blobText(read: ReturnType<typeof verifiedBlob>, path: string, ref: string) {
+  const blob = try read(path, ref)
+  return blob === undefined ? undefined : utf8Text(blob.bytes)
+}
+
+export effect function recoverOmittedCommitCounts(source: PinnedDiff, files: ReadonlyArray<FileChange>, listedBlobs: ReadonlyMap<string, string>, stats: { readonly additions: number; readonly deletions: number }, recovered: Recovered) {
+  const incomplete = files.filter((file) => !hasCompleteValuePatch(file) && fullComparisonCounts(file) === undefined)
+  const uncounted = incomplete.filter((file) => file.additions === 0 && file.deletions === 0)
+  if (source.kind !== "commit" || uncounted.length !== 1 || incomplete.length > pathLookupLimit ||
+    listedBlobs.size !== files.length || !files.every((file) => file.status === "modified" && file.previous_filename === undefined) ||
+    !incomplete.every((file) => canReadSection(file))) return files
+  const missingAdditions = stats.additions - files.reduce((sum, file) => sum + valueAdditionCount(file), 0)
+  const missingDeletions = stats.deletions - files.reduce((sum, file) => sum + valueDeletionCount(file), 0)
+  if (missingAdditions < 0 || missingDeletions < 0 || missingAdditions + missingDeletions === 0) return files
+  const diff = try readPinnedDiff(source)
+  if (diff === undefined) return files
+  const { repository, baseSha, headSha } = source
+  const before = try verifiedTree(repository, baseSha)
+  const after = before === undefined ? undefined : try verifiedTree(repository, headSha)
+  if (before === undefined || after === undefined || !modifiedFilesMatch(before, after, listedBlobs)) return files
+  const replacements = new Map<string, FileChange>()
+  const read = verifiedBlob(repository, recovered)
+  for (const file of incomplete) {
+    const section = modifiedDiffSection(diff, file.filename)
+    const oldEntry = before.entries.get(file.filename)
+    const newEntry = after.entries.get(file.filename)
+    if (section === undefined || oldEntry === undefined || newEntry === undefined || oldEntry.mode !== section.mode ||
+      oldEntry.sha === newEntry.sha || !oldEntry.sha.startsWith(section.beforePrefix) || !newEntry.sha.startsWith(section.afterPrefix)) return files
+    const counts = patchCounts(section.patch)
+    if (counts.additions + counts.deletions === 0 ||
+      (file !== uncounted[0] && (counts.additions !== file.additions || counts.deletions !== file.deletions))) return files
+    const beforeText = file.fullComparison?.before.text ?? (try blobText(read, file.filename, baseSha))
+    const afterText = file.fullComparison?.after.text ?? (try blobText(read, file.filename, headSha))
+    if (beforeText === undefined || afterText === undefined || !verifiedText(beforeText, oldEntry.sha) || !verifiedText(afterText, newEntry.sha) ||
+      !patchMatchesTexts(section.patch, beforeText, afterText)) return files
+    const { fullComparison: _comparison, blob_url, ...original } = file
+    replacements.set(file.filename, { ...original, ...counts, patch: recovered.intern(section.patch), blob_url })
+  }
+  const complete = files.map((file) => replacements.get(file.filename) ?? file)
+  return commitLinesAgree(complete, stats) ? complete : files
+}

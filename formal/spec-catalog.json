@@ -36393,7 +36393,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "053680b16d96e7812d2adf9ee16659c142a521a9415afbdfa55620020788b13d",
+      "sha256": "f7984563d4247e5ef79935b8c8bee22daa42a8b3d7224473b73b7f71bed5c0bd",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36483,7 +36483,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 228,
+          "line": 251,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36497,7 +36497,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 268,
+          "line": 291,
           "definitions": [
             "CensusPull",
             "CensusQuery",

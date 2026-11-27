@@ -1,0 +1,41 @@
+// spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { assert, it } from "@effect/vitest"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { sourceWithExactDiffDigest } from "../src/value/collect/inputs.vibe"
+import { collectEvidence } from "../src/value/evidence/collect.vibe"
+import { sourceDigestOf } from "../src/value/workUnits/prepare.vibe"
+import { acceptanceRecorder, githubOver, patchCommitPages, policyOf, repository, seeded } from "./support/evidenceWorker.vibe"
+
+it.live("a negotiated patch matches only the record that committed to those exact source bytes", () => effect {
+  const world = try seeded()
+  provide githubOver(world), acceptanceRecorder().layer {
+    try patchCommitPages(world, world.merge)
+    try patchCommitPages(world, world.head)
+    const evidence = try collectEvidence({ repository, number: 1, policy: policyOf(world) })
+    const source = { evidence, policy: { sha: evidence.pull.base.sha, text: "project policy" } }
+    const beforeText = "before\n"
+    const afterText = "after\n"
+    const file = { filename: "example.txt", status: "modified", additions: 1, deletions: 1, blob_url: null }
+    const full = { ...evidence, files: [{ ...file, fullComparison: {
+      baseSha: evidence.pull.base.sha,
+      headSha: evidence.pull.head.sha,
+      before: { text: beforeText, blobSha: gitObjectId("blob", textBytes(beforeText)) },
+      after: { text: afterText, blobSha: gitObjectId("blob", textBytes(afterText)) },
+    } }] }
+    const patched = { ...evidence, files: [{ ...file, patch: "@@ -1 +1 @@\n-before\n+after" }] }
+    const fullDigest = try sourceDigestOf(full, source.policy)
+    const patchDigest = try sourceDigestOf(patched, source.policy)
+    const fullMatch = try sourceWithExactDiffDigest(source, full, fullDigest)
+    const rawMatch = try sourceWithExactDiffDigest(source, patched, patchDigest)
+    const wrong = try sourceWithExactDiffDigest(source, patched, fullDigest)
+    const limited = { ...patched, limitations: ["PR changed during evidence collection"] }
+    const limitedMatch = try sourceWithExactDiffDigest(source, limited, try sourceDigestOf(limited, source.policy))
+    try Effect.try(() => {
+      assert.notEqual(fullDigest, patchDigest)
+      assert.equal(fullMatch?.evidence, full)
+      assert.equal(rawMatch?.evidence, patched)
+      assert.equal(wrong, undefined)
+      assert.equal(limitedMatch, undefined)
+    })
+  }
+})
