@@ -81,7 +81,16 @@ export const VaultRegistered = Schema.Struct({
 
 export const VaultSetupAnswer = Schema.Union([VaultReviewed, VaultPending, VaultRegistered])
 
+const vaultUnauthorized = getProjectVaultsById.unauthorized
+const vaultSessionRequired = {
+  status: vaultUnauthorized.status,
+  code: vaultUnauthorized.error,
+  message: vaultUnauthorized.message,
+  headers: vaultUnauthorized.headers,
+}
+
 export const projectVaultRead = route({
+  unauthenticated: vaultSessionRequired,
   method: "GET",
   path: "/api/v1/project-vaults/:id",
   access: "session",
@@ -93,6 +102,7 @@ export const projectVaultRead = route({
 })
 
 export const projectVaultSetup = route({
+  unauthenticated: vaultSessionRequired,
   method: "POST",
   path: "/api/v1/project-vaults/:id",
   access: "sessionWrite",
@@ -110,6 +120,7 @@ export const projectVaultSetup = route({
 })
 
 export const projectVaultSolanaFunding = route({
+  unauthenticated: vaultSessionRequired,
   method: "POST",
   path: "/api/v1/project-vaults/:id/solana-funding",
   access: "sessionWrite",

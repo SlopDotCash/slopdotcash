@@ -26,6 +26,14 @@ const withUnauthorizedAndInvalidExpectedActor = {
   ...withNotFound,
 } as const
 
+const projectUnauthorized = withUnauthorizedAndInvalidExpectedActor.unauthorized
+export const projectSessionRequired = {
+  status: projectUnauthorized.status,
+  code: projectUnauthorized.error,
+  message: projectUnauthorized.message,
+  headers: projectUnauthorized.headers,
+}
+
 const withOriginForbiddenAndUnauthorizedV7 = {
   ...withOriginForbiddenV2,
   ...withUnauthorizedAndInvalidExpectedActor,

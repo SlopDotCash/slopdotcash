@@ -388,6 +388,14 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
   it.effect('Creating an already listed repository or a taken id points the owner to the listing, and a new project cannot submit a share history (spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes")', () => effect {
     const area = try Area
     const world = try World
+    const signedOut = [
+      try area.request("/api/v1/project-github/owned-repositories"),
+      try area.request("/api/v1/admin/projects"),
+      try area.request("/api/v1/project-appeals"),
+      try area.request("/api/v1/projects", { json: {} }),
+    ]
+    const required = [401, { error: "unauthorized", message: "Sign in with GitHub" }, "no-store", "project-registry-v1"]
+    try same(signedOut.map((answer) => [answer.status, answer.body, answer.headers["cache-control"], answer.headers["x-slop-project-api-contract"]]), signedOut.map(() => required))
     const steward = try member(stewardId)
     const tool = try listed("open-registry", "tool", primaryId)
     const other = try listed("open-registry", "other", otherId)
