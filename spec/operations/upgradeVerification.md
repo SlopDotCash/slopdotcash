@@ -76,7 +76,7 @@ pure def alwaysOnlyReadsReachTheNetwork(v: UpgradeVerification): bool = v.forwar
 pure def alwaysRefusedRequestFails(v: UpgradeVerification): bool =
   (v.refusedRequests > 0 implies v.phase == VerificationRefused) and v.refusedRequests <= 1
 pure def alwaysOneReportOnlyWhenVerified(v: UpgradeVerification): bool =
-  (v.phase == Verified iff v.reports == 1) and v.reports <= 1
+  (v.phase == Verified iff v.reports == 1) and v.reports >= 0 and v.reports <= 1
 pure def lawUnqualifiedActivityNeverPasses(evidence: UpgradeEvidence): bool =
   evidence.laterActivity == UnqualifiedActivity implies not(upgradePreserved(evidence))
 pure def lawChangedPlanNeverPasses(evidence: UpgradeEvidence): bool =

@@ -118,7 +118,8 @@ pure def setRate(l: RateLedger, window: RateWindow, by: R::Sender): RateLedger =
     change: nextRate(l.rates.length() > 0, ageOf(l), window), window: window }) }
 pure def alwaysOneReadingPerHour(l: RateLedger): bool = l.sampledHours.every(h => l.sampledHours.select(x => x == h).length() == 1
   and h <= l.clock / hourMs)
-pure def alwaysRatesHaveReadingsAndWaitForTheirHour(l: RateLedger): bool = l.rates.every(r => r.change != KeepRate
+pure def alwaysRatesHaveReadingsAndWaitForTheirHour(l: RateLedger): bool = l.clock >= 0
+  and l.rates.every(r => r.change != KeepRate
   and readingsBehind(r.change, r.window) and r.effectiveAt > r.createdAt and r.effectiveAt - r.createdAt <= hourMs
   and r.effectiveAt % hourMs == 0 and r.createdAt <= l.clock and l.rates.select(x => x.effectiveAt == r.effectiveAt).length() == 1)
   and (l.rates.length() > 0 implies l.sampledHours.length() > 0)
