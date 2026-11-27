@@ -101,6 +101,13 @@ const revisions = (id: string) =>
   );
 
 const lastRevision = async (id: string) => (await revisions(id)).at(-1);
+
+async function publishRevision(id: string, revision: number) {
+  await site.click(publish);
+  await shown(text(`Rev ${revision}`, true)).toMatchObject({ visible: true });
+  await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+  expect((await lastRevision(id))?.revision).toBe(revision);
+}
 const parsed = (value: unknown): unknown => (typeof value === "string" ? JSON.parse(value) : value);
 const rewardOf = async (id: string) => parsed((await site.sql("SELECT json_extract(manifest, '$.reward') AS reward FROM projects WHERE id = ?", id))[0]?.reward) as Readonly<Record<string, unknown>>;
 const closes = (row: Readonly<Record<string, unknown>> | undefined) => (parsed(row?.slopbot) as { readonly automaticClosure?: boolean } | null)?.automaticClosure === true;
@@ -265,9 +272,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     const changes = named("region", "Changes");
     await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ count: 2 });
     await shown({ text: "Rescan", within: changes }).toMatchObject({ count: 0 });
-    await site.click(publish);
-    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
-    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    await publishRevision(id, 2);
     expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
 
     expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
@@ -277,9 +282,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await manage(id);
     await openGroup("Project listing");
     await site.fill(field("X account (optional)"), "");
-    await site.click(publish);
-    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
-    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    await publishRevision(id, 3);
     expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example" });
 
     expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
@@ -307,16 +310,14 @@ describe("Maintain a live project with current GitHub authority", () => {
 
     await site.fill(field("Approvals required"), "2");
     await shown(text("On: 2 approvals, at most 400 lines in 20 files", true)).toMatchObject({ visible: true });
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: true, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20, protectedPaths: [] } });
 
     await manage(id);
     await openGroup("Contribution rules");
     await shown(readyLabel).toMatchObject({ checked: true });
     await site.click(readyLabel);
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    await publishRevision(id, 3);
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: false, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20 } });
   });
 
@@ -329,16 +330,14 @@ describe("Maintain a live project with current GitHub authority", () => {
     await site.click(closure);
     await openGroup("Project listing");
     await site.fill(field("Short description"), "Consent keeps its engine honest.");
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
     expect(await lastRevision(id)).toMatchObject({ headline: "Consent keeps its engine honest." });
     expect(closes(await lastRevision(id))).toBe(true);
 
     await manage(id);
     await shown(closure).toMatchObject({ checked: true });
     await site.click(closure);
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    await publishRevision(id, 3);
     expect(closes(await lastRevision(id))).toBe(false);
 
     await manage(id);
@@ -358,8 +357,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown(publish).toMatchObject({ disabled: true });
     await site.click(named("button", "Keep"));
     await shown(publish).toMatchObject({ disabled: false });
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(5);
+    await publishRevision(id, 5);
     expect(await lastRevision(id)).toMatchObject({ headline: "A draft from the older revision." });
   });
 
@@ -390,8 +388,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown(named("button", `Remove ${extra}`)).toMatchObject({ visible: true });
     await shown(text("an active project pauses until the scan clears")).toMatchObject({ visible: true });
 
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
     const now = new Date();
     const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 7);
     const repositories = parsed((await lastRevision(id))?.repositories) as ReadonlyArray<{ readonly id: string; readonly countsFrom?: string }>;
@@ -432,8 +429,7 @@ describe("Maintain a live project with current GitHub authority", () => {
 
     await site.click(load);
     await site.select(field("New integration branch"), branch);
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
     const [primary] = parsed((await lastRevision(id))?.repositories) as ReadonlyArray<{ readonly integrationBranch?: string }>;
     expect(primary?.integrationBranch).toBe(branch);
     expect(await site.sql("SELECT json_extract(manifest, '$.contribution.contributionGuide') AS guide, status FROM projects WHERE id = ?", id)).toEqual([{ guide, status: "paused" }]);
@@ -492,8 +488,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     const changes = named("region", "Changes");
     await shown({ text: "At 20 open outside pull requests", within: changes }).toMatchObject({ visible: true });
     await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ visible: true });
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
     expect(closes(await lastRevision(id))).toBe(false);
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ intakeCap: 20 });
 
@@ -501,8 +496,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await openGroup("Contribution rules");
     await shown(capField).toMatchObject({ value: "20" });
     await site.fill(capField, "");
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    await publishRevision(id, 3);
     expect((parsed((await lastRevision(id))?.slopbot) as { readonly intakeCap?: unknown }).intakeCap).toBeUndefined();
   });
 
@@ -524,8 +518,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await manage(id, "other");
     await openGroup("Project listing");
     await site.fill(field("Short description"), "Removable changed in another tab.");
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    await publishRevision(id, 2);
 
     await site.tab("main");
     await site.click(named("button", "Remove project"));
@@ -995,8 +988,7 @@ describe("Take the maintainer share out of the monthly amount", () => {
     const changes = named("region", "Changes");
     await shown({ text: "20%", within: changes }).toMatchObject({ visible: true });
     await shown({ text: `From ${cycleText(1)}`, within: changes }).toMatchObject({ visible: true });
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    await publishRevision(id, 3);
     expect(await rewardOf(id)).toMatchObject({ maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: cycleText(0), basisPoints: 0 }] });
 
     const changing = `Maintainer share: none of the monthly amount this month, 20% from ${monthName(1)}, ${deciders}.`;
@@ -1011,8 +1003,7 @@ describe("Take the maintainer share out of the monthly amount", () => {
     await openGroup("Monthly rewards");
     await shown(shareField).toMatchObject({ value: "20" });
     await site.fill(shareField, "");
-    await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
+    await publishRevision(id, 4);
     const cleared = await rewardOf(id);
     expect(cleared.maintainerShare).toBeUndefined();
     expect(cleared.maintainerShareHistory).toEqual([{ throughCycle: cycleText(0), basisPoints: 0 }]);
