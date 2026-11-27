@@ -35,6 +35,7 @@ const repositoryPattern = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/u
 const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
 const numericId = /^[1-9][0-9]{0,19}$/u
 const noStore = { "cache-control": "no-store" }
+const plainJson = HttpServerResponse.setHeader("content-type", "application/json")
 
 const permissionNames: Readonly<Record<Exclude<GrantedPermission, "PermissionUnknown">, AccessInstalled["permission"]>> = {
   PermissionAdmin: "admin",
@@ -44,24 +45,24 @@ const permissionNames: Readonly<Record<Exclude<GrantedPermission, "PermissionUnk
 }
 
 function refusal(row: { readonly status: number; readonly error: string }) {
-  return json({ error: row.error }, row.status, noStore)
+  return plainJson(json({ error: row.error }, row.status, noStore))
 }
 
 function answered(decided: AccessAnswer, gathered: Gathered, includeRepository: boolean) {
   switch (decided.accessKind) {
     case "InvalidRequest": return refusal(slopbotGetV1RepositoryAccess.invalidRequestNoStore)
     case "AccessUnavailable": return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
-    case "NotInstalled": return json({ installation: "missing" }, 200, noStore)
-    case "InstallationSuspended": return json({ installation: "suspended", installationId: decided.answeredInstallation }, 200, noStore)
+    case "NotInstalled": return plainJson(json({ installation: "missing" }, 200, noStore))
+    case "InstallationSuspended": return plainJson(json({ installation: "suspended", installationId: decided.answeredInstallation }, 200, noStore))
     case "Installed": {
       if (decided.answeredPermission === "PermissionUnknown" || (includeRepository && gathered.repository === undefined)) return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
-      return json({
+      return plainJson(json({
         installation: "installed",
         installationId: decided.answeredInstallation,
         permission: permissionNames[decided.answeredPermission],
         roleName: gathered.roleName,
         ...includeRepository ? { repository: gathered.repository } : {},
-      }, 200, noStore)
+      }, 200, noStore))
     }
   }
 }

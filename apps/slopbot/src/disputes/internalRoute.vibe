@@ -10,6 +10,7 @@ schema TriageRequest { readonly key: string }
 schema TriageAccepted { readonly accepted: boolean }
 
 const requestLimitKib = 4
+const plainJson = HttpServerResponse.setHeader("content-type", "application/json")
 
 export const pointsDisputeTriage = route({
   method: "POST",
@@ -24,7 +25,7 @@ export const pointsDisputeTriage = route({
 
 function invalid() {
   const row = slopbotPostV1PointsDisputes.invalidRequestS400
-  return json({ error: row.error }, row.status, row.headers)
+  return plainJson(json({ error: row.error }, row.status, row.headers))
 }
 
 effect function requestedKey() {
@@ -44,7 +45,7 @@ effect function triageAnswer() {
   const key = try requestedKey()
   if (key === undefined) return invalid()
   try processPointsDispute(key)
-  return json({ accepted: true } satisfies typeof TriageAccepted.Type)
+  return plainJson(json({ accepted: true } satisfies typeof TriageAccepted.Type))
 }
 
 export const pointsDisputeRoutes = handleRaw(pointsDisputeTriage, () => triageAnswer())

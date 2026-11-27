@@ -24,6 +24,8 @@ const penaltyRefusals: FeedRefusals = { invalid: slopbotGetV1Penalties.invalidPe
 
 const historyRefusals: FeedRefusals = { invalid: slopbotGetV1ValueAssessments.invalidValueHistoryQuery, unavailable: slopbotGetV1ValueAssessments.valueHistoryIsUnavailable }
 
+const plainJson = HttpServerResponse.setHeader("content-type", "application/json")
+
 const cursorPattern = /^[A-Za-z0-9_=-]{0,100}$/u
 const nodeIdPattern = /^[A-Za-z0-9_=-]{1,100}$/u
 const positivePattern = /^[1-9][0-9]*$/u
@@ -66,7 +68,7 @@ export function refusalHeaders(headers: Readonly<Record<string, string>>) {
 }
 
 function refused(row: RefusalRow) {
-  return json({ error: row.error }, row.status, refusalHeaders(row.headers))
+  return plainJson(json({ error: row.error }, row.status, refusalHeaders(row.headers)))
 }
 
 function refusalFor(decided: FeedAnswer, refusals: FeedRefusals) {
@@ -126,7 +128,7 @@ effect function served<T>(query: FeedQuery, refusals: FeedRefusals, lookup: (T |
   if (found === undefined || decided.httpStatus !== 200) return refusalFor(decided, refusals)
   const body = read(found, decided.schemaId) catch () => null
   if (body === null) return refusalFor(feedAnswer(registered, true), refusals)
-  return json(body)
+  return plainJson(json(body))
 }
 
 effect function penaltyFeed(query: URLSearchParams) {
@@ -170,7 +172,7 @@ effect function historyFeed(route: FeedRoute, query: URLSearchParams) {
 }
 
 export const feedRoutes = Layer.mergeAll(
-  handleRaw(health, () => effect { return json({ service: "slopbot", ok: true }) }),
+  handleRaw(health, () => effect { return plainJson(json({ service: "slopbot", ok: true })) }),
   handleRaw(penalties, (input) => penaltyFeed(input.query)),
   handleRaw(valueAssessments, (input) => historyFeed("ValueHistoryFeed", input.query)),
   handleRaw(workUnitAssessments, (input) => historyFeed("WorkUnitHistoryFeed", input.query)),

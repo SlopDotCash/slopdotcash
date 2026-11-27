@@ -15,6 +15,7 @@ import { repositoryAccessRoutes } from "../access/route.vibe"
 import { type ActivationVars, ClosureActivation, closureActivation } from "../activation/config.vibe"
 import { dispatchDueAppeals } from "../appeals/due.vibe"
 import { budgetJobs } from "../budget/store.vibe"
+import { slopbotPostGithubWebhook } from "../client/refusals.vibe"
 import { pointsDisputeRoutes } from "../disputes/internalRoute.vibe"
 import { processPendingPointsDisputes } from "../disputes/pointsTriage.vibe"
 import { dispatchFeeChecks } from "../fee/dispatch.vibe"
@@ -56,6 +57,8 @@ export interface Env extends PublisherEnv, WebhookVars, ActivationVars, Provider
 }
 
 const slopbotCron = "*/5 * * * *"
+const notFound = slopbotPostGithubWebhook.otherMethods.notFound
+const unmatchedRoutes = HttpRouter.add("*", "*", HttpServerResponse.text(notFound.text, { status: notFound.status, contentType: notFound.headers["content-type"] }))
 
 const jobSettings = Layer.effect(JobSettings, effect {
   const { appUserId, evidenceSwitch } = try WebhookSettings
@@ -100,7 +103,7 @@ export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMeth
 
 export default worker({
   services,
-  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes),
+  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes, unmatchedRoutes),
   scheduled,
   queue: (message) => settle(message, dispatchJob),
 })
