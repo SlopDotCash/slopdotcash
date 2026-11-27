@@ -2,7 +2,6 @@
 import { Effect, ManagedRuntime } from "effect";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
-import { outcome } from "@repo/platform/testing/area";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/settlement__directTransfers.conformance.ts";
 import type { Disclosure, Disclosures, Event } from "../../gen/settlement__directTransfers.ts";
@@ -53,9 +52,11 @@ export const driver: Driver<Disclosure[]> & AsyncDisposable = {
   },
   dispatch: (_key, event: Event) => imported(event),
   receive: async (_key, raw) => {
-    const decoded = await outcome(decodedImport(raw));
-    if (decoded === "refused") return "refused";
-    return imported(await Effect.runPromise(decodedImport(raw)));
+    const decoded = await Effect.runPromise(decodedImport(raw).pipe(
+      Effect.catchTags({ NotAnEvent: () => Effect.succeed(undefined) }),
+    ));
+    if (decoded === undefined) return "refused";
+    return imported(decoded);
   },
   observe: () => observed(),
   [Symbol.asyncDispose]: async () => {

@@ -1,10 +1,9 @@
 // spec/settlement/payoutExclusions.md, "A project's exclusion list starts empty and is revised only for later months"; spec/settlement/payoutExclusions.md, "Who is excluded in the open month or earlier never changes"
 import { createHash } from "node:crypto";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { type StartedWorker, database, migrate, startWorker } from "@repo/platform/testing";
-import { outcome } from "@repo/platform/testing/area";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/settlement__payoutExclusions.conformance.ts";
@@ -41,6 +40,7 @@ interface World {
   readonly runtime: ReturnType<typeof runtimeOver>;
   readonly clock: ReturnType<typeof settableClock>;
   revision: number;
+  openPeriod: number;
 }
 
 let world: World | undefined;
@@ -58,7 +58,7 @@ const open = async (): Promise<World> => {
   const db = await database(mf, "SLOP_DB");
   const clock = settableClock(START * 1000);
   const runtime = runtimeOver(db, clock);
-  const made: World = { mf, db, runtime, clock, revision: 0 };
+  const made: World = { mf, db, runtime, clock, revision: 0, openPeriod: 202611 };
   await append(made, []);
   return made;
 };
@@ -67,16 +67,19 @@ const current = async () => world ??= await open();
 
 const dispatch = async (event: Event, by: string) => {
   const w = await current();
-  const verdict = await outcome(admitExclusions(PROJECT, event, by), w.runtime);
-  if (verdict !== "accepted") return verdict;
+  const next = await w.runtime.runPromise(admitExclusions(PROJECT, event, by, w.openPeriod).pipe(
+    Effect.catchTags({ Rejected: () => Effect.succeed(undefined) }),
+  ));
+  if (next === undefined) return "refused" as const;
   if (event.type === "observeClock") w.clock.set(event.now * 1000);
+  if (event.type === "openNextPeriod") w.openPeriod = next.openPeriod;
   if (event.type === "revise") await append(w, event.entries);
-  return verdict;
+  return "accepted" as const;
 };
 
 const observed = async (): Promise<ExclusionRegistry> => {
   const w = await current();
-  return w.runtime.runPromise(exclusionRegistry(PROJECT));
+  return w.runtime.runPromise(exclusionRegistry(PROJECT, w.openPeriod));
 };
 
 export const driver: Driver & AsyncDisposable = {

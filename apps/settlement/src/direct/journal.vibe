@@ -293,7 +293,8 @@ export function transferModel(model: Network, intent: DirectIntent, generationIn
 export function stateOf(record: Journal, facts: Facts, claims: Claims) {
   const terms = termsOf(facts)
   const { approval, route } = approvalOf(facts)
-  if (!canAdmit(initial, terms, facts.approval.caseRevision, approval, route)) return decodeState(initial)
+  const otherUses = facts.otherUses.map((use) => ({ network: use.network, transaction: use.transaction.toLowerCase() }))
+  if (!canAdmit(initial, terms, facts.approval.caseRevision, approval, route)) return decodeState({ ...initial, otherUses })
   const admitted = admit(initial, terms, facts.approval.caseRevision, approval, route)
   const stored = currentIntent(record)
   const intents = [record.original, ...record.revisions.map((revision) => revision.intent)]
@@ -318,7 +319,7 @@ export function stateOf(record: Journal, facts: Facts, claims: Claims) {
     priorIntents,
     researcherReceipt: receipt(0),
     feeReceipt: receipt(1),
-    otherUses: facts.otherUses.map((use) => ({ network: use.network, transaction: use.transaction.toLowerCase() })),
+    otherUses,
   } satisfies DirectBounty)
 }
 

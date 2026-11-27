@@ -3,7 +3,7 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { recoverDigest } from "@repo/platform/chain/evm"
 import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Attempt, type ChainFamily, type Commitment, type Event, type FundedMonth, type LegacyAuthorization, type NotAState, apply, authorize, canAuthorize, decodeState, initial, noLegacy, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { type Attempt, type ChainFamily, type ChainView, type CommitPhase, type Commitment, type Event, type FundedMonth, type LegacyAuthorization, type NotAState, type RefusalReason, type SigningFacts, apply, authorize, canAuthorize, decodeState, initial, noLegacy, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
 import { runConsent } from "../../gen/settlement__monthPledges.effect.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod } from "../kernels/calendar.ts"
@@ -16,10 +16,25 @@ export interface JournalKey {
   readonly network: string
 }
 
+export interface ObservedRun {
+  readonly view: ChainView
+  readonly facts: SigningFacts
+  readonly clock: number
+  readonly phase: CommitPhase
+  readonly refusal: RefusalReason
+  readonly held: RefusalReason
+  readonly admittedRoot: string
+  readonly admittedLegacy: boolean
+  readonly legacy?: LegacyAuthorization
+  readonly attemptIds?: ReadonlyMap<string, number>
+  readonly signers?: ReadonlyMap<string, string>
+}
+
 export interface JournalContext {
   readonly family: ChainFamily
   readonly funded: FundedMonth | undefined
   readonly authority: string
+  readonly observed?: ObservedRun
 }
 
 export interface EvmReservation {
@@ -111,7 +126,7 @@ function seconds(iso: string) {
 }
 
 function signerOf(stored: StoredAuthorization, context: JournalContext) {
-  if (stored.plan.family === "solana") return context.authority
+  if (stored.plan.family === "solana") return context.observed?.signers?.get(stored.plan.allocationRoot) ?? context.authority
   return recoverDigest(`0x${stored.plan.messageHex}`, `0x${stored.signatureHex}`)?.toLowerCase() ?? ""
 }
 
@@ -139,28 +154,45 @@ effect function attemptOf(id: number, stored: StoredAuthorization, publishedAt: 
 
 effect function stateOf(key: JournalKey, rows: JournalRows, context: JournalContext) {
   const funded = context.funded
+  const observed = context.observed
   const empty = { ...initial, family: context.family }
-  if (funded === undefined || !canAuthorize(empty, context.family, funded)) return try decodeState(empty)
+  if (funded === undefined || !canAuthorize(empty, context.family, funded)) {
+    if (observed === undefined) return try decodeState(empty)
+    return try decodeState({ ...empty, view: observed.view, clock: observed.clock })
+  }
   const authorized = authorize(empty, context.family, funded)
   const attempts: Attempt[] = []
   let legacy: LegacyAuthorization = noLegacy
   if (rows.first !== undefined) {
     const first = try authorizationOf(rows.first.authorization)
-    if (context.family === "SolanaV3") attempts.push(try attemptOf(1, first, rows.first.published_at, context))
+    if (context.family === "SolanaV3") attempts.push(try attemptOf(observed?.attemptIds?.get(first.plan.allocationRoot) ?? 1, first, rows.first.published_at, context))
     else if (first.plan.evmReservation === undefined) legacy = { root: first.plan.allocationRoot, snapshotDigest: rows.first.snapshot_sha256, wholeGross: try units(first.plan.totalGrossBase), leafCount: first.plan.entries.length, signer: signerOf(first, context) }
   }
-  if (context.family === "EvmV2") for (const [index, row] of rows.attempts.entries()) attempts.push(try attemptOf(index + 1, try authorizationOf(row.authorization), row.published_at, context))
+  if (legacy.root === "" && observed?.legacy !== undefined) legacy = observed.legacy
+  if (context.family === "EvmV2") {
+    for (const [index, row] of rows.attempts.entries()) {
+      const parsed = try authorizationOf(row.authorization)
+      const root = parsed.plan.evmReservation?.allocationRoot ?? parsed.plan.allocationRoot
+      attempts.push(try attemptOf(observed?.attemptIds?.get(root) ?? index + 1, parsed, row.published_at, context))
+    }
+  }
   const latest = attempts.at(-1)
-  const admittedRoot = rows.complete ? latest?.root ?? legacy.root : ""
+  const admittedLegacy = observed !== undefined ? observed.admittedLegacy : rows.complete && latest === undefined && legacy.root !== ""
+  const admittedRoot = rows.complete ? (admittedLegacy ? legacy.root : latest?.root ?? legacy.root) : observed?.admittedRoot ?? ""
+  const phase = rows.complete && authorized.phase === "Authorized" ? "Completed" : observed?.phase ?? authorized.phase
   return try decodeState({
     ...authorized,
-    phase: rows.complete && authorized.phase === "Authorized" ? "Completed" : authorized.phase,
+    phase,
+    refusal: observed?.refusal ?? authorized.refusal,
+    held: observed?.held ?? authorized.held,
+    view: observed?.view ?? authorized.view,
+    facts: observed?.facts ?? authorized.facts,
     legacy,
     attempts,
     admittedRoot,
-    admittedLegacy: rows.complete && latest === undefined && legacy.root !== "",
+    admittedLegacy,
     frozenAt: context.family === "SolanaV3" ? latest?.frozenAt ?? 0 : 0,
-    clock: Math.max(initial.clock, windowOpensAt(funded.period)),
+    clock: observed?.clock ?? Math.max(initial.clock, windowOpensAt(funded.period)),
     opensAt: windowOpensAt(funded.period),
     closesAt: windowClosesAt(funded.period),
   })
@@ -274,8 +306,9 @@ export effect function runJournal(key: JournalKey, context: JournalContext, run:
     let text: string | undefined = undefined
     const writes: Statement[] = []
     for (const event of run.events) {
+      const beforeAttempts = state.attempts.length
       state = try apply(state, event, run.by)
-      if (event.type === "signEvm" || event.type === "signSolana") {
+      if ((event.type === "signEvm" || event.type === "signSolana") && state.attempts.length > beforeAttempts) {
         if (run.signed === undefined) throw new SignatureMissing({ event: event.type })
         text = try authorizationText(run.signed, journal.rows.first?.authorization)
         for (const statement of try signedWrites(key, journal, run.signed, state.clock)) writes.push(statement)

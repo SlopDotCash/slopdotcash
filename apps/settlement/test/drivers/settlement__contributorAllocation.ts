@@ -20,9 +20,13 @@ export const driver: Driver = {
     return result;
   },
   receive: async (key, raw, by) => {
-    const result = await outcome(receivedStep(historyOf(key), raw, sender(by)));
-    if (result === "accepted") histories.set(key, [...historyOf(key), (await Effect.runPromise(receivedStep(historyOf(key), raw, sender(by)))).step]);
-    return result;
+    const accepted = await Effect.runPromise(receivedStep(historyOf(key), raw, sender(by)).pipe(
+      Effect.map((result) => result.step),
+      Effect.catchTags({ Rejected: () => Effect.succeed(undefined), NotAnEvent: () => Effect.succeed(undefined) }),
+    ));
+    if (accepted === undefined) return "refused";
+    histories.set(key, [...historyOf(key), accepted]);
+    return "accepted";
   },
   observe: (key) => Effect.runPromise(replayed(historyOf(key))),
 };

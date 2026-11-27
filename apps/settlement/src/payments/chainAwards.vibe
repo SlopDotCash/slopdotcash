@@ -9,6 +9,7 @@ schema ChainAwardRow {
   readonly gross_base: string
   readonly fee_base: string
   readonly state: "reserved" | "paid"
+  readonly paid_transaction: string | null
 }
 
 export interface ChainAward {
@@ -16,6 +17,7 @@ export interface ChainAward {
   readonly grossBase: string
   readonly feeBase: string
   readonly state: "reserved" | "paid"
+  readonly paidTransaction?: string | null
 }
 
 export interface FrozenAward {
@@ -31,6 +33,6 @@ export function holdsAward(chain: ChainAward | undefined, award: FrozenAward): c
 }
 
 export effect function chainAwards(network: string, vault: string) {
-  const found = try rows(ChainAwardRow, sql`SELECT source_digest, github_user_id, gross_base, fee_base, state FROM payment_obligations WHERE network = ${network} AND vault = ${vault} ORDER BY rowid`)
-  return new Map(found.map((row) => [row.source_digest, { githubUserId: row.github_user_id, grossBase: row.gross_base, feeBase: row.fee_base, state: row.state } satisfies ChainAward]))
+  const found = try rows(ChainAwardRow, sql`SELECT source_digest, github_user_id, gross_base, fee_base, state, paid_transaction FROM payment_obligations WHERE network = ${network} AND vault = ${vault} ORDER BY rowid`)
+  return new Map(found.map((row) => [row.source_digest, { githubUserId: row.github_user_id, grossBase: row.gross_base, feeBase: row.fee_base, state: row.state, paidTransaction: row.paid_transaction } satisfies ChainAward]))
 }

@@ -1,18 +1,17 @@
 // spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"
 import { createHash } from "node:crypto";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { privateKeyToAccount } from "viem/accounts";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
-import { outcome } from "@repo/platform/testing/area";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/settlement__monthlyCommitment.conformance.ts";
-import type { ChainFamily, ChainView, Commitment, Event, FundedMonth, SigningFacts } from "../../gen/settlement__monthlyCommitment.ts";
-import { fromAmount } from "../../src/kernels/amounts.ts";
+import type { ChainFamily, ChainView, Commitment, Event, FundedMonth, LegacyAuthorization } from "../../gen/settlement__monthlyCommitment.ts";
+import { fromAmount, toAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod } from "../../src/kernels/calendar.ts";
-import { type JournalKey, type SignedPlan, loadJournal, runJournal } from "../../src/monthlyCommitment/store.vibe";
+import { type JournalContext, type JournalKey, type ObservedRun, type SignedPlan, loadJournal, runJournal } from "../../src/monthlyCommitment/store.vibe";
 
 const NETWORK = "base-sepolia";
 const keys: Readonly<Record<string, `0x${string}`>> = {
@@ -35,19 +34,26 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 interface World {
   readonly projectId: string;
+  readonly attemptIds: Map<string, number>;
+  readonly signers: Map<string, string>;
   family: ChainFamily;
   funded: FundedMonth | undefined;
-  view: ChainView | undefined;
-  facts: SigningFacts | undefined;
+  observed: ObservedRun | undefined;
   seeded: boolean;
 }
 
 let generation = 0;
-let world: World = { projectId: "commitment-g0", family: "EvmV2", funded: undefined, view: undefined, facts: undefined, seeded: false };
+let world: World = { projectId: "commitment-g0", attemptIds: new Map(), signers: new Map(), family: "EvmV2", funded: undefined, observed: undefined, seeded: false };
 
 const keyOf = (w: World): JournalKey => ({ projectId: w.projectId, period: (w.funded?.period ?? 202611) as Period, network: NETWORK });
 
-const storedMonth = (w: World): FundedMonth | undefined => w.funded === undefined ? undefined : { ...w.funded, project: w.projectId, snapshotDigest: sha(w.funded.snapshotDigest) };
+const storedMonthOf = (projectId: string, month: FundedMonth): FundedMonth => ({
+  ...month,
+  project: projectId,
+  snapshotDigest: month.snapshotDigest === "" ? "" : sha(month.snapshotDigest),
+});
+
+const storedMonth = (w: World): FundedMonth | undefined => w.funded === undefined ? undefined : storedMonthOf(w.projectId, w.funded);
 
 const seed = async (w: World) => {
   if (w.seeded || w.funded === undefined) return;
@@ -59,8 +65,28 @@ const seed = async (w: World) => {
   w.seeded = true;
 };
 
+const persistLegacy = async (w: World, legacy: LegacyAuthorization) => {
+  if (w.funded === undefined) return;
+  const period = formatPeriod(w.funded.period as Period);
+  const messageHex = sha(`legacy:${legacy.root}`);
+  const signer = signers[legacy.signer];
+  const signatureHex = signer === undefined ? "" : (await signer.sign({ hash: `0x${messageHex}` })).slice(2);
+  const authorization = JSON.stringify({
+    plan: {
+      family: "evm",
+      allocationRoot: legacy.root,
+      messageHex,
+      totalGrossBase: fromAmount(legacy.wholeGross).toString(),
+      entries: Array.from({ length: legacy.leafCount }, (_, index) => ({ sourceDigest: `legacy-${index}` })),
+    },
+    signatureHex,
+  });
+  await db.prepare("INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) VALUES (?, ?, ?, ?, ?, '2026-12-04T00:00:00.000Z') ON CONFLICT DO NOTHING")
+    .bind(w.projectId, period, NETWORK, sha(legacy.snapshotDigest), authorization).run();
+};
+
 const signedFor = (w: World, event: Event & { readonly root: string }): SignedPlan => {
-  const view = w.view;
+  const view = w.observed?.view;
   const month = w.funded;
   const leaves = (month?.leaves ?? []).filter((leaf) => w.family === "SolanaV3" || !(view?.consumed ?? []).includes(leaf.source));
   const remaining = leaves.reduce((sum, leaf) => sum + fromAmount(leaf.gross), 0n).toString();
@@ -88,34 +114,62 @@ const signature = async (signed: SignedPlan, by: string): Promise<SignedPlan> =>
 
 const translatedView = (view: ChainView): ChainView => ({ ...view, authority: addressOf(view.authority) });
 
+const observedFrom = (state: Commitment, attemptIds: Map<string, number>, recordedSigners: Map<string, string>): ObservedRun => ({
+  view: state.view,
+  facts: state.facts,
+  clock: state.clock,
+  phase: state.phase,
+  refusal: state.refusal,
+  held: state.held,
+  admittedRoot: state.admittedRoot,
+  admittedLegacy: state.admittedLegacy,
+  ...(state.legacy.root !== "" ? { legacy: state.legacy } : {}),
+  attemptIds,
+  signers: recordedSigners,
+});
+
+const contextOf = (w: World): JournalContext => ({
+  family: w.family,
+  funded: storedMonth(w),
+  authority: w.observed?.view.authority ?? addressOf("attester"),
+  observed: w.observed,
+});
+
 const dispatch = async (event: Event, by: string) => {
   const w = world;
+  const sent: Event = event.type === "authorize"
+    ? { type: "authorize", family: event.family, month: storedMonthOf(w.projectId, event.month) }
+    : event.type === "observe"
+      ? { type: "observe", view: translatedView(event.view) }
+      : event.type === "observeFacts"
+        ? { type: "observeFacts", facts: { ...event.facts, snapshotDigest: event.facts.snapshotDigest === "" ? "" : sha(event.facts.snapshotDigest) } }
+        : event.type === "retainLegacy"
+          ? { type: "retainLegacy", legacy: { ...event.legacy, snapshotDigest: event.legacy.snapshotDigest === "" ? "" : sha(event.legacy.snapshotDigest), signer: addressOf(event.legacy.signer) } }
+          : event;
+  const signed = (event.type === "signEvm" || event.type === "signSolana") && w.funded !== undefined ? await signature(signedFor(w, event), by) : undefined;
+  const next = await runtime.runPromise(runJournal(keyOf(w), contextOf(w), { events: [sent], by: addressOf(by), signed }).pipe(
+    Effect.catchTags({ Rejected: () => Effect.succeed(undefined) }),
+  ));
+  if (next === undefined) return "refused" as const;
   if (event.type === "authorize") {
-    if (w.funded !== undefined) return "refused" as const;
     w.family = event.family;
     w.funded = event.month;
-    const verdict = await outcome(loadJournal(keyOf(w), { family: w.family, funded: storedMonth(w), authority: addressOf("attester") }), runtime);
-    if (verdict === "accepted") await seed(w);
-    return verdict;
+    if (next.phase === "Authorized") await seed(w);
   }
-  const context = { family: w.family, funded: storedMonth(w), authority: addressOf(w.view?.authority ?? "attester") };
-  const sent: Event = event.type === "observe" ? { type: "observe", view: translatedView(event.view) } : event.type === "observeFacts" ? { type: "observeFacts", facts: { ...event.facts, snapshotDigest: sha(event.facts.snapshotDigest) } } : event;
-  const signed = event.type === "signEvm" || event.type === "signSolana" ? await signature(signedFor(w, event), by) : undefined;
-  const verdict = await outcome(runJournal(keyOf(w), context, { events: [sent], by: addressOf(by), signed }), runtime);
-  if (verdict !== "accepted") return verdict;
-  if (event.type === "observe") {
-    w.view = event.view;
-    w.facts = undefined;
+  if (event.type === "retainLegacy") await persistLegacy(w, event.legacy);
+  if ((event.type === "signEvm" || event.type === "signSolana") && next.attempts.length > w.attemptIds.size) {
+    w.attemptIds.set(event.root, event.attemptId);
+    if (event.type === "signSolana") w.signers.set(event.root, addressOf(by));
   }
-  if (event.type === "observeFacts") w.facts = event.facts;
-  return verdict;
+  w.observed = observedFrom(next, w.attemptIds, w.signers);
+  return "accepted" as const;
 };
 
 const modelDigest = (w: World, digest: string) => w.funded !== undefined && digest === sha(w.funded.snapshotDigest) ? w.funded.snapshotDigest : digest;
 
 const observed = async (): Promise<Commitment> => {
   const w = world;
-  const { state: journal } = await runtime.runPromise(loadJournal(keyOf(w), { family: w.family, funded: storedMonth(w), authority: addressOf(w.view?.authority ?? "attester") }));
+  const { state: journal } = await runtime.runPromise(loadJournal(keyOf(w), contextOf(w)));
   return {
     ...journal,
     month: { ...journal.month, project: w.funded !== undefined && journal.month.project === w.projectId ? w.funded.project : journal.month.project, snapshotDigest: modelDigest(w, journal.month.snapshotDigest) },
@@ -124,11 +178,18 @@ const observed = async (): Promise<Commitment> => {
   };
 };
 
+const canonicalAmount = (amount: ReadonlyArray<number>) => toAmount(fromAmount([...amount]));
+
 const view = (state: Commitment) => ({
   family: state.family,
   phase: state.phase,
-  month: state.month,
-  attempts: state.attempts.map((attempt) => ({ root: attempt.root, remainingGross: attempt.remainingGross, leafCount: attempt.leafCount, frozenAt: attempt.frozenAt, signer: attempt.signer })),
+  month: {
+    ...state.month,
+    wholeGross: canonicalAmount(state.month.wholeGross),
+    cap: canonicalAmount(state.month.cap),
+    leaves: state.month.leaves.map((leaf) => ({ ...leaf, gross: canonicalAmount(leaf.gross) })),
+  },
+  attempts: state.attempts.map((attempt) => ({ root: attempt.root, remainingGross: canonicalAmount(attempt.remainingGross), leafCount: attempt.leafCount, frozenAt: attempt.frozenAt, signer: attempt.signer })),
   admittedRoot: state.admittedRoot,
   frozenAt: state.frozenAt,
 });
@@ -136,7 +197,7 @@ const view = (state: Commitment) => ({
 export const driver: Driver<ReturnType<typeof view>> & AsyncDisposable = {
   reset: () => {
     generation++;
-    world = { projectId: `commitment-g${generation}`, family: "EvmV2", funded: undefined, view: undefined, facts: undefined, seeded: false };
+    world = { projectId: `commitment-g${generation}`, attemptIds: new Map(), signers: new Map(), family: "EvmV2", funded: undefined, observed: undefined, seeded: false };
     clock.set(1796342400 * 1000);
   },
   dispatch: (_key, event: Event, by) => dispatch(event, typeof by === "string" ? by : ""),

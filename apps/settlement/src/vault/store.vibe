@@ -177,7 +177,16 @@ effect function secondsOf(iso: string, column: string) {
   return Math.floor(millis / 1000)
 }
 
-effect function observationOf(row: SnapshotRow, purpose: Purpose, registration: Registration) {
+type MonthPledges = Observation["monthPledges"]
+
+interface SessionPledges {
+  readonly ordinary: MonthPledges
+  readonly privateBounty: MonthPledges
+}
+
+const noMonthPledges: MonthPledges = { tag: "PledgesNotRead" }
+
+effect function observationOf(row: SnapshotRow, purpose: Purpose, registration: Registration, monthPledges: MonthPledges = noMonthPledges) {
   if (!isNetworkKey(row.network) || NETWORKS[row.network].chain !== row.chain) throw new RowMismatch({ text: "vault_snapshots.network", issue: "not a reviewed network and chain" })
   const identity: Identity = { ...registration.identity, chain: modelChain(row.network), network: modelNetwork(row.network), vault: row.vault, asset: row.asset_address, decimals: row.asset_decimals }
   return {
@@ -202,14 +211,14 @@ effect function observationOf(row: SnapshotRow, purpose: Purpose, registration: 
       reserved: try balanceOf(row.reserved, "vault_snapshots.reserved"),
     },
     legacyServiceFees: try amountOf(row.total_service_fees, "vault_snapshots.total_service_fees"),
-    monthPledges: { tag: "PledgesNotRead" },
+    monthPledges,
   } satisfies Observation
 }
 
-effect function observed(found: ReadonlyArray<SnapshotRow>, purpose: Purpose, registration: Registration) {
+effect function observed(found: ReadonlyArray<SnapshotRow>, purpose: Purpose, registration: Registration, monthPledges: MonthPledges = noMonthPledges) {
   const network = networkKeyOf(registration.identity.network)
   const row = registered(registration) ? found.find((candidate) => candidate.network === network && candidate.vault === registration.identity.vault) : undefined
-  return row === undefined ? noObservation : try observationOf(row, purpose, registration)
+  return row === undefined ? noObservation : try observationOf(row, purpose, registration, monthPledges)
 }
 
 effect function monthStartOfRow(row: MonthStartRow) {
@@ -308,7 +317,7 @@ export interface SavedPart {
   readonly ids: ReadonlyMap<number, string>
 }
 
-const NUMBERED = /^svc_([1-9][0-9]{0,8})$/u
+const NUMBERED = /(?:^|:)svc_([1-9][0-9]{0,8})$/u
 
 function modelIdOf(id: string, index: number): number {
   const numbered = NUMBERED.exec(id)
@@ -353,7 +362,7 @@ export effect function noteSavedCreation(id: string, code: string) {
   try (try D1).run(sql`UPDATE saved_vault_creations SET last_code = ${code} WHERE id = ${id} AND state = 'waiting'`)
 }
 
-export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>, repeats: ReadonlyMap<string, number> = new Map()) {
+export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>, repeats: ReadonlyMap<string, number> = new Map(), monthPledges?: SessionPledges) {
   const found = try rows(SnapshotRow, sql`SELECT network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at, open_pledged_gross FROM vault_snapshots WHERE project_id = ${scope.projectId}`)
   const starts = try rows(MonthStartRow, sql`SELECT network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE project_id = ${scope.projectId} ORDER BY rowid`)
   const monthStarts: MonthStart[] = []
@@ -362,8 +371,8 @@ export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, req
   return try decodeState({
     revision: registry.revision,
     history: registry.history,
-    ordinary: { registration: registry.ordinary, observation: try observed(found, "Ordinary", registry.ordinary) },
-    privateBounty: { registration: registry.privateBounty, observation: try observed(found, "PrivateBounty", registry.privateBounty) },
+    ordinary: { registration: registry.ordinary, observation: try observed(found, "Ordinary", registry.ordinary, monthPledges?.ordinary) },
+    privateBounty: { registration: registry.privateBounty, observation: try observed(found, "PrivateBounty", registry.privateBounty, monthPledges?.privateBounty) },
     requests,
     monthStarts,
     pledges,
@@ -476,7 +485,7 @@ effect function persistSaved(scope: SnapshotScope, ids: ReadonlyMap<number, stri
     const createdAt = try isoAt(next.createdAt * 1000)
     const requestJson = details?.requestJson ?? JSON.stringify({ step: "register", expectedRevision: request.expected, network, transactionId: request.tx, payoutPolicy: request.purpose === "PrivateBounty" ? "security-bounty" : "ordinary" })
     try db.run(sql`INSERT INTO saved_vault_creations (id, project_id, network, transaction_id, request_json, actor_github_id, actor_github_login, state, attempts, next_attempt_at, created_at)
-      SELECT ${details?.id ?? `svc_${event.savedId}`}, ${scope.projectId}, ${network}, ${request.tx}, ${requestJson}, ${String(request.actor)}, ${details?.login ?? ""}, 'waiting', 0, ${nextAt}, ${createdAt}
+      SELECT ${details?.id ?? `${scope.projectId}:svc_${event.savedId}`}, ${scope.projectId}, ${network}, ${request.tx}, ${requestJson}, ${String(request.actor)}, ${details?.login ?? ""}, 'waiting', 0, ${nextAt}, ${createdAt}
       WHERE (SELECT COUNT(*) FROM saved_vault_creations WHERE project_id = ${scope.projectId} AND state = 'waiting') < 3
       ON CONFLICT (project_id, network, transaction_id) DO UPDATE SET
         state = 'waiting', attempts = 0, last_code = NULL, finished_at = NULL, request_json = excluded.request_json,
@@ -542,9 +551,14 @@ export interface VaultSession {
 }
 
 export effect function openSession(scope: SnapshotScope, registry: RegistryPart) {
-  let held: { readonly registry: RegistryPart; readonly requests: ReadonlyArray<RequestRow>; readonly repeats: ReadonlyMap<string, number> } = { registry, requests: [], repeats: new Map() }
+  let held: { readonly registry: RegistryPart; readonly requests: ReadonlyArray<RequestRow>; readonly repeats: ReadonlyMap<string, number>; readonly monthPledges: SessionPledges } = {
+    registry,
+    requests: [],
+    repeats: new Map(),
+    monthPledges: { ordinary: noMonthPledges, privateBounty: noMonthPledges },
+  }
   effect function current() {
-    return try stateOf(scope, held.registry, held.requests, held.repeats)
+    return try stateOf(scope, held.registry, held.requests, held.repeats, held.monthPledges)
   }
   effect function savedIdOf(id: string) {
     const found = [...(try savedPart(scope)).ids.entries()].find((entry) => entry[1] === id)
@@ -556,9 +570,20 @@ export effect function openSession(scope: SnapshotScope, registry: RegistryPart)
     const next = event.type === "write" ? try written(scope, before, event) : try apply(before, event)
     if (isSavedEvent(event)) try persistSaved(scope, ids, before, next, event, options.details, options.code)
     const repeats = new Map(held.repeats)
+    if (event.type === "saveCreation") {
+      const request = requestRow(before, event.requestId)
+      const updated = savedFor(next, request.network, request.tx)
+      const existingId = ids.get(updated.id)
+      if (existingId !== undefined && updated.lastRepeat === 0) repeats.delete(existingId)
+    }
     const repeated = event.type === "repeatSaved" ? ids.get(event.savedId) : undefined
     if (event.type === "repeatSaved" && repeated !== undefined) repeats.set(repeated, savedCreation(next, event.savedId).lastRepeat)
-    held = { registry: registryPartOf(next), requests: next.requests, repeats }
+    held = {
+      registry: registryPartOf(next),
+      requests: next.requests,
+      repeats,
+      monthPledges: { ordinary: next.ordinary.observation.monthPledges, privateBounty: next.privateBounty.observation.monthPledges },
+    }
     return next
   }
   effect function receive(input: unknown) {

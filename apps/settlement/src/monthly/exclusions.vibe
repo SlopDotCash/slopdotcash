@@ -20,7 +20,7 @@ effect function openPeriodAt(now: number) {
   return try orDie(Effect.try(() => periodContaining(now)))
 }
 
-effect function decodeRegistry(projectId: string, now: number, [revisions]: ReadonlyArray<Rows>) {
+effect function decodeRegistry(projectId: string, now: number, openPeriod: number | undefined, [revisions]: ReadonlyArray<Rows>) {
   const rows = try decoded(RevisionRow, revisions ?? [], "project revisions")
   const history: Exclusion[][] = []
   for (const row of rows) history.push(exclusionsOf(try manifestOf(projectId, row.manifest)))
@@ -29,26 +29,26 @@ effect function decodeRegistry(projectId: string, now: number, [revisions]: Read
     ...initial,
     project: projectId,
     now,
-    openPeriod: try openPeriodAt(now),
+    openPeriod: openPeriod ?? try openPeriodAt(now),
     revision: history.length,
     entries: history.at(-1) ?? [],
     history,
   })
 }
 
-function aggregate(projectId: string, now: number): Aggregate<ExclusionRegistry, NotAState | RowMismatch | ManifestInvalid, never> {
+function aggregate(projectId: string, now: number, openPeriod?: number): Aggregate<ExclusionRegistry, NotAState | RowMismatch | ManifestInvalid, never> {
   return {
     name: `payout exclusions of ${projectId}`,
     version: version(projectId),
     reads: reads(projectId),
-    decode: (found) => decodeRegistry(projectId, now, found),
+    decode: (found) => decodeRegistry(projectId, now, openPeriod, found),
   }
 }
 
-export effect function exclusionRegistry(projectId: string) {
-  return (try load(aggregate(projectId, try nowSeconds()))).state
+export effect function exclusionRegistry(projectId: string, openPeriod?: number) {
+  return (try load(aggregate(projectId, try nowSeconds(), openPeriod))).state
 }
 
-export effect function admitExclusions(projectId: string, event: Event, by: string) {
-  return try apply(try exclusionRegistry(projectId), event, by)
+export effect function admitExclusions(projectId: string, event: Event, by: string, openPeriod?: number) {
+  return try apply(try exclusionRegistry(projectId, openPeriod), event, by)
 }
