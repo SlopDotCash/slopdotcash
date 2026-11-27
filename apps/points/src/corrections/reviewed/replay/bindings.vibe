@@ -28,6 +28,7 @@ const closedContextQuery = "query HistoricalClosedContext($ids:[ID!]!){nodes(ids
 const missingItem: ReadonlyArray<ReadonlyArray<string>> = [["repository", "issueOrPullRequest"]]
 const dispatch = "TrustedMainDispatch" as const
 const closedBatch = 30
+const slopDevelopmentArchive = "499988b9a13e363c4f77d1c52f47b6a71e32bc44"
 
 function fields(value: unknown): Row {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Row : {}
@@ -47,6 +48,40 @@ function sameInstant(left: unknown, right: unknown) {
 
 effect function unless(holds: boolean) {
   if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
+}
+
+effect function integrationTip(root: string, branch: string, expected?: string) {
+  const github = try GitHub
+  const tip = fields(try github.json(`${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`, Schema.Unknown))
+  const object = fields(tip.object)
+  try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" &&
+    sha.test(object.sha) && (expected === undefined || object.sha === expected))
+  return String(object.sha)
+}
+
+effect function integrationAncestry(root: string, mergeSha: string, tip: string, allowMissing = false) {
+  const github = try GitHub
+  const path = `${root}/compare/${mergeSha}...${tip}?per_page=1`
+  const answer = github.json(path, Schema.Unknown) catch effect (error) => {
+    if (error._tag !== "NotFound" || error.path !== path || !allowMissing) throw error
+    return undefined
+  }
+  if (answer === undefined) return false
+  const comparison = fields(answer)
+  try unless((comparison.status === "ahead" || comparison.status === "identical") && comparison.behind_by === 0 &&
+    fields(comparison.base_commit).sha === mergeSha && fields(comparison.merge_base_commit).sha === mergeSha)
+  return true
+}
+
+effect function verifyRemovedMergeAncestry(root: string, branch: string, mergeSha: string, projectId: string, repositoryNodeId: unknown) {
+  const slopCutover = projectId === "slopdotcash" && root.toLowerCase() === "/repos/slopdotcash/slopdotcash" && repositoryNodeId === "R_kgDOTqq9PQ"
+  const tip = integrationTip(root, branch) catch effect (error) => {
+    if (error._tag !== "NotFound" || error.path !== `${root}/git/ref/heads/development` || branch !== "development" || !slopCutover) throw error
+    return undefined
+  }
+  if (tip !== undefined && (try integrationAncestry(root, mergeSha, tip, slopCutover && branch === "develop"))) return
+  const archive = try integrationTip(root, "develop-old", slopDevelopmentArchive)
+  try integrationAncestry(root, mergeSha, archive)
 }
 
 effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
@@ -69,7 +104,12 @@ effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive
     const root = `/repos/${repository}`
     const occurrence = `https://github.com/${repository.toLowerCase()}/pull/${number}\u0000${new Date(String(source.occurredAt)).toISOString()}`
     if (standalone || mergeSha === null || matching.get(id)?.has(occurrence) !== true) continue
-    if ((try github.status(`${root}/pulls/${number}`)) !== 404) continue
+    const pullPath = `${root}/pulls/${number}`
+    const pullStatus = github.status(pullPath) catch effect (error) => {
+      if (error._tag !== "NotFound" || error.path !== pullPath) throw error
+      return 404
+    }
+    if (pullStatus !== 404) continue
     const [owner = "", name = ""] = repository.split("/")
     const answer = fields(try github.graphql(valueReferenceQuery, { owner, name, number }, Schema.Unknown, { absent: missingItem }))
     const found = fields(answer.repository)
@@ -78,12 +118,7 @@ effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive
     const merge = fields(try github.json(`${root}/git/commits/${mergeSha}`, Schema.Unknown))
     const parents = list(merge.parents).map(fields)
     try unless(merge.sha === mergeSha && parents.length === 2 && typeof parents[0]?.sha === "string" && sha.test(parents[0].sha) && parents[1]?.sha === source.headSha)
-    const tip = fields(try github.json(`${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`, Schema.Unknown))
-    const object = fields(tip.object)
-    try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" && sha.test(object.sha))
-    const comparison = fields(try github.json(`${root}/compare/${mergeSha}...${String(object.sha)}?per_page=1`, Schema.Unknown))
-    try unless((comparison.status === "ahead" || comparison.status === "identical") && comparison.behind_by === 0 &&
-      fields(comparison.base_commit).sha === mergeSha && fields(comparison.merge_base_commit).sha === mergeSha)
+    try verifyRemovedMergeAncestry(root, branch, mergeSha, projectId, source.repositoryNodeId)
     removed.add(id)
   }
   return removed
