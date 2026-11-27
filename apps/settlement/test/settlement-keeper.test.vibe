@@ -22,6 +22,7 @@ import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, awardId, 
 import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { type MonthlyEntry, SOURCE_SEQUENCE_CALL, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, monthlyDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
+import { TOTALS_CALL, decodeCounters } from "../src/chain/evm/totals.ts"
 import { readSignedType2 } from "../src/chain/evm/transactions.ts"
 import { accountDiscriminator } from "../src/chain/solana/accounts.ts"
 import { type AllocationTree, type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../src/chain/solana/allocationRoot.ts"
@@ -434,6 +435,75 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       second: [undefined, "awaiting-wallet"],
       gas: [true],
     })
+  })
+
+  it.effect('The EVM keeper CLI isolates two bound recipients and pays the blocked award once after thaw (spec/operations/extendedQualification.md, "The extended suite records a bounty 75/25 payout, the monthly switch, cap and window, a walletless award that stays reserved, an interrupted send, a failed recipient and a frozen fee destination, each with its expected outcome")', () => effect {
+    const { escrow, vault, program } = try Bench
+    const blockedDestination = try lower(escrow.roles.recipient.address)
+    const healthyDestination = try lower(escrow.roles.donor.address)
+    const blockedGross = 4_000n
+    const healthyGross = 5_000n
+    const blockedFee = ordinaryFeeBase(blockedGross)
+    const healthyFee = ordinaryFeeBase(healthyGross)
+    const reserve = () => effect {
+      const counters = decodeCounters(String(try promise(() => escrow.chain.rpc("eth_call", [{ to: vault, data: TOTALS_CALL }, "finalized"]))))
+      if (counters === undefined) return try die(new Error("No finalized vault counters"))
+      return counters
+    }
+    const initialReserve = try reserve()
+    const initialHead = try promise(() => escrow.chain.finalized())
+    const payments = () => effect {
+      const head = try promise(() => escrow.chain.finalized())
+      return decodeEscrowLogs(vault, try promise(() => escrow.logs(vault, initialHead + 1n, head)))
+        .flatMap((log) => log.kind === "event" && log.event.name === "Paid" ? [{ ...log.event, transactionId: log.at.transaction }] : [])
+    }
+
+    const firstSource = 0xa107n
+    const secondSource = 0xa108n
+    const firstIdComesFirst = try Effect.try(() => awardId(escrow.chainId, vault, word(firstSource)) < awardId(escrow.chainId, vault, word(secondSource)))
+    const [blockedSource, healthySource] = firstIdComesFirst ? [firstSource, secondSource] : [secondSource, firstSource]
+    const blocked = try award(107n, blockedSource, blockedGross)
+    const healthy = try award(108n, healthySource, healthyGross)
+    try bind(107n, escrow.roles.recipient)
+    try bind(108n, escrow.roles.donor)
+    try promise(() => escrow.blockDestination(blockedDestination))
+    try finalize()
+    const config = try writtenConfig("blocked-recipient.json", try operatorConfig(escrow.chain.url))
+    const initialNonce = try operatorNonce()
+    try journal(openKeeperStore())
+    const initialGas = (try gasRows()).length
+
+    const first = try runKeeperProcess(program, config)
+    const healthySend = first.printed.results.find((result) => result.operation === `award:${healthy}`)
+    const blockedSend = first.printed.results.find((result) => result.operation === `award:${blocked}`)
+    const operations = first.printed.results.filter((result) => result === blockedSend || result === healthySend).map(({ operation }) => operation)
+    try settled()
+    const whileBlocked = try runKeeperProcess(program, config)
+    const held = try reserve()
+    const healthyPaid = { name: "Paid", id: healthy, actor: 108n, destination: healthyDestination, version: 1n, gross: healthyGross, net: healthyGross - healthyFee, fee: healthyFee, transactionId: healthySend?.transactionId }
+    try same(operations, [`award:${blocked}`, `award:${healthy}`])
+    try same([first.code, first.printed.mode, blockedSend?.state, blockedSend?.transactionId, healthySend?.state], [1, "execute", "waiting", undefined, "submitted"])
+    try same([whileBlocked.code, outcomeOf(whileBlocked.printed, healthy), outcomeOf(whileBlocked.printed, blocked)?.state], [1, undefined, "waiting"])
+    try same([held.reservedPrincipal - initialReserve.reservedPrincipal, held.reservedFees - initialReserve.reservedFees], [blockedGross - blockedFee, blockedFee])
+    try same(try payments(), [healthyPaid])
+    try same((try operatorNonce()) - initialNonce, 1n)
+    try same((try gasRows()).slice(initialGas).map(({ transaction_id, actual }) => [transaction_id, actual !== null]), [[healthySend?.transactionId, true]])
+
+    try promise(() => escrow.blockDestination(null))
+    try finalize()
+    const retry = try runKeeperProcess(program, config)
+    const retrySend = retry.printed.results.find((result) => result.operation === `award:${blocked}`)
+    try settled()
+    const replay = try runKeeperProcess(program, config)
+    const released = try reserve()
+    const indexed = try journal(inTransaction((tx) => tx.all(sql`SELECT id, json_extract(payment, '$.transactionId') AS transaction_id FROM awards WHERE scope = ${`${project}:${vault}`} AND id IN (${blocked}, ${healthy}) ORDER BY id`)))
+    try same([retry.code, retrySend?.state, outcomeOf(retry.printed, healthy)], [0, "submitted", undefined])
+    try same([replay.code, outcomeOf(replay.printed, blocked), outcomeOf(replay.printed, healthy)], [0, undefined, undefined])
+    try same([released.reservedPrincipal, released.reservedFees], [initialReserve.reservedPrincipal, initialReserve.reservedFees])
+    try same(try payments(), [healthyPaid, { name: "Paid", id: blocked, actor: 107n, destination: blockedDestination, version: 1n, gross: blockedGross, net: blockedGross - blockedFee, fee: blockedFee, transactionId: retrySend?.transactionId }])
+    try same(indexed, [{ id: blocked, transaction_id: retrySend?.transactionId }, { id: healthy, transaction_id: healthySend?.transactionId }])
+    try same((try operatorNonce()) - initialNonce, 2n)
+    try same((try gasRows()).slice(initialGas).map(({ transaction_id, actual }) => [transaction_id, actual !== null]), [[healthySend?.transactionId, true], [retrySend?.transactionId, true]])
   })
 
   it.effect('The keeper CLI can settle one exact funded award while leaving other executable awards alone (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
