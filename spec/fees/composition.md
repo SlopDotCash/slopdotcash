@@ -142,6 +142,7 @@ pure def alwaysOutputsOnce(s: FeeFlow): bool = s.outputs.every(o => o.row > 0 an
   and s.outputs.select(x => x.row == o.row).length() == 1
   and outputRow(s, o.row).id == o.row and outputRow(s, o.row).state == CV::Finalized and outputRow(s, o.row).output == o.output
   and (outputRow(s, o.row).kind == CV::Conversion or outputRow(s, o.row).kind == CV::Claim))
+  and s.fee.rows.every(r => r.id > 0 and r.id <= s.fee.rows.length() and outputRow(s, r.id) == r)
 ```
 
 ## Story: Count each buyback income once, from its own receipt
@@ -250,7 +251,8 @@ pure def backed(s: FeeFlow, credit: Credit): bool =
     and k.chainTime >= B::buybackStart and M::equalAmounts(credit.amount, M::smallAmount(k.amount)))
   else credit.key.kind == B::DirectFee and s.entries.some(e => e.receipt == credit.key.id and e.usdc
     and M::equalAmounts(credit.amount, M::smallAmount(e.amount)) and e.source == DirectAwardFee)
-pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.every(c => backed(s, c))
+pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.every(c => backed(s, c) and c.key.network == s.fee.network)
+  and s.fee.holdings.every(h => h.token > 0 and h.token <= s.fee.holdings.length() and CV::holding(s.fee, h.token).token == h.token and CV::holding(s.fee, h.token).asset == h.asset)
   and s.buyback.sources.length() == s.credits.length() and s.credits.every(c => s.buyback.sources.includes(c.key))
   and s.buyback.income == s.credits.foldl(M::zero, (total, c) => M::addAmounts(total, c.amount))
 pure def receiptKeyed(credit: Credit): bool = credit.key.kind == B::DirectFee

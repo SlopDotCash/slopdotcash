@@ -6,7 +6,6 @@ lemma earlierInGroup_ensures(groups: seq<int>, count: int, group: int)
   requires (count <= |groups|)
   ensures (earlierInGroup(groups, count, group) >= 0)
   ensures (earlierInGroup(groups, count, group) <= count)
-  decreases count
 {
   if count > 0 {
     earlierInGroup_ensures(groups, count - 1, group);

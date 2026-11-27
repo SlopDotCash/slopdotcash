@@ -3,7 +3,7 @@ lemma notifyModerator_ensures(c: CloseAttempt, recipient: int)
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysAtMostOneRequest(notifyModerator(c, recipient)))
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysAttemptBoundToReservation(notifyModerator(c, recipient)))
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysBlockedNeverAttempts(notifyModerator(c, recipient)))
-  ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysLabelOnlyAfterBlock(notifyModerator(c, recipient)))
+  ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysBlockedCommentOnlyAfterBlock(notifyModerator(c, recipient)))
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysConfirmedHasCloseTime(notifyModerator(c, recipient)))
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysRejectedIdsOrdered(notifyModerator(c, recipient)))
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> alwaysCandidateStaysEligible(notifyModerator(c, recipient)))
@@ -25,12 +25,18 @@ lemma notifyModerator_ensures(c: CloseAttempt, recipient: int)
   ensures (inv(c) ==> canNotifyModerator(c, recipient) ==> stepItemReadsAdvance(c, notifyModerator(c, recipient)))
 {
   if inv(c) && canNotifyModerator(c, recipient) {
-    var added := Std.Collections.Seq.Filter((set_x: int) => !((set_x in c.moderatorNotices)), [recipient]);
+    var added := ProofLib.Filter((set_x: int) => !((set_x in c.moderatorNotices)), [recipient]);
     forall x | x in added
       ensures x == recipient
     {
       ProofLib.FilterMember((set_x: int) => !((set_x in c.moderatorNotices)), [recipient], x);
     }
+    NotifyModeratorNotices(c, recipient);
     assert notifyModerator(c, recipient).moderatorNotices == c.moderatorNotices + added;
   }
+}
+
+lemma NotifyModeratorNotices(c: CloseAttempt, recipient: int)
+  ensures notifyModerator(c, recipient).moderatorNotices == c.moderatorNotices + ProofLib.Filter((set_x: int) => !((set_x in c.moderatorNotices)), [recipient])
+{
 }

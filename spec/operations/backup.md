@@ -207,16 +207,16 @@ pure def classification(o: EvidenceObject): Copy =
 pure def canLateWrite(b: Backup, id: int, digest: int): bool =
   digest > 0 and b.objects.some(o => o.id == id and o.stored == 0 and not(o.marker) and o.retention == Kept)
 pure def lateWrite(b: Backup, id: int, digest: int): Backup =
-  { ...b, objects: b.objects.listMap(o => if (o.id == id and o.stored == 0 and not(o.marker)) { ...o, stored: digest } else o) }
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and o.stored == 0 and not(o.marker) and o.retention == Kept) { ...o, stored: digest } else o) }
 pure def canWriteMissingMarker(b: Backup, id: int): bool = b.phase == CleanupPending
   and b.objects.some(o => o.id == id and eligible(b, o) and needsReceipt(o) and o.stored == 0 and not(o.marker))
 pure def writeMissingMarker(b: Backup, id: int): Backup =
-  { ...b, objects: b.objects.listMap(o => if (o.id == id and o.stored == 0) { ...o, marker: true } else o) }
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and eligible(b, o) and needsReceipt(o) and o.stored == 0 and not(o.marker)) { ...o, marker: true } else o) }
 pure def canClassify(b: Backup, id: int): bool = b.phase == CleanupPending
   and b.objects.some(o => o.id == id and eligible(b, o) and needsReceipt(o) and not(receiptCurrent(b, o))
     and (o.stored > 0 or o.marker))
 pure def classify(b: Backup, id: int): Backup =
-  { ...b, objects: b.objects.listMap(o => if (o.id == id and eligible(b, o) and needsReceipt(o))
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and eligible(b, o) and needsReceipt(o) and (o.stored > 0 or o.marker))
       { ...o, copy: classification(o), receiptDay: b.cycleDay, receiptDigest: b.completeDigest } else o) }
 pure def canBeginCleanup(b: Backup): bool = b.phase == BackupComplete and b.retentionEnabled
 pure def beginCleanup(b: Backup): Backup = { ...b, phase: CleanupPending }

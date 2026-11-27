@@ -9,7 +9,8 @@ lemma slopPriceOf_ensures(scaled: int)
 }
 
 lemma harmonicRate_ensures(count: int, prices: int)
-  requires ((count > 0) && (prices > 0))
+  requires (count > 0)
+  requires (prices > 0)
   ensures (harmonicRate(count, prices) >= 0)
   ensures ((harmonicRate(count, prices) * prices) <= (1000000000000000000000000000000000000 * count))
   ensures ((1000000000000000000000000000000000000 * count) < ((harmonicRate(count, prices) + 1) * prices))
@@ -21,7 +22,9 @@ lemma harmonicRate_ensures(count: int, prices: int)
 }
 
 lemma feeShareBps_ensures(shareBps: int, rateInForce: int, market: int)
-  requires (((shareBps >= 0) && (rateInForce > 0)) && (market > 0))
+  requires (shareBps >= 0)
+  requires (rateInForce > 0)
+  requires (market > 0)
   ensures (feeShareBps(shareBps, rateInForce, market) >= 0)
   ensures ((feeShareBps(shareBps, rateInForce, market) * market) <= (shareBps * rateInForce))
   ensures ((shareBps * rateInForce) < ((feeShareBps(shareBps, rateInForce, market) + 1) * market))

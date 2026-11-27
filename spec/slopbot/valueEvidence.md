@@ -49,10 +49,11 @@ pure val commitFileCap = 3000
 pure val pullCommitRouteLimit = 250
 pure def listedItems(l: PageListing): int = l.pageSizes.foldl(0, (n, s) => n + s)
 pure def lastPage(l: PageListing): int = l.pageSizes.nthOr(l.pageSizes.length() - 1, evidencePageSize)
+pure def fullPages(sizes: List[int]): bool = sizes.every(s => s == evidencePageSize)
 pure def pagesWellFormed(l: PageListing): bool =
   l.pageSizes.length() > 0 and l.pageSizes.every(s => s >= 0 and s <= evidencePageSize) and
   lastPage(l) < evidencePageSize and
-  l.pageSizes.removeAt(l.pageSizes.length() - 1).every(s => s == evidencePageSize)
+  fullPages(l.pageSizes.removeAt(l.pageSizes.length() - 1))
 pure def capReached(l: PageListing): bool = l.itemCap > 0 and listedItems(l) >= l.itemCap
 pure def listingComplete(l: PageListing): bool =
   not(l.unavailable) and not(l.repeatedKeys) and pagesWellFormed(l) and not(capReached(l)) and

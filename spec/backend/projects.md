@@ -456,6 +456,7 @@ pure def monthShareOf(history: List[ShareEntry], setting: int, period: int): int
 pure def shareOf(p: Project, month: int): int = monthShareOf(p.shareHistory, p.share, month)
 pure def alwaysShareWithinLimits(p: Project): bool =
   p.share >= 0 and p.share <= maxShareBasisPoints and shareHistoryValid(p.shareHistory)
+    and (p.revision == 0 implies p.shareHistory == List())
 pure def stepShareHistoryOnlyAppends(before: Project, via: str, after: Project): bool =
   via != "adminRevise" implies (after.shareHistory == before.shareHistory or
     after.shareHistory == before.shareHistory.append({ throughMonth: before.month, basisPoints: before.share }))
