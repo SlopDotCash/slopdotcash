@@ -165,7 +165,7 @@ export const successors: Readonly<Record<OldEntry, Successor>> = {
     bindings: {
       d1: { SLOPBOT_DB: "slop-private" },
       queues: { producers: { SLOPBOT_QUEUE: "slopbot-jobs" } },
-      vars: { ...roles, ...slopbotApp, SLOPBOT_WEBHOOK_SECRET: "parity-webhook-secret" },
+      vars: { ...roles, ...slopbotApp, SLOPBOT_APP_USER_ID: String(app.bot.id), SLOPBOT_WEBHOOK_SECRET: "parity-webhook-secret" },
     },
     services: ["SLOP_NOTIFY", "VALUE_MERGE_VERIFIER"],
     assets: false,
@@ -174,7 +174,7 @@ export const successors: Readonly<Record<OldEntry, Successor>> = {
     kind: "worker",
     root: apps("slopbot"),
     entry: "repositoryAccess",
-    origin: "https://slopbot-repository-access.internal",
+    origin: "https://slopbot.internal",
     bindings: { d1: { SLOPBOT_DB: "slop-private" }, vars: slopbotApp },
     services: [],
     assets: false,
