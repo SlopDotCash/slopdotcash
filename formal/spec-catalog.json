@@ -34100,7 +34100,7 @@
     },
     {
       "path": "spec/slopbot/closureActivation.md",
-      "sha256": "a020c7fd6930ece12fb6c256b343251b8b692561b53030894a5ecfe35c20967f",
+      "sha256": "a873c6d902d803c624a8e02e747d07f3123a923ecf9af6d5d9ceddc3c9d9f5ed",
       "module": "slopbot__closureActivation",
       "stories": [
         {
@@ -34229,7 +34229,7 @@
         },
         {
           "heading": "Story: Keep closure off until a reviewed production release activates it with reviewed evidence / Simulation samples include unreviewed counts, label-only categories, other actors and unreviewed releases",
-          "line": 326,
+          "line": 327,
           "definitions": [
             "reviewed",
             "reviewValues",
@@ -34268,7 +34268,7 @@
     },
     {
       "path": "spec/slopbot/composition.md",
-      "sha256": "492e4acd4ca2c0a4ac0f0821d3985e2ff5fc2bd84fe084401f7830155981354c",
+      "sha256": "8f7a3ae8482a97e20bb42b2035d95a4b2b098d22ef3a74490192eb8a4a97550b",
       "module": "slopbot__composition",
       "stories": [
         {
@@ -34361,7 +34361,7 @@
         },
         {
           "heading": "Story: A confirmed close debits once, and a reopen or upheld appeal reverses it once / The author's appeal is triaged and decided once; an upheld appeal reverses the debit and reopens only Slopbot's own close",
-          "line": 211,
+          "line": 212,
           "definitions": [
             "currentDebit",
             "subjectOf",
@@ -34386,7 +34386,7 @@
         },
         {
           "heading": "Story: A confirmed close debits once, and a reopen or upheld appeal reverses it once / Slopbot reopens only its own current close, and a Scam close asks each moderator once",
-          "line": 264,
+          "line": 267,
           "definitions": [
             "canObserveItem",
             "observeItem",
@@ -34400,7 +34400,7 @@
         },
         {
           "heading": "Story: A confirmed close debits once, and a reopen or upheld appeal reverses it once / Simulation samples follow one Scam candidate from the opened run to reversal",
-          "line": 286,
+          "line": 289,
           "definitions": [
             "byValues",
             "serverRunValues",
@@ -35833,7 +35833,7 @@
     },
     {
       "path": "spec/slopbot/review.md",
-      "sha256": "2b7be307c21d2d3455af5ec0263ceabecc93e920602a8caae4f098ff0605c936",
+      "sha256": "8961e1eda60942263e8b0e2f2add003e5970867c04b1f9d14002071fce39702d",
       "module": "slopbot__review",
       "stories": [
         {
@@ -35842,7 +35842,7 @@
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment",
-          "line": 476
+          "line": 483
         }
       ],
       "rules": [
@@ -35950,7 +35950,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Every call is free, attributed and accounted",
-          "line": 280,
+          "line": 286,
           "definitions": [
             "alwaysFreeAndAttributed",
             "alwaysOnlySurplusBlocks",
@@ -35962,7 +35962,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / A failed review restarts on a new delivery, and a blocked one only after its reset",
-          "line": 300,
+          "line": 307,
           "definitions": [
             "canRetry",
             "retry",
@@ -35981,7 +35981,7 @@
         },
         {
           "heading": "Story: Review registered work and preserve incomplete outcomes / Simulation samples exercise each call outcome, verdict and coverage",
-          "line": 336,
+          "line": 343,
           "definitions": [
             "sure",
             "okOrbio",
@@ -36017,7 +36017,7 @@
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment / Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB",
-          "line": 482,
+          "line": 489,
           "definitions": [
             "ComparedFile",
             "DiffTally",
@@ -36050,7 +36050,7 @@
         },
         {
           "heading": "Story: Read the whole bounded input and keep one disclosed review comment / Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized",
-          "line": 564,
+          "line": 571,
           "definitions": [
             "IssueComment",
             "CommentHistory",
@@ -36119,15 +36119,15 @@
         },
         {
           "target": "./jobQueue.md",
-          "line": 304
+          "line": 311
         },
         {
           "target": "./budgetBlocks.md",
-          "line": 305
+          "line": 312
         },
         {
           "target": "./closure.md",
-          "line": 497
+          "line": 504
         }
       ]
     },
@@ -37562,7 +37562,7 @@
     },
     {
       "path": "spec/slopbot/webhookDelivery.md",
-      "sha256": "ce6ffa0ed41fa110f7112da4b5777b607ad0cc3700790ec5211a9d4f4c4f4f50",
+      "sha256": "8d5fc995cb92ab7a0c30c6e91a7afe45dd3f831ab1c145310b8ed11740faaa07",
       "module": "slopbot__webhookDelivery",
       "stories": [
         {

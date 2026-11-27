@@ -233,9 +233,11 @@ pure def sometimesOrbioServesAfterADenial(r: Review): bool =
 ### A closure needs a second, agreeing review, and limited coverage stays advisory
 
 A triage answer with a finding starts a separate confirmation route, the
-same route as triage from Surplus Sonnet. The review is confirmed only when both verdicts name the same
-finding, each has confidence of at least 90, neither reports a limitation
-and both are grounded. A confirmation that disagrees, is unsure or is
+same route as triage from Surplus Sonnet. An answered triage or confirmation
+verdict comes from a recorded successful call of that kind, confirmation keeps
+that recorded triage call, and only a finished review is confirmed. The review
+is confirmed only when both verdicts name the same finding, each has confidence
+of at least 90, neither reports a limitation and both are grounded. A confirmation that disagrees, is unsure or is
 ungrounded leaves the review uncertain: it goes to the maintainer first and
 can never close. For a low-quality finding the closure composition also
 requires the same objective defect and trusted verification of it. A
@@ -271,9 +273,13 @@ pure def alwaysOutcomeFollowsAValidAnswer(r: Review): bool =
   (r.status == Answered or r.status == Limited or r.status == Complete) implies
     (r.calls.length() > 0 and r.calls.nthOr(r.calls.length() - 1, noCall).outcome == CallOk)
 pure def alwaysConfirmedMeansAgreement(r: Review): bool =
-  r.confirmed implies (agrees(r.triage, r.second) and r.kind == Confirm
+  (((r.status == Answered and r.kind == Triage) or r.kind == Confirm) implies
+    r.calls.some(c => c.kind == Triage and c.outcome == CallOk and c.verdict == r.triage))
+  and ((r.status == Answered and r.kind == Confirm) implies
+    r.calls.some(c => c.kind == Confirm and c.outcome == CallOk and c.verdict == r.second))
+  and (r.confirmed implies ((r.status == Complete or r.status == Limited) and agrees(r.triage, r.second) and r.kind == Confirm
     and r.calls.some(c => c.kind == Confirm and c.outcome == CallOk and c.verdict == r.second)
-    and r.calls.some(c => c.kind == Triage and c.outcome == CallOk and c.verdict == r.triage))
+    and r.calls.some(c => c.kind == Triage and c.outcome == CallOk and c.verdict == r.triage)))
 pure def alwaysUncertainNeverEnforces(r: Review): bool = r.uncertain implies not(mayEnforce(r)) and not(r.confirmed)
 ```
 
@@ -286,9 +292,10 @@ pure def alwaysFreeAndAttributed(r: Review): bool =
 pure def alwaysOnlySurplusBlocks(r: Review): bool =
   r.status == BudgetBlocked implies (r.retryAt > 0 and r.calls.some(c => c.outcome == CallBudgetDenied and c.provider != OrbioSonnet))
 pure def alwaysAdmittedReview(r: Review): bool =
-  (r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
+  r.attempts >= 0 and (r.bound implies r.scope != RS::Unregistered) and
+  ((r.status == InFlight or r.status == Answered or r.status == Limited or r.status == Complete
     or r.status == BudgetBlocked or r.status == RetryableFailure) implies (r.bound and r.attempts > 0
-      and r.scope != RS::Unregistered)
+      and r.scope != RS::Unregistered))
 pure def alwaysSkippedNeverCalls(r: Review): bool =
   r.status == Skipped implies (not(r.bound) and (r.calls.length() == 0 or r.attempts > 0))
 pure def alwaysCallsFollowAnAttempt(r: Review): bool = r.calls.length() > 0 implies r.attempts > 0
