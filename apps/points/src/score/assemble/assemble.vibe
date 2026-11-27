@@ -540,7 +540,7 @@ export effect function assembleSnapshot(collection: Collection, scope: AssemblyS
     ...(supersessions.length === 0 ? {} : { valueAssessmentSupersessions: supersessions }),
     ledger: current.ledger,
     reviewExclusions: scored.reviewExclusions,
-    ...(scored.omittedReviewCredits.length === 0 ? {} : { omittedReviewCredits: scored.omittedReviewCredits }),
+    ...(scope.mode === "rolling" && scored.omittedReviewCredits.length > 0 ? { omittedReviewCredits: scored.omittedReviewCredits } : {}),
     penalties: inputs.penalties,
     ...(collection.penaltyHistory === undefined ? {} : { penaltyHistory: collection.penaltyHistory }),
     ...(basis === undefined || payments === undefined ? {} : {

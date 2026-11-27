@@ -245,6 +245,7 @@ export schema OmittedReviewCredit {
   readonly reviewer: GitHubActor
   readonly scoreThirds: number
   readonly submittedAt: string
+  readonly acceptedAt?: string
   readonly url: string
   readonly scoreDecisionSourceId: string
   readonly scoreDecisionAt?: string

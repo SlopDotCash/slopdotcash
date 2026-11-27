@@ -299,7 +299,7 @@ module actionsSimulation {
 }
 module workflowShape {
   import { spawnSync } from "node:child_process"
-  import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+  import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { join } from "node:path"
   import { parse } from "yaml"
@@ -422,15 +422,18 @@ mkdir -p "$BUNDLE/github"
 `
 
   /** @throws {Error} */
-  function deadline(prepare: Job, scenario: DeadlineScenario): Ran {
+  function deadline(prepare: Job, scenario: DeadlineScenario) {
     const context = contextOf({ ref: scenario.ref, collectorRunner: scenario.hosted ? "" : "slop-collector", hosted: scenario.hosted })
     const reserve = stepOf(prepare, "Reserve checked bundle time for hosted main collection")
     const collect = stepOf(prepare, "Generate live contribution data")
     const reserved = runs(reserve.if, context) ? `${reserve.run ?? ""}\nsource "$GITHUB_ENV"` : ""
     const script = [collectionStubs, reserved, "clock=$((clock + SETUP_TIME))", collect.run ?? ""].join("\n")
     const directory = mkdtempSync(join(tmpdir(), "slop-collection-deadline-"))
+    const output = join(directory, "github-output")
+    writeFileSync(output, "")
     const ran = bash(script, {
       GITHUB_ENV: join(directory, "github-env"),
+      GITHUB_OUTPUT: output,
       GITHUB_REF: `refs/heads/${scenario.ref}`,
       RUNNER_TEMP: directory,
       BUNDLE: join(directory, "bundle"),
@@ -441,8 +444,9 @@ mkdir -p "$BUNDLE/github"
       SETUP_TIME: String(scenario.setupTime),
       FIRST_RUN_TIME: String(scenario.firstRunTime),
     }, directory)
+    const freshDigest = readFileSync(output, "utf8").trim()
     rmSync(directory, { recursive: true, force: true })
-    return ran
+    return { ...ran, freshDigest }
   }
 
   /** @throws {Error} */
@@ -1215,12 +1219,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
           staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/development-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
         },
         deadlines: {
-          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"] },
-          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"] },
-          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"] },
-          setupExhaustsBudget: { code: 1, lines: [] },
-          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"] },
-          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"] },
+          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"], freshDigest: "" },
+          setupExhaustsBudget: { code: 1, lines: [], freshDigest: "" },
+          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
         },
         daily: {
           schedule: { start: true, followUp: false },
