@@ -2,7 +2,7 @@
 import { D1, first, sql } from "@repo/platform/d1"
 import { isoAt, isoNow } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
-import { Caller, admission, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { Caller, admission, handleRaw, handleRawJsonWrite, json, jsonBody, methodNotAllowed, refuse, sameOriginWrite } from "@repo/platform/http"
 import { allowed, downloadRefusal } from "../../gen/security__privacy.effect.vibe"
 import { closeEvidenceCase, downloadEvidence, downloadOtherMethods, evidenceOverview, evidencePolicy, finalizeEvidence, grantEvidenceDownload, grantEvidenceRead, readEvidenceBody, registerEvidence, retentionBoundary, uploadEvidence, uploadEvidenceChunk } from "../client/evidence.vibe"
 import { scannerRead } from "../privacy/reads.vibe"
@@ -20,6 +20,10 @@ const kinds = new Set(["trace", "stdout", "stderr", "network", "artifact", "line
 const contentTypes = ["text/plain", "application/x-ndjson", "application/json", "application/octet-stream"]
 const grantCookie = "__Secure-vetting-read-grant="
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const operatorWriteSession = {
+  unauthenticated: { ...admission.unauthenticated, headers: privateHeaders },
+  actorMismatch: { ...admission.actorChanged, headers: privateHeaders },
+}
 
 function answer(body: unknown, status = 200) {
   return json(body, status, privateHeaders)
@@ -72,9 +76,7 @@ effect function sameOperator(githubId: string, changed: Row) {
 }
 
 effect function reasonOf(max: number) {
-  if (!(try sameOriginWrite())) throw refuse(admission.origin.status, admission.origin.code, admission.origin.message)
-  const body = try jsonBody(64)
-  if (!isRecord(body)) throw refuse(admission.invalidJson.status, admission.invalidJson.code, admission.invalidJson.message)
+  const body = jsonBody(64) catch effect (error) => { throw refuse(error.status, error.code, error.message, privateHeaders) }
   try exact(body, ["reason"])
   return try text(body.reason, max)
 }
@@ -253,14 +255,14 @@ const overviewRoute = handleRaw(evidenceOverview, (input) => effect {
   return answer({ runs: listed, policy: evidencePolicy, retentionBoundary })
 })
 
-const closeRoute = handleRaw(closeEvidenceCase, (input) => effect {
+const closeRoute = handleRawJsonWrite({ ...closeEvidenceCase, ...operatorWriteSession }, (input) => effect {
   const assessment = input.params.assessment ?? ""
   if (!identity.test(assessment)) throw refused(rows.routeNotFound)
   const actor = try operator()
   if (actor.githubId !== evidencePolicy.policyAuthorityGithubId) throw refused(rows.policyOwnerOnly)
   const reason = try reasonOf(1000)
   return answer(try closeCase(assessment, actor.githubId, reason))
-})
+}, privateHeaders)
 
 effect function grantFor(params: Readonly<Record<string, string>>, download: boolean) {
   const { assessment, runId, sha } = try objectIdentity(params)
@@ -284,8 +286,8 @@ effect function grantFor(params: Readonly<Record<string, string>>, download: boo
   return HttpServerResponse.setHeader(answer({ expiresInSeconds: duration }, 201), "set-cookie", `${grantCookie}${token}; Path=${path}; Max-Age=${duration}; Secure; HttpOnly; SameSite=Strict`)
 }
 
-const grantRoute = handleRaw(grantEvidenceRead, (input) => grantFor(input.params, false))
-const downloadGrantRoute = handleRaw(grantEvidenceDownload, (input) => grantFor(input.params, true))
+const grantRoute = handleRawJsonWrite({ ...grantEvidenceRead, ...operatorWriteSession }, (input) => grantFor(input.params, false), privateHeaders)
+const downloadGrantRoute = handleRawJsonWrite({ ...grantEvidenceDownload, ...operatorWriteSession }, (input) => grantFor(input.params, true), privateHeaders)
 
 schema Consumed { reason: string; expires_at: string }
 
@@ -423,6 +425,10 @@ const otherMethodRoutes = downloadOtherMethods.map((descriptor) => handleRaw(des
   throw refused(rows.downloadMethod)
 }))
 
+effect function unsupportedOperatorWrite() {
+  if ((try HttpServerRequest.HttpServerRequest).method !== "GET" && !(try sameOriginWrite())) throw refused(rows.otherMethodOrigin)
+}
+
 export const evidenceRoutes = Layer.mergeAll(
   registerRoute,
   uploadRoute,
@@ -435,4 +441,14 @@ export const evidenceRoutes = Layer.mergeAll(
   bodyRoute,
   downloadRoute,
   ...otherMethodRoutes,
+  methodNotAllowed([closeEvidenceCase], effect {
+    try unsupportedOperatorWrite()
+    throw refused(rows.routeNotFound)
+  }),
+  methodNotAllowed([grantEvidenceRead, grantEvidenceDownload], effect {
+    try unsupportedOperatorWrite()
+    const { assessment, run, sha } = try HttpRouter.params
+    try objectIdentity({ assessment: assessment ?? "", run: run ?? "", sha: sha ?? "" })
+    return answer({ error: "not_found" }, 404)
+  }),
 )

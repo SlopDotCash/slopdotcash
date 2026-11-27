@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { utf8 } from "@repo/platform/crypto"
-import { type Answer, type World, agedClosure, assessment, backUp, digest, endSession, holdPartUntilSessionEnds, finish, legacyObject, overwrite, owner, partialDownload, reader, reportCase, request, revokeTriager, rows, signed, started } from "./support/evidence/harness.ts"
+import { type Answer, type World, agedClosure, assessment, backUp, digest, endSession, holdPartUntilSessionEnds, finish, legacyObject, origin, overwrite, owner, partialDownload, reader, reportCase, request, revokeTriager, rows, signed, started } from "./support/evidence/harness.ts"
 
 service Evidence { readonly world: World }
 
@@ -55,6 +55,37 @@ effect function actions(world: World, id: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Operator write refusals keep evidence private and leave the grant and closure journals untouched (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
+    const { world } = try Evidence
+    const id = vetting("9")
+    const sha = "a".repeat(64)
+    const close = `/api/v1/operator/vetting-evidence/${id}/close`
+    const counts = () => promise(() => rows(world, "SELECT (SELECT count(*) FROM vetting_evidence_grants) AS grants, (SELECT count(*) FROM vetting_evidence_case_closures) AS closures, (SELECT count(*) FROM vetting_evidence_audit) AS audits"))
+    const before = try counts()
+    const forbidden = refusal(403, "origin_forbidden", "Requests must come from this site")
+    const unauthorized = refusal(401, "unauthorized", "Sign in with GitHub")
+    const missing = refusal(404, "not_found", "Evidence route not found")
+    for (const path of [operatorPath(id, sha, "grant"), operatorPath(id, sha, "download-grant"), close]) {
+      const answers = [
+        try promise(() => request(world, path, { body: "{}", json: true })),
+        try promise(() => request(world, path, { body: "{}", headers: { origin: "https://other.test", "content-type": "application/json" } })),
+        try promise(() => request(world, path, { body: "reason=inspect", headers: { origin, "content-type": "application/x-www-form-urlencoded" } })),
+        try promise(() => request(world, path, { body: "{", json: true })),
+        try promise(() => request(world, path)),
+        try promise(() => request(world, path, { body: "{", json: true, as: owner })),
+      ]
+      try same(answers.map(shown), [unauthorized, forbidden, forbidden, unauthorized,
+        path === close ? missing : { status: 404, body: { error: "not_found" } },
+        refusal(400, "invalid_request", "Request body must be a JSON object"),
+      ])
+      try same(answers.map((answer) => [answer.headers["cache-control"], answer.headers["x-robots-tag"], answer.headers["set-cookie"]]),
+        answers.map(() => ["private, no-store", "noindex", undefined]))
+    }
+    const badIdentity = try promise(() => request(world, operatorPath(id, "not-a-digest", "download-grant")))
+    try same([shown(badIdentity), badIdentity.headers["cache-control"]], [missing, "private, no-store"])
+    try same(try counts(), before)
+  })
+
   it.effect('Register, upload once and read small scanner evidence under a single-use fifteen-minute grant (spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
     const world = (try Evidence).world
     const id = vetting("1")
