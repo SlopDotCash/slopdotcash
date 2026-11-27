@@ -914,7 +914,7 @@
     },
     {
       "path": "spec/backend/bindingConsent.md",
-      "sha256": "d63009379a4e468697e48ae0a5e0f28d6a886b00bd82bd400e29a217a4d516fe",
+      "sha256": "f2549397e977fb2328934c21051f8bb2363f36a5c1a1d205183b27318c6bc770",
       "module": "backend__bindingConsent",
       "stories": [
         {
@@ -1012,7 +1012,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox",
-          "line": 291,
+          "line": 293,
           "definitions": [
             "canSolanaAdmitAttempt",
             "solanaAdmitAttempt",
@@ -1027,7 +1027,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / The wallet registries move underneath through their own guarded events",
-          "line": 340,
+          "line": 342,
           "definitions": [
             "canObserveTime",
             "observeTime",
@@ -1060,7 +1060,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable",
-          "line": 398,
+          "line": 400,
           "definitions": [
             "consumedSample",
             "authorizedSample",
@@ -1123,7 +1123,7 @@
         },
         {
           "target": "../settlement/paymentDispatch.md",
-          "line": 297
+          "line": 299
         }
       ]
     },
@@ -3411,7 +3411,7 @@
     },
     {
       "path": "spec/backend/wallets.md",
-      "sha256": "425d0687564eaf542ed794f3a9421723d2bcbc1f10040c4a65e2c53730587ef8",
+      "sha256": "6a3747c2dbcfb41a2b06c3954bec486e26cc019172d88fdf5ce08ead9ee86264",
       "module": "backend__wallets",
       "stories": [
         {
@@ -3591,7 +3591,7 @@
         },
         {
           "heading": "Story: Recover a wallet through the operator without giving the operator authority / The effective claim and held deliveries follow the authorized claim",
-          "line": 440,
+          "line": 442,
           "definitions": [
             "AttemptEvidence",
             "effectiveClaim",
@@ -3625,7 +3625,7 @@
         },
         {
           "target": "../settlement/payment.md",
-          "line": 448
+          "line": 450
         }
       ]
     },
@@ -7840,7 +7840,7 @@
     },
     {
       "path": "spec/fees/buyback.md",
-      "sha256": "5249554720824db58d5d7eea0eacd8d58e4c2180658369cbc2f6ee5d0310171a",
+      "sha256": "a84e03663b494d2b3378afb32f437fbaf32ef9342dfc40f43fa456aa12e49732",
       "module": "fees__buyback",
       "stories": [
         {

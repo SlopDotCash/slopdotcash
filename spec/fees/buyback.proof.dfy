@@ -336,6 +336,27 @@ lemma verifyReadiness_ensures(b: Buyback, readyNetwork: fees__runtime_Network, b
   }
 }
 
+lemma decide_ensures(b: Buyback, quote: BridgeQuote, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysSourcesOnce(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysRuntimeSound(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysDecisionsSignNothing(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysOutcomesOfOrders(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysShareBounded(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysWindowLimits(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysJournalPastAndPositive(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> alwaysPendingOrderReserved(decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> stepNewSourceUnseen(b, decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> stepOrderOutcomeOnce(b, decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> stepIncomeMonotonic(b, decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> stepJournalRetained(b, decide(b, quote, by_)))
+  ensures (inv(b) ==> canDecide(b, quote, by_) ==> stepSignaturesNeedLiveBuyback(b, "decide", decide(b, quote, by_)))
+{
+  if inv(b) && canDecide(b, quote, by_) {
+    var after := decide(b, quote, by_);
+    UnchangedCumulative(b, after);
+  }
+}
+
 lemma approveOrder_ensures(b: Buyback, request: BridgeOrder, by_: fees__runtime_Sender)
   ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysSourcesOnce(approveOrder(b, request, by_)))
   ensures (inv(b) ==> canApproveOrder(b, request, by_) ==> alwaysRuntimeSound(approveOrder(b, request, by_)))

@@ -1,7 +1,5 @@
 lemma WeightMember(s: WorkSnapshot, exclusions: seq<Exclusion>, w: settlement__allocation_Weight)
-  ensures w in rewardWeights(s, exclusions) <==> exists r :: r in s.rows && settlement__money_validAmount(r.acceptedWork)
-    && settlement__money_positiveAmount(r.acceptedWork) && !excludedIn(exclusions, r.actor, s.period)
-    && w == settlement__allocation_Weight(r.actor, r.acceptedWork)
+  ensures w in rewardWeights(s, exclusions) <==> (exists r :: r in s.rows && settlement__money_validAmount(r.acceptedWork) && settlement__money_positiveAmount(r.acceptedWork) && !excludedIn(exclusions, r.actor, s.period) && w == settlement__allocation_Weight(r.actor, r.acceptedWork))
 {
   var p := (r: WorkRow) => ((settlement__money_validAmount(r.acceptedWork) && settlement__money_positiveAmount(r.acceptedWork)) && !(excludedIn(exclusions, r.actor, s.period)));
   var f := ProofLib.Filter(p, s.rows);
@@ -72,7 +70,7 @@ lemma lawExclusionOnlyRemoves_ensures(s: WorkSnapshot, exclusions: seq<Exclusion
 lemma lawParticipationNeverWeights_ensures(s: WorkSnapshot, exclusions: seq<Exclusion>, participation: int, recognition: int)
   ensures (lawParticipationNeverWeights(s, exclusions, participation, recognition) == true)
 {
-  var mapped := seq(|s.rows|, i requires 0 <= i < |s.rows| => withSideCategories(s.rows[i], participation, recognition));
+  var mapped := (var s_map := s.rows; seq(|s_map|, i_map requires 0 <= i_map < |s_map| => var r := s_map[i_map]; withSideCategories(r, participation, recognition)));
   var t := s.(rows := mapped);
   var p := (r: WorkRow) => ((settlement__money_validAmount(r.acceptedWork) && settlement__money_positiveAmount(r.acceptedWork)) && !(excludedIn(exclusions, r.actor, s.period)));
   var q := (r: WorkRow) => ((settlement__money_validAmount(r.acceptedWork) && settlement__money_positiveAmount(r.acceptedWork)) && !(excludedIn(exclusions, r.actor, t.period)));

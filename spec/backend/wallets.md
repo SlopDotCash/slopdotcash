@@ -373,7 +373,8 @@ callers: `POST /wallet-claims/{id}/possession-challenge`, `POST
 on any Solana claim of the authenticated actor, historical ones included.
 When the claim already has an attestation, both routes return it and change
 nothing. A challenge lives 15 minutes from the trusted clock and its bound
-fields come from server state. Submission consumes the challenge in one
+fields come from server state; the challenge counter stays nonnegative
+and each issued challenge takes a positive identifier up to it. Submission consumes the challenge in one
 conditional update (unconsumed and unexpired) before the signature is
 trusted, so a challenge is used at most once even when the proof then fails:
 a challenge for another claim, a changed wallet or a signature that does not
@@ -414,7 +415,8 @@ pure def attestPossession(b: WalletRegistration, by: str, claim: int, challengeI
       else b.attestations }
 pure def publicPossession(b: WalletRegistration, claim: int): Attestation = attestationFor(b, claim)
 pure def alwaysPossessionRecordsValid(b: WalletRegistration): bool =
-  b.possessionChallenges.every(c => c.id > 0 and c.id <= b.lastPossessionChallenge and c.claim > 0 and c.claim <= b.claims.length()
+  b.lastPossessionChallenge >= 0
+  and b.possessionChallenges.every(c => c.id > 0 and c.id <= b.lastPossessionChallenge and c.claim > 0 and c.claim <= b.claims.length()
     and c.expiresAt == c.issuedAt + possessionLifetime and c.issuedAt <= b.clock
     and (c.consumed implies (c.consumedAt >= c.issuedAt and c.consumedAt < c.expiresAt))
     and b.possessionChallenges.select(o => o.id == c.id).length() == 1)

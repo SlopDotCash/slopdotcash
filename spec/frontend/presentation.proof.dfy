@@ -125,33 +125,41 @@ lemma PresentationZerosFold(r: int, d: int, z0: int, k: int)
   }
 }
 
-// For a nonzero remainder below ten to the decimals, the trailing zeros are fewer than the decimals,
-// the remainder is a multiple of ten to them, and not of ten to one more.
+lemma PresentationModLess(r: int, m: int)
+  requires 0 < r < m
+  ensures r % m == r
+{
+}
+
 lemma PresentationTrailingZeros(r: int, d: int)
   requires 0 <= d <= 36 && 0 < r < tenTo(d)
   ensures 0 <= trailingZeros(r, d) < d
   ensures tenTo(trailingZeros(r, d)) > 0 && tenTo(trailingZeros(r, d) + 1) > 0
   ensures r % tenTo(trailingZeros(r, d)) == 0 && r % tenTo(trailingZeros(r, d) + 1) != 0
 {
+  hide *;
   PresentationTenToZero();
   PresentationQuotient(r, 1);
-  assert belowScale(r, 0) == 0;
+  assert belowScale(r, 0) == 0 by { reveal belowScale; }
   PresentationZerosFold(r, d, 0, 0);
-  assert decimalPlaces[0..] == decimalPlaces;
   var z := trailingZeros(r, d);
-  assert z == Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), 0, decimalPlaces[0..]);
+  assert z == Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), 0, decimalPlaces[0..]) by {
+    reveal trailingZeros;
+    assert decimalPlaces[0..] == decimalPlaces;
+  }
   assert 0 <= z <= d && belowScale(r, z) == 0;
   PresentationTenToPositive(z);
   PresentationTenToPositive(d);
   PresentationQuotient(r, tenTo(z));
   PresentationQuotient(r, tenTo(d));
-  assert r % tenTo(z) == 0;
-  assert belowScale(r, d) == r;
+  assert r % tenTo(z) == 0 by { reveal belowScale; }
+  PresentationModLess(r, tenTo(d));
+  assert belowScale(r, d) == r by { reveal belowScale; }
   assert z != d;
   PresentationTenToPositive(z + 1);
   PresentationQuotient(r, tenTo(z + 1));
   assert !(belowScale(r, z + 1) == 0);
-  assert r % tenTo(z + 1) != 0;
+  assert r % tenTo(z + 1) != 0 by { reveal belowScale; }
 }
 
 // Every remainder and quotient is taken with a positive power of ten.
@@ -223,10 +231,11 @@ lemma lawShownAmountRoundTrips_ensures(units: int, decimals: int)
   }
 }
 
-// A shown fraction with digits never ends in zero: one more trailing zero would divide the remainder.
 lemma lawNoTrailingFractionZero_ensures(units: int, decimals: int)
   ensures (lawNoTrailingFractionZero(units, decimals) == true)
 {
+  hide *;
+  reveal lawNoTrailingFractionZero, validDecimals;
   if units >= 0 && validDecimals(decimals) && showAmount(units, decimals).fractionDigits > 0 {
     PresentationShown(units, decimals);
     var T := tenTo(decimals);
@@ -241,6 +250,8 @@ lemma lawNoTrailingFractionZero_ensures(units: int, decimals: int)
     PresentationQuotient(s.fraction, 10);
     if s.fraction % 10 == 0 {
       var m := s.fraction / 10;
+      PresentationDivMod(s.fraction, 10);
+      PresentationDivMod(r, P);
       assert s.fraction == 10 * m;
       assert r == P * s.fraction;
       assert r == (10 * P) * m;

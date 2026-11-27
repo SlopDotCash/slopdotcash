@@ -196,55 +196,144 @@ lemma attestPossession_ensures(b: WalletRegistration, by_: string, claim: int, c
   ensures (inv(b) ==> canAttestPossession(b, by_, claim, challengeId, recoveredSigner) ==> stepOperatorHistoryRetained(b, attestPossession(b, by_, claim, challengeId, recoveredSigner)))
   ensures (inv(b) ==> canAttestPossession(b, by_, claim, challengeId, recoveredSigner) ==> stepPossessionRecordsPermanent(b, attestPossession(b, by_, claim, challengeId, recoveredSigner)))
 {
+  hide *;
   if inv(b) && canAttestPossession(b, by_, claim, challengeId, recoveredSigner) {
-    var xs := b.possessionChallenges;
+    reveal inv, attestPossession;
     var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
-    var ys := after.possessionChallenges;
-    var target := possessionChallenge(b, challengeId);
-    AttestPointwise(b, by_, claim, challengeId, recoveredSigner);
-    forall c | c in ys
-      ensures |ProofLib.Filter((o: PossessionChallenge) => (o.id == c.id), ys)| == 1
-    {
-      var i :| 0 <= i < |ys| && ys[i] == c;
-      assert xs[i] in xs;
-      ProofLib.FilterLengthPointwise((o: PossessionChallenge) => (o.id == c.id), (o: PossessionChallenge) => (o.id == c.id), xs, ys);
-    }
-    forall c | c in xs
-      ensures exists d :: d in ys && d.id == c.id && d.claim == c.claim && d.wallet == c.wallet && d.expiresAt == c.expiresAt && (!c.consumed || d == c)
-    {
-      var i :| 0 <= i < |xs| && xs[i] == c;
-      assert ys[i] in ys;
-    }
-    forall a | a in b.attestations
-      ensures exists c :: c in ys && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt
-    {
-      var c :| c in xs && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt;
-      var i :| 0 <= i < |xs| && xs[i] == c;
-      assert ys[i] in ys;
-    }
-    if possessionMatches(b, claim, challengeId, recoveredSigner) {
-      var added := Attestation(claim, challengeId, claimAt(b, claim).wallet, b.clock);
-      var k :| 0 <= k < |xs| && xs[k] == target;
-      assert ys[k] in ys && ys[k].id == challengeId && ys[k].claim == claim && ys[k].consumed && ys[k].consumedAt == b.clock;
-      var own := ProofLib.Filter((a: Attestation) => (a.claim == claim), b.attestations);
+    assert alwaysPartitionValid(after) by { reveal alwaysPartitionValid; }
+    assert alwaysPredecessors(after) by { reveal alwaysPredecessors; }
+    assert alwaysClaimsAdmitted(after) by { reveal alwaysClaimsAdmitted; }
+    assert alwaysOneConsumption(after) by { reveal alwaysOneConsumption; }
+    assert alwaysOneAuthorization(after) by { reveal alwaysOneAuthorization; }
+    assert alwaysAuthorizationAdmitted(after) by { reveal alwaysAuthorizationAdmitted, claimAt; }
+    assert alwaysAuthorizationIncreases(after) by { reveal alwaysAuthorizationIncreases, activeAuthorization; }
+    assert alwaysOperatorRecordsMatchClaims(after) by { reveal alwaysOperatorRecordsMatchClaims, claimAt; }
+    assert stepClaimsRetained(b, after) by { reveal stepClaimsRetained; }
+    assert stepAuthorizationsRetained(b, after) by { reveal stepAuthorizationsRetained; }
+    assert stepConsumedRetained(b, after) by { reveal stepConsumedRetained; }
+    assert stepFirstProofPersists(b, after) by { reveal stepFirstProofPersists, firstProof; }
+    assert stepOperatorHistoryRetained(b, after) by { reveal stepOperatorHistoryRetained; }
+    AttestPossessionValid(b, by_, claim, challengeId, recoveredSigner);
+  }
+}
+
+lemma PossessionRecordsMeaning(b: WalletRegistration)
+  ensures alwaysPossessionRecordsValid(b) == (
+    b.lastPossessionChallenge >= 0
+    && (forall c :: c in b.possessionChallenges ==> c.id > 0 && c.id <= b.lastPossessionChallenge && c.claim > 0 && c.claim <= |b.claims| && c.expiresAt == c.issuedAt + possessionLifetime && c.issuedAt <= b.clock && (!c.consumed || (c.consumedAt >= c.issuedAt && c.consumedAt < c.expiresAt)) && |ProofLib.Filter((o: PossessionChallenge) => (o.id == c.id), b.possessionChallenges)| == 1)
+    && (forall a :: a in b.attestations ==> a.claim > 0 && a.claim <= |b.claims| && a.wallet == claimAt(b, a.claim).wallet && |ProofLib.Filter((o: Attestation) => (o.claim == a.claim), b.attestations)| == 1 && (exists c :: c in b.possessionChallenges && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt)))
+{
+}
+
+lemma AttestChallengesValid(b: WalletRegistration, by_: string, claim: int, challengeId: int, recoveredSigner: string)
+  requires inv(b) && canAttestPossession(b, by_, claim, challengeId, recoveredSigner)
+  ensures forall c :: c in attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges ==>
+    c.id > 0 && c.id <= b.lastPossessionChallenge && c.claim > 0 && c.claim <= |b.claims|
+    && c.expiresAt == c.issuedAt + possessionLifetime && c.issuedAt <= b.clock
+    && (!c.consumed || (c.consumedAt >= c.issuedAt && c.consumedAt < c.expiresAt))
+    && |ProofLib.Filter((o: PossessionChallenge) => (o.id == c.id), attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges)| == 1
+  ensures stepPossessionRecordsPermanent(b, attestPossession(b, by_, claim, challengeId, recoveredSigner))
+{
+  hide *;
+  reveal inv, canAttestPossession, attestPossession, stepPossessionRecordsPermanent;
+  PossessionRecordsMeaning(b);
+  AttestPointwise(b, by_, claim, challengeId, recoveredSigner);
+  var xs := b.possessionChallenges;
+  var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
+  var ys := after.possessionChallenges;
+  forall c | c in ys
+    ensures c.id > 0 && c.id <= b.lastPossessionChallenge && c.claim > 0 && c.claim <= |b.claims|
+      && c.expiresAt == c.issuedAt + possessionLifetime && c.issuedAt <= b.clock
+      && (!c.consumed || (c.consumedAt >= c.issuedAt && c.consumedAt < c.expiresAt))
+      && |ProofLib.Filter((o: PossessionChallenge) => (o.id == c.id), ys)| == 1
+  {
+    var i :| 0 <= i < |ys| && ys[i] == c;
+    assert xs[i] in xs;
+    ProofLib.FilterLengthPointwise((o: PossessionChallenge) => (o.id == c.id), (o: PossessionChallenge) => (o.id == c.id), xs, ys);
+  }
+  forall c | c in xs
+    ensures exists d :: d in ys && d.id == c.id && d.claim == c.claim && d.wallet == c.wallet && d.expiresAt == c.expiresAt && (!c.consumed || d == c)
+  {
+    var i :| 0 <= i < |xs| && xs[i] == c;
+    assert ys[i] in ys;
+  }
+}
+
+lemma AttestAttestationsValid(b: WalletRegistration, by_: string, claim: int, challengeId: int, recoveredSigner: string)
+  requires inv(b) && canAttestPossession(b, by_, claim, challengeId, recoveredSigner)
+  ensures forall a :: a in attestPossession(b, by_, claim, challengeId, recoveredSigner).attestations ==>
+    a.claim > 0 && a.claim <= |b.claims| && a.wallet == claimAt(b, a.claim).wallet
+    && |ProofLib.Filter((o: Attestation) => (o.claim == a.claim), attestPossession(b, by_, claim, challengeId, recoveredSigner).attestations)| == 1
+    && (exists c :: c in attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt)
+{
+  hide *;
+  reveal inv, canAttestPossession, attestPossession, ownedSolanaClaim, possessionMatches;
+  PossessionRecordsMeaning(b);
+  AttestPointwise(b, by_, claim, challengeId, recoveredSigner);
+  var xs := b.possessionChallenges;
+  var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
+  var ys := after.possessionChallenges;
+  var target := possessionChallenge(b, challengeId);
+  forall a | a in b.attestations
+    ensures exists c :: c in ys && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt
+  {
+    var c :| c in xs && c.id == a.challenge && c.claim == a.claim && c.consumed && c.consumedAt == a.attestedAt;
+    var i :| 0 <= i < |xs| && xs[i] == c;
+    assert ys[i] in ys;
+  }
+  if possessionMatches(b, claim, challengeId, recoveredSigner) {
+    var added := Attestation(claim, challengeId, claimAt(b, claim).wallet, b.clock);
+    var k :| 0 <= k < |xs| && xs[k] == target;
+    assert ys[k] in ys && ys[k].id == challengeId && ys[k].claim == claim && ys[k].consumed && ys[k].consumedAt == b.clock;
+    var own := ProofLib.Filter((a: Attestation) => (a.claim == claim), b.attestations);
+    assert |own| == 0 by {
+      reveal attestationFor, ProofLib.Filter;
       if |own| > 0 {
         ProofLib.FilterMember((a: Attestation) => (a.claim == claim), b.attestations, own[0]);
       }
-      assert |own| == 0;
-      forall a | a in b.attestations + [added]
-        ensures |ProofLib.Filter((o: Attestation) => (o.claim == a.claim), b.attestations + [added])| == 1
-      {
-        ProofLib.FilterAppend((o: Attestation) => (o.claim == a.claim), b.attestations, added);
-        if a.claim == claim {
-          ProofLib.FilterNone((o: Attestation) => (o.claim == claim), b.attestations);
-          if a in b.attestations { ProofLib.FilterMember((o: Attestation) => (o.claim == claim), b.attestations, a); }
-        }
+    }
+    forall a | a in b.attestations + [added]
+      ensures |ProofLib.Filter((o: Attestation) => (o.claim == a.claim), b.attestations + [added])| == 1
+    {
+      ProofLib.FilterAppend((o: Attestation) => (o.claim == a.claim), b.attestations, added);
+      if a.claim == claim {
+        ProofLib.FilterNone((o: Attestation) => (o.claim == claim), b.attestations);
+        if a in b.attestations { ProofLib.FilterMember((o: Attestation) => (o.claim == claim), b.attestations, a); }
       }
     }
   }
 }
 
+lemma AttestPossessionValid(b: WalletRegistration, by_: string, claim: int, challengeId: int, recoveredSigner: string)
+  requires inv(b) && canAttestPossession(b, by_, claim, challengeId, recoveredSigner)
+  ensures alwaysPossessionRecordsValid(attestPossession(b, by_, claim, challengeId, recoveredSigner))
+  ensures stepPossessionRecordsPermanent(b, attestPossession(b, by_, claim, challengeId, recoveredSigner))
+{
+  hide *;
+  reveal inv, attestPossession, claimAt;
+  PossessionRecordsMeaning(b);
+  AttestChallengesValid(b, by_, claim, challengeId, recoveredSigner);
+  AttestAttestationsValid(b, by_, claim, challengeId, recoveredSigner);
+  PossessionRecordsMeaning(attestPossession(b, by_, claim, challengeId, recoveredSigner));
+}
 
+lemma lawUsedChallengeCannotAttestAgain_ensures(b: WalletRegistration, by_: string, claim: int, challengeId: int, recoveredSigner: string)
+  ensures (lawUsedChallengeCannotAttestAgain(b, by_, claim, challengeId, recoveredSigner) == true)
+{
+  if canAttestPossession(b, by_, claim, challengeId, recoveredSigner) {
+    var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
+    var p := (c: PossessionChallenge) => (c.id == challengeId);
+    var f1 := ProofLib.Filter(p, b.possessionChallenges);
+    var f2 := ProofLib.Filter(p, after.possessionChallenges);
+    var r := (x: PossessionChallenge, y: PossessionChallenge) => y.id == x.id && (y.id == challengeId ==> y.consumed);
+    ProofLib.FilterPointwise(p, p, r, b.possessionChallenges, after.possessionChallenges);
+    if |f2| > 0 {
+      assert r(f1[0], f2[0]);
+      ProofLib.FilterMember(p, b.possessionChallenges, f1[0]);
+      assert f2[0].consumed;
+    }
+  }
+}
 
 lemma AttestPointwise(b: WalletRegistration, by_: string, claim: int, challengeId: int, recoveredSigner: string)
   requires inv(b) && canAttestPossession(b, by_, claim, challengeId, recoveredSigner)
@@ -257,30 +346,29 @@ lemma AttestPointwise(b: WalletRegistration, by_: string, claim: int, challengeI
     && attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges[i].expiresAt == b.possessionChallenges[i].expiresAt
     && attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges[i].issuedAt == b.possessionChallenges[i].issuedAt
     && (b.possessionChallenges[i].consumed ==> attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges[i] == b.possessionChallenges[i])
-    && (b.possessionChallenges[i].id == challengeId ==> attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges[i]
-      == b.possessionChallenges[i].(consumed := true, consumedAt := b.clock))
+    && (b.possessionChallenges[i].id == challengeId ==> (b.possessionChallenges[i] == possessionChallenge(b, challengeId) && attestPossession(b, by_, claim, challengeId, recoveredSigner).possessionChallenges[i] == b.possessionChallenges[i].(consumed := true, consumedAt := b.clock)))
 {
   var xs := b.possessionChallenges;
-    var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
-    var ys := after.possessionChallenges;
-    var target := possessionChallenge(b, challengeId);
-    assert |ProofLib.Filter((c: PossessionChallenge) => (c.id == challengeId), xs)| > 0;
-    ProofLib.FilterMember((c: PossessionChallenge) => (c.id == challengeId), xs, target);
-    assert target in xs && target.id == challengeId && !target.consumed;
-    assert |ys| == |xs|;
-    forall i | 0 <= i < |xs|
-      ensures ys[i].id == xs[i].id && ys[i].claim == xs[i].claim && ys[i].wallet == xs[i].wallet
-        && ys[i].expiresAt == xs[i].expiresAt && ys[i].issuedAt == xs[i].issuedAt
-        && (xs[i].consumed ==> ys[i] == xs[i])
-        && (xs[i].id == challengeId ==> ys[i] == xs[i].(consumed := true, consumedAt := b.clock))
-    {
-      if xs[i].id == challengeId {
-        assert xs[i] in xs;
-        ProofLib.FilterCountOneIffUnique((c: PossessionChallenge) => (c.id == xs[i].id), xs, (c: PossessionChallenge) => c.id, i);
-        var k :| 0 <= k < |xs| && xs[k] == target;
-        assert k == i;
-      }
+  var after := attestPossession(b, by_, claim, challengeId, recoveredSigner);
+  var ys := after.possessionChallenges;
+  var target := possessionChallenge(b, challengeId);
+  assert |ProofLib.Filter((c: PossessionChallenge) => (c.id == challengeId), xs)| > 0;
+  ProofLib.FilterMember((c: PossessionChallenge) => (c.id == challengeId), xs, target);
+  assert target in xs && target.id == challengeId && !target.consumed;
+  assert |ys| == |xs|;
+  forall i | 0 <= i < |xs|
+    ensures ys[i].id == xs[i].id && ys[i].claim == xs[i].claim && ys[i].wallet == xs[i].wallet
+      && ys[i].expiresAt == xs[i].expiresAt && ys[i].issuedAt == xs[i].issuedAt
+      && (xs[i].consumed ==> ys[i] == xs[i])
+      && (xs[i].id == challengeId ==> (xs[i] == target && ys[i] == xs[i].(consumed := true, consumedAt := b.clock)))
+  {
+    if xs[i].id == challengeId {
+      assert xs[i] in xs;
+      ProofLib.FilterCountOneIffUnique((c: PossessionChallenge) => (c.id == xs[i].id), xs, (c: PossessionChallenge) => c.id, i);
+      var k :| 0 <= k < |xs| && xs[k] == target;
+      assert k == i;
     }
+  }
 }
 
 lemma ClaimsAppendKeepsClaimAt(b: WalletRegistration, after: WalletRegistration)

@@ -75,6 +75,49 @@ lemma WithAppendsShape(change: backend__projects_OwnerChange, e: security__enfor
   }
 }
 
+lemma WithExceptionAppendsShape(exception: backend__projects_Exception, e: security__enforcement_Enforcement)
+  ensures withExceptionAppends(exception, e).repositories == e.repositories + seq(|exception.appended|, i requires 0 <= i < |exception.appended| => exception.appended[i].repositoryId)
+  ensures withExceptionAppends(exception, e) == e.(repositories := withExceptionAppends(exception, e).repositories, latest := withExceptionAppends(exception, e).latest)
+  decreases |exception.appended|
+{
+  if |exception.appended| > 0 {
+    var rest := exception.(appended := exception.appended[1..]);
+    var e1 := security__enforcement_appendRepository(e, exception.appended[0].repositoryId);
+    WithExceptionAppendsShape(rest, e1);
+    assert withExceptionAppends(exception, e) == withExceptionAppends(rest, e1);
+    assert [exception.appended[0].repositoryId] + seq(|rest.appended|, i requires 0 <= i < |rest.appended| => rest.appended[i].repositoryId)
+      == seq(|exception.appended|, i requires 0 <= i < |exception.appended| => exception.appended[i].repositoryId);
+  }
+}
+
+lemma adminRevise_ensures(c: Registry, by_: int, exception: backend__projects_Exception, exclusions: seq<settlement__payoutExclusions_Exclusion>, appendReads: seq<RegistryRead>)
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysRepositoriesAgree(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysRevisionMirrored(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysChildFactsHold(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysAdministratorsAgree(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysExclusionsValid(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysRestrictionRetiresRegistry(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysRestrictionRetirementHasRestriction(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> alwaysRestrictedProjectRegistered(adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> stepOnlyReinstatementUnretires(c, "adminRevise", adminRevise(c, by_, exception, exclusions, appendReads)))
+  ensures (inv(c) ==> canAdminRevise(c, by_, exception, exclusions, appendReads) ==> stepExclusionsProspective(c, adminRevise(c, by_, exception, exclusions, appendReads)))
+{
+  if inv(c) && canAdminRevise(c, by_, exception, exclusions, appendReads) {
+    WithExceptionAppendsShape(exception, c.security);
+    var w := withExceptionAppends(exception, c.security);
+    var replaced := backend__projects_adminRevise(c.project, by_, exception);
+    var restricted := !c.security.restriction.Clear? && !c.security.restriction.FlagQuarantine?;
+    var p := if restricted && c.project.retirement.NotRetired? then replaced.(retirement := backend__projects_Retirement.RestrictionRetired) else replaced;
+    assert p.repositories == c.project.repositories + seq(|exception.appended|, i requires 0 <= i < |exception.appended| => exception.appended[i].repositoryId);
+    assert p.revision == c.project.revision + 1 && p.creator == c.project.creator && p.steward == exception.steward;
+    assert p.administrators == c.project.administrators;
+    var s := sync(p, w);
+    assert s == w.(revision := p.revision, steward := p.steward, creator := p.creator);
+    var after := adminRevise(c, by_, exception, exclusions, appendReads);
+    assert after.security == security__enforcement_withRevisionLanded(restricted, s);
+  }
+}
+
 lemma OwnerRevisionShape(c: Registry, by_: int, change: backend__projects_OwnerChange, p: backend__projects_Project)
   requires inv(c) && c.security.restriction.Clear? && backend__projects_changeValid(c.project, by_, change)
   requires p == backend__projects_changed(by_, change, c.project) || p == backend__projects_changed(by_, change, c.project).(update := backend__projects_UpdatePhase.UpdatePublished)

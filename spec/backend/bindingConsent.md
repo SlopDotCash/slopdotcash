@@ -188,7 +188,9 @@ height, or by its transaction's failure at finality when no binding for its
 destination and claim landed (a landed binding is left for finalized receipt
 reconciliation and never replaced; Slop development `0d59867ed`, #3172,
 `workers/payment-executor/solana.ts`, the attester role); then a new
-generation with new bytes may be prepared, and earlier bytes are retained. A
+generation with new bytes may be prepared, and earlier bytes are retained.
+The generation counter stays nonnegative and each generation takes a positive
+identifier up to it. A
 failure short of finality expires nothing. Submission and on-chain outcome are the
 signer's and settlement's.
 
@@ -258,7 +260,7 @@ pure def canSolanaFail(b: Binding, by: str, obligation: int, generation: int): b
 pure def solanaFail(b: Binding, by: str, obligation: int, generation: int): Binding =
   { ...b, generations: b.generations.listMap(g =>
     if (g.generation == generation) { ...g, status: SolanaExpired, failedFinalized: true } else g) }
-pure def alwaysOneLiveGeneration(b: Binding): bool = b.generations.every(g =>
+pure def alwaysOneLiveGeneration(b: Binding): bool = b.lastGeneration >= 0 and b.generations.every(g =>
   g.generation > 0 and g.generation <= b.lastGeneration and g.transaction == g.generation and g.claim > 0
     and g.claim <= b.solanaWallet.claims.length() and W::alreadyAuthorized(b.solanaWallet, g.claim)
     and g.expiryHeight > 0 and (g.status == SolanaExpired implies (b.finalizedHeight > g.expiryHeight or g.failedFinalized))

@@ -314,7 +314,8 @@ pure def stepOrderOutcomeOnce(before: Buyback, after: Buyback): bool =
 Rolling exposure uses UTC milliseconds and an 86,400,000 millisecond window.
 A released entry no longer counts. Cumulative amounts keep valid limbs,
 every journal entry has a positive amount and a time no later than the
-observed clock, and an ordered or in-transit deposit stays inside the
+observed clock, and an ordered or in-transit deposit is recorded in the
+order list and stays inside the
 committed share, so a refund never exceeds the commitment. Retained order
 outcomes and decisions are append-only. A later order follows only after
 the earlier one closed, failed or was refunded.
@@ -330,7 +331,8 @@ pure def alwaysJournalPastAndPositive(b: Buyback): bool = b.clock >= buybackStar
   and b.bridgeNative.every(s => s.at >= 0 and s.at <= b.clock and s.amount > 0)
 pure def alwaysPendingOrderReserved(b: Buyback): bool =
   (b.orderPhase == Ordering or b.orderPhase == InTransit or b.orderPhase == Cancelling) implies
-    b.orderAmount >= minimumBridge and b.orderAmount <= 1000000000 and M::compareAmounts(b.committed, M::smallAmount(b.orderAmount)) >= 0
+    b.orders.includes(b.order) and b.orderAmount >= minimumBridge and b.orderAmount <= 1000000000
+      and M::compareAmounts(b.committed, M::smallAmount(b.orderAmount)) >= 0
       and b.takeAmount > 0 and b.takeAmount <= b.orderAmount
 pure def stepIncomeMonotonic(before: Buyback, after: Buyback): bool = M::compareAmounts(after.income, before.income) >= 0
 pure def stepSignaturesNeedLiveBuyback(before: Buyback, via: str, after: Buyback): bool =
