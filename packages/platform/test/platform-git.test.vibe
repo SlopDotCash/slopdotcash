@@ -1,7 +1,7 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Of, textBytes } from "../src/git/bytes.ts"
-import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore } from "../src/git/index.ts"
+import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, gitBytes, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore, withPublicGitObjects } from "../src/git/index.ts"
 import { outbound } from "../src/http.vibe"
 import { type Repository, acceptedMerges, addUnrelatedObjects, bareRepository, borrowObjects, gunzipBase64, hexOfBytes, octopusMerge, replayedTree, twoParentMerge } from "./support/git/fixtures.ts"
 import { pinnedGit } from "./support/git/pinned.vibe"
@@ -251,6 +251,128 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
         ],
         corruptedMatches: false,
         binaryIndexed: true,
+      },
+    )
+  }))
+
+  it.effect('Public Git object acquisition retries transient fetch failures with bounded backoff and fails fast on permanent refusals (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const source = try fixture("public-retry-source")
+    const work = try fixture("public-retry-work")
+    const ids = try orDie(Effect.try(() => twoParentMerge(source)))
+    try gitBytes({ args: ["-C", source.path, "config", "uploadpack.allowAnySHA1InWant", "true"], limit: 4096, seconds: 30 }, "config failed")
+    const { binary, searchPath } = try Git
+    const fs = try FileSystem.FileSystem
+    const repositoryRecord: PublicMergeRepository = { id: 4242, node_id: repositoryNodeId, private: false, full_name: repositoryName }
+    const expected = try publicFiles(source.path, repositoryRecord).read(repositoryName, ids.merged, "witness.txt")
+
+    effect function scriptedGit(name: string, errors: ReadonlyArray<string>) {
+      const countFile = `${work.root}/${name}.count`
+      const errorsFile = `${work.root}/${name}.errors`
+      const shimFile = `${work.root}/${name}.sh`
+      try fs.writeFileString(errorsFile, errors.length === 0 ? "" : `${errors.join("\n")}\n`)
+      const script = [
+        "#!/bin/sh",
+        "set -eu",
+        `REAL_GIT='${binary}'`,
+        `LOCAL_REPO='${source.path}'`,
+        `COUNT_FILE='${countFile}'`,
+        `ERRORS_FILE='${errorsFile}'`,
+        "IS_FETCH=0",
+        'for arg in "$@"; do',
+        '  if [ "$arg" = "fetch" ]; then',
+        "    IS_FETCH=1",
+        "    break",
+        "  fi",
+        "done",
+        'if [ "$IS_FETCH" -eq 0 ]; then',
+        '  exec "$REAL_GIT" "$@"',
+        "fi",
+        "count=0",
+        'if [ -f "$COUNT_FILE" ]; then',
+        '  count=$(cat "$COUNT_FILE")',
+        "fi",
+        "count=$((count + 1))",
+        'printf "%s\\n" "$count" > "$COUNT_FILE"',
+        'line=$(sed -n "${count}p" "$ERRORS_FILE")',
+        'if [ -n "$line" ]; then',
+        '  printf "%s\\n" "$line" >&2',
+        "  exit 128",
+        "fi",
+        "i=0",
+        "n=$#",
+        'while [ "$i" -lt "$n" ]; do',
+        "  arg=$1",
+        "  shift",
+        "  i=$((i + 1))",
+        '  if [ "$arg" = "protocol.allow=never" ]; then',
+        '    set -- "$@" "protocol.file.allow=always"',
+        `  elif [ "$arg" = "https://github.com/${repositoryName}.git" ]; then`,
+        '    set -- "$@" "$LOCAL_REPO"',
+        "  else",
+        '    set -- "$@" "$arg"',
+        "  fi",
+        "done",
+        'exec "$REAL_GIT" "$@"',
+        "",
+      ].join("\n")
+      try fs.writeFileString(shimFile, script)
+      try fs.chmod(shimFile, 0o755)
+      return {
+        layer: Layer.succeed(Git, { binary: shimFile, searchPath }),
+        attempts: effect {
+          const text = try fs.readFileString(countFile)
+          return Number(text.trim())
+        },
+      }
+    }
+
+    effect function acquireWith(gitLayer: Layer.Layer<Git>, objects: ReadonlyArray<string>) {
+      provide gitLayer {
+        return try withPublicGitObjects(
+          repositoryRecord,
+          objects,
+          (directory) => publicFiles(directory, repositoryRecord).read(repositoryName, ids.merged, "witness.txt"),
+          { retryDelaysMs: [1, 1] },
+        )
+      }
+    }
+
+    const transient = try scriptedGit("transient", [
+      "fatal: unable to access 'https://github.com/slop-fixtures/merge.git/': The requested URL returned error: 503",
+      "error: RPC failed; curl 56 Recv failure: Connection reset by peer",
+    ])
+    const recovered = try acquireWith(transient.layer, [ids.merged, ids.left, ids.right])
+
+    const permanent = try scriptedGit("permanent", [
+      `fatal: remote error: upload-pack: not our ref ${ids.merged}`,
+    ])
+    const permanentReason = (try Effect.flip(acquireWith(permanent.layer, [ids.merged]))).reason
+
+    const exhausted = try scriptedGit("exhausted", [
+      "fatal: unable to access 'https://github.com/slop-fixtures/merge.git/': The requested URL returned error: 502",
+      "fatal: unable to access 'https://github.com/slop-fixtures/merge.git/': The requested URL returned error: 502",
+      "fatal: unable to access 'https://github.com/slop-fixtures/merge.git/': The requested URL returned error: 502",
+    ])
+    const exhaustedReason = (try Effect.flip(acquireWith(exhausted.layer, [ids.merged]))).reason
+
+    try same(
+      {
+        recoveredSha: recovered?.sha,
+        recoveredContent: recovered === null ? "" : hexOfBytes(recovered.bytes),
+        transientAttempts: try transient.attempts,
+        permanentReason,
+        permanentAttempts: try permanent.attempts,
+        exhaustedReason,
+        exhaustedAttempts: try exhausted.attempts,
+      },
+      {
+        recoveredSha: expected?.sha,
+        recoveredContent: expected === null ? "" : hexOfBytes(expected.bytes),
+        transientAttempts: 3,
+        permanentReason: "Public Git object acquisition refused",
+        permanentAttempts: 1,
+        exhaustedReason: "Public Git object acquisition refused",
+        exhaustedAttempts: 3,
       },
     )
   }))

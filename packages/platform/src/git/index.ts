@@ -4,6 +4,6 @@ export { PINNED_GIT_SHA256, PINNED_GIT_SOURCE, installPinnedGit } from "./instal
 export * from "./evidence.ts";
 export { requiredMergeObjects, verifyMergeObjectStore } from "./objects.vibe";
 export { Git, type GitCall, type Output, gitAt, gitBytes, gitText, isolated, runGit, systemGit } from "./process.vibe";
-export { type PublicFile, type PublicMergeRepository, type VerifiedSource, publicFiles, publicGitArguments, verifiedRecipeResolutions, withPublicGitObjects } from "./public.vibe";
+export { type PublicFile, type PublicGitFetchOptions, type PublicMergeRepository, type VerifiedSource, publicFiles, publicGitArguments, verifiedRecipeResolutions, withPublicGitObjects } from "./public.vibe";
 export { recoverFiles } from "./recovery.vibe";
 export { collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions } from "./resolution.vibe";

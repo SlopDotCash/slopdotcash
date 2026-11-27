@@ -1,7 +1,7 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
-import { gitObjectId, utf8Text } from "./bytes.ts"
+import { gitObjectId, lossyText, utf8Text } from "./bytes.ts"
 import { MERGE_GIT_VERSION, type MergeInput, type MergeRecipe, VALUE_FILE_EXPANSION_LIMIT, mergeInputSha256, objectId, refused, validFileRequest, validMergeRecipe } from "./model.vibe"
-import { gitBytes } from "./process.vibe"
+import { gitBytes, runGit } from "./process.vibe"
 import { collectVerifiedMergeResolutions } from "./resolution.vibe"
 
 export interface PublicMergeRepository {
@@ -16,8 +16,47 @@ export interface PublicFile {
   readonly bytes: Uint8Array
 }
 
+export interface PublicGitFetchOptions {
+  readonly retryDelaysMs?: ReadonlyArray<number>
+}
+
+type FetchFailure =
+  | { readonly kind: "permanent"; readonly status: number | null; readonly detail: string }
+  | { readonly kind: "transient"; readonly status: number | null; readonly detail: string }
+
 const publicRepository = "Merge reconstruction requires the verified public repository"
 const publicGit = "Public Git object acquisition refused"
+const defaultFetchRetryDelaysMs: ReadonlyArray<number> = [2_000, 10_000, 30_000]
+const fetchDiagnosticLimit = 16_384
+const diagnosticExcerptLimit = 300
+const permanentFetchPattern = /not our ref|unadvertised object|couldn't find remote ref|no such ref|repository (?:'.*' )?not found|returned error: (?:400|401|404|410)|authentication failed|fsck|corrupt|invalid object|bad object|hash mismatch|did not send all necessary objects|unable to update url base from redirection|redirect/iu
+const transientFetchPattern = /returned error: (?:403|408|429|5\d\d)|rpc failed|unexpected disconnect|early eof|connection reset|recv failure|failed to connect|could not resolve|timed out|timeout|ssl_error|ssl_read|ssl_connect|gnutls_handshake|tls connection|http\/2|transfer closed|empty reply|remote end hung up|temporary failure|try again|rate limit|too many requests|service unavailable|bad gateway|gateway time-?out|unable to access/iu
+
+function sanitizeDiagnostic(text: string): string {
+  const stripped = [...text]
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127 ? " " : character
+    })
+    .join("")
+    .replace(/https?:\/\/[^@\s/]+@/giu, "https://***@")
+    .replace(/\s+/gu, " ")
+    .trim()
+  return stripped.length <= diagnosticExcerptLimit ? stripped : `${stripped.slice(0, diagnosticExcerptLimit - 3)}...`
+}
+
+function classifyFetchFailure(status: number | null, stderr: string): FetchFailure {
+  const detail = sanitizeDiagnostic(stderr)
+  if (status === null) return { kind: "transient", status: null, detail: detail === "" ? "git fetch failed or timed out" : detail }
+  if (permanentFetchPattern.test(detail)) return { kind: "permanent", status, detail }
+  if (transientFetchPattern.test(detail)) return { kind: "transient", status, detail }
+  return { kind: "permanent", status, detail }
+}
+
+function retryDelays(options: PublicGitFetchOptions | undefined): ReadonlyArray<number> {
+  const configured = options?.retryDelaysMs ?? defaultFetchRetryDelaysMs
+  return configured.filter((delay) => Number.isFinite(delay) && delay >= 0)
+}
 
 export function publicGitArguments(directory: string, args: ReadonlyArray<string>): ReadonlyArray<string> {
   return [
@@ -54,18 +93,86 @@ function verifiedPublic(repository: PublicMergeRepository) {
   )
 }
 
-export effect function withPublicGitObjects<A, E, R>(repository: PublicMergeRepository, objects: ReadonlyArray<string>, read: (directory: string) => A!E!R) {
-  if (!verifiedPublic(repository)) throw refused(publicRepository)
-  if (objects.length === 0 || !objects.every((sha) => objectId.test(sha))) throw refused("Invalid immutable merge object identity")
-  return try scoped(effect {
-    const fs = try FileSystem.FileSystem
-    const directory = fs.makeTempDirectoryScoped({ prefix: "slop-value-merge-ingestion-" }) catch effect () => {
+effect function fetchPublicGitObjects(
+  root: string,
+  repository: PublicMergeRepository,
+  uniqueObjects: ReadonlyArray<string>,
+  options: PublicGitFetchOptions | undefined,
+) {
+  const fs = try FileSystem.FileSystem
+  const url = `https://github.com/${repository.full_name ?? ""}.git`
+  const delays = retryDelays(options)
+  const attempts = delays.length + 1
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const directory = `${root}/attempt-${attempt}`
+    fs.makeDirectory(directory) catch effect () => {
       throw refused(publicGit)
     }
-    const version = (utf8Text(try publicBytes(directory, ["--version"], 1024 * 1024)) ?? "").trim()
-    if (version !== MERGE_GIT_VERSION) throw refused("Required merge reconstruction Git version unavailable")
     try publicBytes(directory, ["init", "--bare", "--template="], 1024 * 1024)
-    try publicBytes(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", `https://github.com/${repository.full_name ?? ""}.git`, ...new Set(objects)], 1024 * 1024, 1800)
+    const output = runGit(
+      {
+        args: publicGitArguments(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", url, ...uniqueObjects]),
+        env: publicEnvironment(directory),
+        limit: 1024 * 1024,
+        seconds: 1800,
+        stderrLimit: fetchDiagnosticLimit,
+      },
+      publicGit,
+    ) catch effect () => {
+      return undefined
+    }
+    if (output !== undefined && output.status === 0) return directory
+    fs.remove(directory, { recursive: true, force: true }) catch effect () => {
+      return undefined
+    }
+    const failure = output === undefined
+      ? classifyFetchFailure(null, "")
+      : classifyFetchFailure(output.status, lossyText(output.stderr))
+    if (failure.kind === "transient" && attempt < delays.length) {
+      const delayMs = delays[attempt] ?? 0
+      try Effect.logWarning("public_git_fetch_retry", {
+        repository: repository.full_name ?? "",
+        objects: uniqueObjects.length,
+        attempt: attempt + 1,
+        attempts,
+        delayMs,
+        status: failure.status,
+        detail: failure.detail,
+      })
+      if (delayMs > 0) try Effect.sleep(Duration.millis(delayMs))
+      continue
+    }
+    try Effect.logError("public_git_fetch_refused", {
+      repository: repository.full_name ?? "",
+      objects: uniqueObjects.length,
+      attempt: attempt + 1,
+      attempts,
+      kind: failure.kind,
+      status: failure.status,
+      detail: failure.detail,
+    })
+    throw refused(publicGit)
+  }
+  throw refused(publicGit)
+}
+
+export effect function withPublicGitObjects<A, E, R>(
+  repository: PublicMergeRepository,
+  objects: ReadonlyArray<string>,
+  read: (directory: string) => A!E!R,
+  options?: PublicGitFetchOptions,
+) {
+  if (!verifiedPublic(repository)) throw refused(publicRepository)
+  if (objects.length === 0 || !objects.every((sha) => objectId.test(sha))) throw refused("Invalid immutable merge object identity")
+  const uniqueObjects = [...new Set(objects)]
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const root = fs.makeTempDirectoryScoped({ prefix: "slop-value-merge-ingestion-" }) catch effect () => {
+      throw refused(publicGit)
+    }
+    const version = (utf8Text(try publicBytes(root, ["--version"], 1024 * 1024)) ?? "").trim()
+    if (version !== MERGE_GIT_VERSION) throw refused("Required merge reconstruction Git version unavailable")
+    const directory = try fetchPublicGitObjects(root, repository, uniqueObjects, options)
     try publicBytes(directory, ["fsck", "--full", "--strict", "--no-reflogs"], 1024 * 1024, 1800)
     return try read(directory)
   })
