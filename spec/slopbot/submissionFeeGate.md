@@ -416,6 +416,11 @@ gate whose payment was withdrawn (unless a fresh claim holds it), and an
 asked, unpaid gate whose project no longer has the setting on. Each gate is
 claimed, its timer set ten minutes ahead, before its job is sent, so an
 overlapping run does not queue it twice; the job sets the next time itself.
+A job that finds the installation removed or suspended, or cannot read the
+pull request, decides nothing and sets that time a day ahead
+(`recheckSeconds`), so gates that cannot be checked do not take every run
+from the checks that can; a paid gate whose payment was withdrawn keeps the
+claim's time, because its clause above passes over any later one.
 A webhook for a paid pull request with no outcome queues the same check.
 An unpaid fee never closes a pull request, and a failure of a fee step is
 not a review attempt.

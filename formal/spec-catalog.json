@@ -36481,7 +36481,7 @@
     },
     {
       "path": "spec/slopbot/submissionFeeGate.md",
-      "sha256": "2e76f793ee479f7c2c39f10dfbdc13173d230fe2dd8e1f6e2d4e0e218aff95cf",
+      "sha256": "95c53a1e55b353841f85a85519ebd829e040949c2c955ed5adbb54c4798a2733",
       "module": "slopbot__submissionFeeGate",
       "stories": [
         {
@@ -36645,7 +36645,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Simulation samples cover every mode, exemption, setting and pull request state",
-          "line": 440,
+          "line": 445,
           "definitions": [
             "liveFacts",
             "factsValues",

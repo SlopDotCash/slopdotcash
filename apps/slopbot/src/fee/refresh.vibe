@@ -1,7 +1,7 @@
-// spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"
+// spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"
 import { isoAt } from "@repo/platform/clock"
 import type { SubmissionFeeItem } from "@repo/ports/slopbot"
-import { type FeeFacts, type FeeGate, type PullFacts, askInFlight, askStands, closedUndecided, feeLive, keepMarkedOf, settingOn, settlementFor } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { type FeeFacts, type FeeGate, type PullFacts, askInFlight, askStands, closedUndecided, feeLive, keepMarkedOf, recheckSeconds, settingOn, settlementFor } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { WebhookSettings } from "../ingress/webhook.vibe"
 import { activeInstallation } from "../installation/store.vibe"
 import type { ReviewJob, SubmissionFeeJob } from "../jobs/job.vibe"
@@ -11,7 +11,7 @@ import { observe } from "../scope/facts.vibe"
 import { type CommentFacts, type FeeOutcomeNote, feeNeededComment, feePaidComment } from "./comments.ts"
 import { type FeePullRead, type FeeTarget, feePullOf, publishedWays, readFeePull, releaseFee, scopedOf, stepped, storedFeeSetting, waysAt, writeFeeComment } from "./gate.vibe"
 import { itemByPull, setDueOutcome, slopbotCloseAppeal } from "./items.vibe"
-import { type GateRow, SubmissionFeeMode, askLeaseMillis, feeNeededLabel, feeNeededReason, feePaidLabel, gateModel, gateRow, keepGate, secondsOf } from "./store.vibe"
+import { type GateRow, SubmissionFeeMode, askLeaseMillis, claimCheck, feeNeededLabel, feeNeededReason, feePaidLabel, gateModel, gateRow, keepGate, secondsOf } from "./store.vibe"
 import { ensureKeepLabel, wantedLink } from "./wanted.vibe"
 
 export interface FeeRefresh {
@@ -140,6 +140,12 @@ effect function deferred(checked: Checked) {
   return done("submission fee ask in progress")
 }
 
+effect function unreachable(job: SubmissionFeeJob, gate: GateRow, item: SubmissionFeeItem, nowMillis: number, outcome: string) {
+  const withdrawn = gate.state === "paid" && item.paidAt === null && item.outcome === null
+  if (!withdrawn) try claimCheck(job, try isoAt(nowMillis + recheckSeconds * 1000))
+  return done(outcome)
+}
+
 export effect function refreshSubmissionFee(job: SubmissionFeeJob) {
   const { mode } = try SubmissionFeeMode
   if (mode !== "FeeLive") return done("submission fee is not live")
@@ -149,9 +155,9 @@ export effect function refreshSubmissionFee(job: SubmissionFeeJob) {
   const item = try itemByPull({ repositoryId: job.repositoryId, pullNumber: job.number })
   const gate = try gateRow(job)
   if (item === null || gate === undefined) return done("no submission fee asked")
-  if (!(try activeInstallation(job.installationId))) return done("installation removed or suspended")
+  if (!(try activeInstallation(job.installationId))) return try unreachable(job, gate, item, nowMillis, "installation removed or suspended")
   const read = try readFeePull(job)
-  if (read === undefined) return done("pull request not readable")
+  if (read === undefined) return try unreachable(job, gate, item, nowMillis, "pull request not readable")
   const { appUserId } = try WebhookSettings
   const contributorScope = scopeAllows(try observe(job), item.projectId, "contributor")
   const pull = pullFactsOf(read, contributorScope)
