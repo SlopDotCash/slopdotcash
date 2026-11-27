@@ -1,7 +1,7 @@
 // spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
 import { randomId } from "@repo/platform/crypto"
 import { D1 } from "@repo/platform/d1"
-import { handle, refuse } from "@repo/platform/http"
+import { admission, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Audit } from "@repo/ports/security"
 import { RecoveryAnswer, type RecoveryRequest, reconcileBindingRoute } from "../client/operator.vibe"
@@ -95,10 +95,14 @@ effect function refusedOutcome(base: AuditBase) {
   throw refusal(answers.recoveryPendingOrRejected)
 }
 
-export const ReconcileBindingRoutes = handle(reconcileBindingRoute, (input) => effect {
+const { error: authCode, ...unauthenticated } = answers.unauthorizedAuthenticationFailed
+const { error: originCode, ...wrongOrigin } = answers.originNotAllowed
+
+export const ReconcileBindingRoutes = handleRaw({ ...reconcileBindingRoute, unauthenticated: { ...unauthenticated, code: authCode } }, (input) => effect {
+  if (!(try sameOriginWrite())) throw refuse(admission.origin.status, admission.origin.code, admission.origin.message)
   if ((try HttpServerRequest.HttpServerRequest).headers.authorization !== undefined) throw refusal(answers.forbidden)
   if (!(try (try Roles).has(input.actor.githubId, "operator"))) throw refusal(answers.forbiddenOperatorAccessIsRequired)
-  const { scope, reason, ...binding } = input.body
+  const { scope, reason, ...binding } = try jsonBody(reconcileBindingRoute.limitKib)
   if ((scope !== "ordinary" && scope !== "security-bounty") || !isRecoveryInput(binding) || !reasonAccepted(reason)) throw refusal(answers.invalidRequestAnExactBindingWinner)
   const requestId = try randomId()
   const base = {
@@ -113,5 +117,5 @@ export const ReconcileBindingRoutes = handle(reconcileBindingRoute, (input) => e
     default: try refusedOutcome(base);
   }
   try audited(base, "wallet_binding.reconciled", { state: answer.state })
-  return answer
-})
+  return json(try orDie(Schema.encodeUnknownEffect(RecoveryAnswer)(answer)))
+}, { ...wrongOrigin, code: originCode })

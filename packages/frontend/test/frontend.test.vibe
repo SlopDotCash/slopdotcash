@@ -1443,7 +1443,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     }
   }
 
-  function served(surface: Surface, asked: string[]) {
+  function served(surface: Surface, asked: string[], vars: Readonly<Record<string, string>> = {}) {
     const { successor } = surface
     const services = Object.fromEntries([
       ...successor.services.map((name) => [name, recorder(name, asked)] as const),
@@ -1451,7 +1451,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     ])
     return Layer.unwrap(effect {
       const built = try Effect.promise(() => script(successor.root, successor.entry))
-      return areaLayer({ ...successor.bindings, script: built, origin: surface.origin, services })
+      return areaLayer({ ...successor.bindings, vars: { ...successor.bindings.vars, ...vars }, script: built, origin: surface.origin, services })
     })
   }
 
@@ -1508,6 +1508,55 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       })
     }
   })
+
+  effect function pagesFixture() {
+    const surface = surfaces.find((candidate) => candidate.entry === "pages" && candidate.origin === "https://slop.cash")
+    if (surface === undefined) return try die(new Error("The slop.cash Pages parity fixture is missing"))
+    return surface
+  }
+
+  {
+    const operatorId = "74001"
+    const asked: string[] = []
+    const fixture = Layer.unwrap(effect { return served(try pagesFixture(), asked, { OPERATOR_GITHUB_IDS: operatorId }) })
+    layer(Layer.merge(fixture, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+      it.effect('Wallet binding reconciliation keeps legacy refusals and requires an operator cookie and JSON (spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome")', () => effect {
+        const area = try Area
+        const session = effect (githubId: string) => {
+          const actorId = `reconcile-${githubId}`
+          const token = `reconcile-session-${githubId}`.padEnd(48, "x")
+          try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, '2026-11-01T00:00:00Z', 1, 0)", actorId, githubId, actorId)
+          try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, '2099-01-01T00:00:00Z')", try sha256Hex(token), actorId)
+          return { githubId, actorId, login: actorId, cookie: `__Host-slop_points=${token}` } satisfies SessionArea
+        }
+        const as = try session(operatorId)
+        const contributor = try session("74002")
+        const path = "/api/v1/operator/wallet-bindings/reconcile"
+        const form = { method: "POST", body: "a=b", headers: { "content-type": "application/x-www-form-urlencoded" } }
+        const outcome = (answer: Answer) => [answer.status, answer.body, answer.headers["cache-control"], answer.headers["content-type"]]
+        const expected = (status: number, error: string, message: string) => [status, { error, message }, "no-store", "application/json; charset=utf-8"]
+        const legacy = (try pagesFixture()).cases.filter((replay) => replay.route === `POST ${path}`)
+        const legacyDifferences: Array<readonly [string, ReadonlyArray<string>]> = []
+        for (const replay of legacy) {
+          const difference = replayDifference(replay, try sent(try orDie(Effect.try(() => replayRequest(replay)))))
+          if (difference.length > 0) legacyDifferences.push([replay.name, difference])
+        }
+        const results = {
+          operatorForm: outcome(try area.request(path, { ...form, as })),
+          operatorBearer: outcome(try area.request(path, { json: {}, as, headers: { authorization: "Bearer fixture" } })),
+          operatorJson: outcome(try area.request(path, { json: {}, as })),
+          contributorJson: outcome(try area.request(path, { json: {}, as: contributor })),
+        }
+        const audits = try area.sql("SELECT action FROM private_audit_events WHERE action LIKE 'wallet_binding.reconciliation_%'")
+        try same({ legacyCount: legacy.length, legacyDifferences, results, asked, audits }, { legacyCount: 5, legacyDifferences: [], results: {
+          operatorForm: expected(403, "origin_forbidden", "Requests must come from this site"),
+          operatorBearer: expected(403, "forbidden", "Same-origin operator session is required"),
+          operatorJson: expected(400, "invalid_request", "An exact binding, winner and recovery reason are required"),
+          contributorJson: expected(403, "forbidden", "Operator access is required"),
+        }, asked: [], audits: [] })
+      })
+    })
+  }
 }
 
 {

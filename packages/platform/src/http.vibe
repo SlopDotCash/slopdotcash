@@ -346,11 +346,11 @@ effect function signerOf(request: HttpServerRequest.HttpServerRequest, limitByte
   }
 }
 
-effect function credentialOf(route: AnyRoute, requireJson: boolean, originHeaders?: Readonly<Record<string, string>>) {
+effect function credentialOf(route: AnyRoute, requireJson: boolean, originRefusal: Refusal = admission.origin) {
   const request = try HttpServerRequest.HttpServerRequest
   switch (route.access) {
     case "sessionWrite": {
-      if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy({ ...admission.origin, headers: originHeaders })
+      if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy(originRefusal)
       return undefined
     }
     case "bearer": return try bearerOf(request)
@@ -402,9 +402,9 @@ export function answerSubtree<E, R>(path: `/${string}`, handler: HttpServerRespo
   return HttpRouter.add("*", `${path}/*`, answered(handler))
 }
 
-function rawRoute<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R, requireJson: boolean, originHeaders?: Readonly<Record<string, string>>): Handled<X, R> {
+function rawRoute<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R, requireJson: boolean, originRefusal?: Refusal): Handled<X, R> {
   return HttpRouter.add(route.method, route.path, served(route, effect {
-    const credential = try credentialOf(route, requireJson, originHeaders)
+    const credential = try credentialOf(route, requireJson, originRefusal)
     const response = try f(try admissionOf(route, credential))
     if (response.headers["cache-control"] !== undefined) return response
     const succeeded = response.status >= 200 && response.status <= 299
@@ -412,12 +412,12 @@ function rawRoute<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input
   }))
 }
 
-export function handleRaw<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R): Handled<X, R> {
-  return rawRoute(route, f, false)
+export function handleRaw<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R, originRefusal?: Refusal): Handled<X, R> {
+  return rawRoute(route, f, false, originRefusal)
 }
 
 export function handleRawJsonWrite<B, A, E, R>(route: Route<B, A, "sessionWrite">, f: (input: Admission<"sessionWrite">) => HttpServerResponse.HttpServerResponse!E!R, originHeaders?: Readonly<Record<string, string>>): Handled<"sessionWrite", R> {
-  return rawRoute(route, f, true, originHeaders)
+  return rawRoute(route, f, true, { ...admission.origin, headers: originHeaders })
 }
 
 effect function preflighted(group: ReadonlyArray<AnyRoute>) {
