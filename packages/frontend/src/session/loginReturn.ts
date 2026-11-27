@@ -3,6 +3,10 @@ import type { ParsedNext } from "../../gen/frontend__composition.ts";
 
 const loginPathname = "/login";
 
+function isLoginPathname(pathname: string): boolean {
+  return pathname.replace(/\/+$/u, "") === loginPathname;
+}
+
 const foreign: ParsedNext = { tag: "ForeignOrMalformed" };
 
 function unsafe(path: string): boolean {
@@ -20,7 +24,7 @@ export function parseNext(search: string, origin: string): ParsedNext {
     const destination = `${url.pathname}${url.search}${url.hash}`;
     const resolved = new URL(destination, origin);
     if (url.origin !== origin || resolved.origin !== origin) return foreign;
-    if (url.pathname === loginPathname || resolved.pathname === loginPathname) return foreign;
+    if (isLoginPathname(url.pathname) || isLoginPathname(resolved.pathname)) return foreign;
     if (unsafe(destination)) return foreign;
     return { tag: "SameOriginPath", path: destination };
   } catch {

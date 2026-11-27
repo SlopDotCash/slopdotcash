@@ -10406,7 +10406,7 @@
     },
     {
       "path": "spec/frontend/composition.md",
-      "sha256": "441bff6ba4bb41f832a92ede60fd7a5d7e07ec1fe41e8b1274633484d0c45e12",
+      "sha256": "43892dbdac7af22b6cdc11b1e84d7b7ca3cbc08ef53f61c0cd53118c3087f62b",
       "module": "frontend__composition",
       "stories": [
         {
@@ -10442,6 +10442,7 @@
           "definitions": [
             "ParsedNext",
             "loginPath",
+            "isLoginPath",
             "returnFor",
             "canSaveReturn",
             "saveReturn",
@@ -10454,7 +10455,7 @@
         },
         {
           "heading": "Story: Change accounts without disclosing the prior account's draft / Each mounted report must belong to the authorized current account lifetime",
-          "line": 70,
+          "line": 71,
           "definitions": [
             "canOpenDetail",
             "openDetail",
@@ -10469,7 +10470,7 @@
         },
         {
           "heading": "Story: Change accounts without disclosing the prior account's draft / A focus identity refresh changes the account only through sign-in or sign-out",
-          "line": 93,
+          "line": 94,
           "definitions": [
             "canRefreshAccount",
             "refreshAccount",
@@ -10479,7 +10480,7 @@
         },
         {
           "heading": "Story: Change accounts without disclosing the prior account's draft / Account changes erase drafts and preserve every child invariant",
-          "line": 114,
+          "line": 115,
           "definitions": [
             "alwaysSharedActor",
             "alwaysChildrenValid",
@@ -10494,7 +10495,7 @@
         },
         {
           "heading": "Story: Change accounts without disclosing the prior account's draft / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 129,
+          "line": 130,
           "definitions": [
             "viaValues"
           ]
