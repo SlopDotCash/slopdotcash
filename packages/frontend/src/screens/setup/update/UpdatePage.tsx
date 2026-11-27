@@ -100,7 +100,6 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [open, setOpen] = useState<ReadonlySet<FormGroup>>(() => new Set(["listing"]));
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
   const [removal, setRemoval] = useState<Removal>({ status: "idle" });
-  const [removalReset, setRemovalReset] = useState(0);
   const [repository, setRepository] = useState("");
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
   const inFlightRef = useRef(false);
@@ -196,14 +195,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   };
 
   const reload = (
-    <Button
-      variant="link"
-      onClick={() => {
-        setRemoval({ status: "idle" });
-        setRemovalReset((count) => count + 1);
-        onReload();
-      }}
-    >
+    <Button variant="link" onClick={onReload}>
       Reload
     </Button>
   );
@@ -267,8 +259,8 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
             {publishing ? "Publishing…" : "Publish changes"}
           </Button>
           <RemoveProject
-            key={`${managed.revision}:${removalReset}`}
             name={manifest.name}
+            revision={managed.revision}
             disabled={publishing}
             remove={remove}
             reason={

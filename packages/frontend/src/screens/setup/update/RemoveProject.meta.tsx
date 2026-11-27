@@ -5,7 +5,7 @@ import type { RemoveProjectProps } from "./RemoveProject.tsx";
 const remove = fn(() => Promise.resolve(false));
 
 export const meta: ComponentMeta<RemoveProjectProps> = {
-  args: { name: "engine", disabled: false, remove, reason: "The project changed. Reload it before removing." },
+  args: { name: "engine", revision: 1, disabled: false, remove, reason: "The project changed. Reload it before removing." },
   examples: { Publishing: { disabled: true } },
   play: {
     // spec/ui/confirmation.md, "Only an explicit confirm starts the work"

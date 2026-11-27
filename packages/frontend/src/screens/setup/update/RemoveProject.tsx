@@ -1,10 +1,11 @@
 // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
 import { Button, ConfirmDialog, type ConfirmationEvent, PageHeader, useConfirmation } from "@repo/ui";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { pageShellClass } from "../../../app/PageShell.tsx";
 
 export type RemoveProjectProps = {
   name: string;
+  revision: number;
   disabled: boolean;
   /** Runs the removal once confirmed; true when it is done. */
   remove: () => Promise<boolean>;
@@ -13,8 +14,13 @@ export type RemoveProjectProps = {
 };
 
 /** Removing a project, asked for once and started only by the explicit confirm; a refusal keeps the dialog open with its reason. */
-export function RemoveProject({ name, disabled, remove, reason }: RemoveProjectProps) {
+export function RemoveProject({ name, revision, disabled, remove, reason }: RemoveProjectProps) {
   const [confirmation, send] = useConfirmation();
+  const [previousRevision, setPreviousRevision] = useState(revision);
+  if (previousRevision !== revision) {
+    setPreviousRevision(revision);
+    if (confirmation.phase === "Refused") send({ type: "cancel" });
+  }
   const onSend = (event: ConfirmationEvent) => {
     send(event);
     if (event.type === "confirm") void remove().then((succeeded) => send({ type: "finish", succeeded }));

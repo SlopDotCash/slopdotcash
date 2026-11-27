@@ -471,9 +471,10 @@ describe("Maintain a live project with current GitHub authority", () => {
 
   // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
   it("removal is asked once, a stale revision keeps the", async () => {
-    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/", "^console Failed to load resource: the server responded with a status of 404");
+    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/");
     const fullName = await repository(users.oli, "removable");
     const id = await createProject(users.oli, fullName, "Removable");
+    const projectPath = `/api/v1/projects/${encodeURIComponent(id)}`;
     const removals = async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === `/api/v1/projects/${id}/remove`).length;
     const dialog = named("alertdialog", "Remove Removable from Slop?");
 
@@ -496,14 +497,24 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown(dialog).toMatchObject({ visible: true });
     expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
 
-    await site.click(within(dialog, named("button", "Reload")));
+    await site.hold("GET", projectPath);
+    try {
+      await site.click(within(dialog, named("button", "Reload")));
+      await shown(within(dialog, named("button", "Reload"))).toMatchObject({ visible: true });
+    } finally {
+      await site.release("GET", projectPath);
+    }
+    await shown(dialog).toMatchObject({ count: 0 });
     await shown(settings).toMatchObject({ visible: true });
+    await shown(named("button", "Remove project")).toMatchObject({ focused: true });
     await site.click(named("button", "Remove project"));
     await site.click(within(dialog, named("button", "Remove project")));
     await shown(named("heading", "Project removed", { level: 1 })).toMatchObject({ visible: true });
     expect(await removals()).toBe(2);
-    expect((await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`)).status).toBe(404);
-    expect((await revisions(id)).length).toBeGreaterThanOrEqual(2);
+    expect((await lastRevision(id))?.revision).toBe(3);
+    expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
+    await site.allow("^console Failed to load resource: the server responded with a status of 404 \\(Not Found\\)$");
+    expect((await site.fetch("GET", projectPath)).status).toBe(404);
   });
 });
 
