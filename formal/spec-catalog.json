@@ -11123,7 +11123,7 @@
     },
     {
       "path": "spec/frontend/monthLock.md",
-      "sha256": "616279bbdcd42514aaff3e3a75d928b40d9839ce86c75ab6a74692303d38083d",
+      "sha256": "459786e61cf1e9f53682c56b463417e357a10d7a657f2e6539733795e7aa8424",
       "module": "frontend__monthLock",
       "stories": [
         {
@@ -11192,7 +11192,7 @@
         },
         {
           "heading": "Story: Lock months from the owner's wallet / Rules",
-          "line": 163,
+          "line": 174,
           "definitions": [
             "pendingLock",
             "pendingRelease",

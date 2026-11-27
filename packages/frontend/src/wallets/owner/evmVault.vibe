@@ -11,7 +11,7 @@ import { networkLabel } from "../../kernels/assetText.ts"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransaction } from "../core/evm.vibe"
 import { type Call, type Operation, type Step, type VaultCallTerms, type VaultReview, allowanceData, balanceOfData, batchCalls, batchPlan, callPlan, codeBytes, hexQuantity, quantityValue, samePlannedCall, transferCall, wordValue } from "./evmCalls.ts"
-import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, expectedOf, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
+import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, canonicalReceiptAtIndex, expectedOf, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
 import { type DeploymentCheck, deploymentCheck, settled } from "./ownerDecisions.ts"
 import { pledgedFundsRefusal } from "./pledgeRefusals.ts"
 import type { EvmBatchPlan, EvmCallPlan, OwnerPlan } from "./ownerPlans.schema.ts"
@@ -355,9 +355,9 @@ export effect function checkTransfer(connection: EvmConnection, vault: EvmVault,
   return "finalized" satisfies TransferCheck
 }
 
-export effect function batchProgress(connection: EvmConnection, vault: EvmVault, reference: string) {
+export effect function batchProgress(connection: EvmConnection, vault: EvmVault, reference: string, maxReceipts?: number) {
   try requireVaultWallet(connection, vault)
-  const report = batchReport(try evmRequest(connection, "wallet_getCallsStatus", [reference]))
+  const report = batchReport(try evmRequest(connection, "wallet_getCallsStatus", [reference]), maxReceipts === undefined ? undefined : { reference, chainId: vault.chainId, maxReceipts })
   if (report.kind === "unrecognized") throw refused(evmVaultMessages.batchUnrecognized)
   if (report.kind === "partial") throw refused(evmVaultMessages.batchPartial)
   if (report.kind === "landed" && report.hash === undefined) throw refused(evmVaultMessages.batchNoTransaction)
@@ -380,7 +380,7 @@ export interface ReceiptState {
   readonly success: boolean
 }
 
-export effect function receiptState(connection: EvmConnection, vault: EvmVault, hash: string, expected: ExpectedCall | undefined) {
+export effect function receiptState(connection: EvmConnection, vault: EvmVault, hash: string, expected: ExpectedCall | undefined, membership?: "transactionIndex") {
   try requireVaultWallet(connection, vault)
   if (!isTransactionHash(hash)) throw refused(evmVaultMessages.enterHash)
   const receipt = receiptOf(try evmRequest(connection, "eth_getTransactionReceipt", [hash]))
@@ -391,8 +391,9 @@ export effect function receiptState(connection: EvmConnection, vault: EvmVault, 
   }
   const finalizedNumber = blockNumberOf(try evmRequest(connection, "eth_getBlockByNumber", ["finalized", false]))
   if (finalizedNumber === undefined) throw new WalletFailed({ message: "Your wallet returned an invalid block." })
-  const canonicalHash = blockHashOf(try evmRequest(connection, "eth_getBlockByNumber", [hexQuantity(receipt.blockNumber), false]))
-  return { receipt, canonical: canonicalReceipt(receipt, hash, canonicalHash), final: receipt.blockNumber <= finalizedNumber, success: receipt.status === "0x1" } satisfies ReceiptState
+  const block = try evmRequest(connection, "eth_getBlockByNumber", [hexQuantity(receipt.blockNumber), false])
+  const canonical = membership === "transactionIndex" ? canonicalReceiptAtIndex(receipt, hash, block) : canonicalReceipt(receipt, hash, blockHashOf(block))
+  return { receipt, canonical, final: receipt.blockNumber <= finalizedNumber, success: receipt.status === "0x1" } satisfies ReceiptState
 }
 
 export effect function vaultCodeAt(connection: EvmConnection, vault: EvmVault, block: bigint) {
