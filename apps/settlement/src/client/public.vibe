@@ -97,6 +97,7 @@ export schema AccountPayment {
   readonly projectId: string
   readonly network: string
   readonly chain: PaymentChain
+  readonly contributionMonth: string | null
   readonly assetAddress: string
   readonly assetDecimals: number
   readonly grossBase: string

@@ -78,6 +78,7 @@ function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; con
               network={payment.network}
               projectId={payment.projectId}
               amount={netAmountProps(payment)}
+              note={payment.contributionMonth ? formatCycleMonth(payment.contributionMonth) : undefined}
               status={paymentStatus(payment)}
               statusTitle={payment.deliveryState === "needs_wallet" ? `Awaiting wallet: add or confirm your ${CHAIN_NAMES[payment.chain]} wallet` : undefined}
               statusHref={payment.deliveryState === "needs_wallet" ? "/account#wallets" : undefined}

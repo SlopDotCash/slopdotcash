@@ -1,11 +1,11 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
 import { RowMismatch, first, sql } from "@repo/platform/d1"
 import { type AccountBalance, type AccountMonthlyAward, type AccountPayment, AccountWallet, DeliveryState, DirectTransfer, type PaymentsAccount, UnreservedAwardState, WalletObservation } from "../client/public.vibe"
 import { PaymentChain } from "../client/vault.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { CHAINS, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { PayoutConsentRow, payoutBindingKey, payoutBindings } from "./payoutConsent.vibe"
-import { InvalidPaymentRecord } from "./records.vibe"
+import { InvalidPaymentRecord, linkedContributionMonth } from "./records.vibe"
 
 schema AccountRows {
   readonly wallets: string
@@ -24,6 +24,8 @@ schema PaymentRow {
   readonly projectId: string
   readonly network: string
   readonly chain: PaymentChain
+  readonly contributionMonth: string | null
+  readonly monthlyFee: string | null
   readonly assetAddress: string
   readonly assetDecimals: number
   readonly grossBase: string
@@ -71,12 +73,16 @@ function accountWalletQuery(githubId: string) {
 function accountQuery(githubId: string, separateDirectHistory: boolean) {
   return sql`SELECT
   (${accountWalletQuery(githubId)}) AS wallets,
-  (SELECT json_group_array(json_object('id', o.id, 'vault', o.vault, 'projectId', project_id, 'network', network, 'chain', chain,
-    'assetAddress', asset_address, 'assetDecimals', asset_decimals, 'grossBase', gross_base, 'feeBase', fee_base, 'state', o.state,
-    'transactionId', paid_transaction,
+  (SELECT json_group_array(json_object('id', o.id, 'vault', o.vault, 'projectId', o.project_id, 'network', o.network, 'chain', o.chain,
+    'contributionMonth', m.period, 'monthlyFee', m.fee_base,
+    'assetAddress', o.asset_address, 'assetDecimals', o.asset_decimals, 'grossBase', o.gross_base, 'feeBase', o.fee_base, 'state', o.state,
+    'transactionId', o.paid_transaction,
     'submittedTransactionId', (SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id = o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),
     'deliveryState', CASE WHEN o.state = 'paid' THEN 'paid' WHEN q.state = 'submitted' THEN 'submitted' WHEN q.state = 'held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END))
-    FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id = o.id WHERE github_user_id = ${githubId}) AS payments,
+    FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id = o.id
+    LEFT JOIN monthly_payment_obligations m ON m.project_id = o.project_id AND m.network = o.network AND m.vault = o.vault
+      AND m.source_digest = o.source_digest AND m.github_user_id = o.github_user_id AND m.gross_base = o.gross_base
+    WHERE o.github_user_id = ${githubId}) AS payments,
   (SELECT json_group_array(json_object('projectId', o.project_id, 'network', b.network, 'vault', b.vault,
     'claimAddress', w.wallet_address, 'claimDigest', w.record_sha256, 'chainId', b.chain_id,
     'version', b.expected_version, 'expiresAt', b.expires_at))
@@ -112,7 +118,15 @@ effect function paymentOf(row: PaymentRow) {
   const gross = parseBaseUnits(row.grossBase)
   const fee = parseBaseUnits(row.feeBase)
   if (gross === undefined || fee === undefined || fee > gross) throw new InvalidPaymentRecord({ reason: "Invalid payment obligation" })
-  return { payment: { ...row, netBase: (gross - fee).toString() } satisfies AccountPayment, net: gross - fee }
+  const { monthlyFee, ...payment } = row
+  return {
+    payment: {
+      ...payment,
+      contributionMonth: linkedContributionMonth(row.contributionMonth, monthlyFee, gross, row.feeBase),
+      netBase: (gross - fee).toString(),
+    } satisfies AccountPayment,
+    net: gross - fee,
+  }
 }
 
 effect function awardOf(row: AwardRow) {

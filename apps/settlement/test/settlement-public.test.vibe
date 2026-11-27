@@ -70,7 +70,7 @@ service Public {
   readonly imports: D1Database
   readonly outbound: ReadonlyArray<string>
   read(tier: Tier, path: string, headers?: Readonly<Record<string, string>>): Answer!!
-  readImports(path: string): Answer!!
+  readImports(path: string, headers?: Readonly<Record<string, string>>): Answer!!
   readDeposits(tier: Tier, path: string): Funders!!
 }
 
@@ -173,6 +173,12 @@ const seed = [
   obligation("o2", "eliza", "base-mainnet", vault, usdc, "102", "1000000", "20000", "paid", "0xt2"),
   event("o2", "eliza", "base-mainnet", vault, "102", "1000000", "20000", "980000", "0xt2"),
   obligation("o3", "eliza", "base-mainnet", vault, usdc, "101", "500000", "10000", "reserved", null),
+  sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at)
+    VALUES ('eliza', '2026-10', '{}', ${digest("a")}, ${digest("b")}, '500000', 1, '2026-11-01T00:00:00.000Z')`,
+  sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at)
+    VALUES ('eliza', '2026-10', 'automatic', NULL, 0, ${JSON.stringify({ asset: usdc, awards: [{ githubUserId: "101", sourceDigest: digest("3"), grossBase: "500000", feeBase: "10000", netBase: "490000" }] })}, ${digest("a")}, 'base-mainnet', ${vault}, '500000', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')`,
+  sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at)
+    VALUES ('eliza', '2026-10', '101', 'alice', '500000', '10000', ${digest("3")}, 'base-mainnet', ${vault}, '2026-11-01T00:00:00.000Z')`,
   obligation("o4", "demo", "base-sepolia", testVault, sepoliaUsdc, "101", "1000000", "20000", "paid", "0xt4"),
   event("o4", "demo", "base-sepolia", testVault, "101", "1000000", "20000", "980000", "0xt4"),
   sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES ('actor-102', '102', 'quiet', '2026-01-01T00:00:00.000Z', 0, 5)`,
@@ -269,7 +275,7 @@ const Started = Layer.effect(Public, effect {
     imports,
     outbound,
     read: (tier, path, headers = {}) => answered(sites[tier], path, headers),
-    readImports: (path) => answered(importSite, path, {}),
+    readImports: (path, headers = {}) => answered(importSite, path, headers),
     readDeposits: (tier, path) => effect {
       const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET" })))
       const response = try promise(() => depositSites[tier].fetch(request as unknown as globalThis.Request, {}, context))
@@ -363,7 +369,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       signedOut: try site.read("production", "/api/v1/payments/me"),
       account: try site.read("production", "/api/v1/payments/me", { "x-test-github-id": "101", "x-slop-direct-history": "paged" }),
     }
-    const account = reads.account.body as { readonly payments: ReadonlyArray<{ readonly id: string; readonly deliveryState: string; readonly netBase: string }>; readonly balances: unknown; readonly directTransfers: unknown; readonly directTransfersPaged?: boolean; readonly monthlyAwards: unknown; readonly wallets: unknown }
+    const account = reads.account.body as { readonly payments: ReadonlyArray<{ readonly id: string; readonly deliveryState: string; readonly netBase: string; readonly contributionMonth: string | null }>; readonly balances: unknown; readonly directTransfers: unknown; readonly directTransfersPaged?: boolean; readonly monthlyAwards: unknown; readonly wallets: unknown }
     try same({
       all: reads.all,
       project: reads.project.body,
@@ -379,7 +385,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       funding: [reads.funding.cache, reads.funding.body],
       signedOut: [reads.signedOut.status, (reads.signedOut.body as { error: string }).error],
       account: {
-        payments: [...account.payments].sort((left, right) => left.id.localeCompare(right.id)).map((payment) => [payment.id, payment.deliveryState, payment.netBase]),
+        payments: [...account.payments].sort((left, right) => left.id.localeCompare(right.id)).map((payment) => [payment.id, payment.deliveryState, payment.netBase, payment.contributionMonth]),
         balances: account.balances,
         directTransfers: account.directTransfers,
         paged: account.directTransfersPaged,
@@ -408,7 +414,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       funding: ["public, max-age=60, s-maxage=60", { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }, pledgedFunding] }],
       signedOut: [401, "not_signed_in"],
       account: {
-        payments: [["o1", "paid", "980000"], ["o3", "needs_wallet", "490000"], ["o4", "paid", "980000"]],
+        payments: [["o1", "paid", "980000", null], ["o3", "needs_wallet", "490000", "2026-10"], ["o4", "paid", "980000", null]],
         balances: [
           { chain: "base", network: "base-mainnet", assetAddress: usdc, assetDecimals: 6, netBase: "490000" },
           { chain: "base", network: "base-sepolia", assetAddress: sepoliaUsdc, assetDecimals: 6, netBase: "0" },
@@ -423,6 +429,12 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     const linked = try site.readImports("/api/v1/payments/projects/month-links/vault-payments")
     const linkedPayment = { ...paidO1, projectId: "month-links", contributionMonth: "2026-11", netBase: "343", id: "base-mainnet:0xt5:0", transactionId: "0xt5" }
     try same(linked.body, { payments: [linkedPayment, { ...linkedPayment, contributionMonth: null, netBase: "342", id: "base-mainnet:0xt6:0", transactionId: "0xt6" }], through: 2, next: null, total: 2 })
+    const linkedAccounts = {
+      floor: try site.readImports("/api/v1/payments/me", { "x-test-github-id": "201" }),
+      mismatch: try site.readImports("/api/v1/payments/me", { "x-test-github-id": "202" }),
+    }
+    const accountMonths = (body: unknown) => (body as { readonly payments: ReadonlyArray<{ readonly id: string; readonly contributionMonth: string | null }> }).payments.map((payment) => [payment.id, payment.contributionMonth])
+    try same([accountMonths(linkedAccounts.floor.body), accountMonths(linkedAccounts.mismatch.body)], [[["m5", "2026-11"]], [["m6", null]]])
     const shown = reads.vault.body as { snapshots: ReadonlyArray<{ network: string; freeBalance: string | null }>; staleAfterMs: number; servedAt: string }
     try same([shown.snapshots.map((row) => [row.network, row.freeBalance]), shown.staleAfterMs, shown.servedAt], [[["base-mainnet", "7000000"]], 1_800_000, "2026-11-17T12:00:00.000Z"])
     const received = reads.received.body as { contributors: unknown; totals: unknown; generatedAt: string }
