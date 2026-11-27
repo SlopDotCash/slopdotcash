@@ -394,7 +394,7 @@ effect function floorRun(network: FloorNetwork, generation: number) {
     token: reference,
     deployment: { vault: vault.address, asset: reference, ...floorRoles, feeRecipient: wallet, codeSha256: bytesToHex(sha256(hexToBytes(floorCode))) },
   }))
-  const world = { base: { ...made, held: { runtime, wallets: made.held.wallets }, vaults: reviewedVaults(facts) }, runtime, network: enabled } satisfies World
+  const world = { base: { ...made, epoch: 0, held: { runtime, wallets: made.held.wallets }, vaults: reviewedVaults(facts) }, runtime, network: enabled } satisfies World
   const seen: FloorRpc = { estimated: [], unexpected: [] }
   const rpcUrl = `https://${definitions[network].name}-rpc.invalid/`
   const quotes = quotesFake()
