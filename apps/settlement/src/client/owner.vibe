@@ -124,7 +124,7 @@ export const paymentsSolanaMonthLock = route({
   answer: MonthLockAnswer,
   rejected: lockRows.monthLockRejected.error,
   cache: "private",
-  invalid: { status: lockRows.invalidMonthLock.status, code: lockRows.invalidMonthLock.error, message: "", headers: lockRows.invalidMonthLock.headers },
+  invalidBody: { status: lockRows.invalidMonthLock.status, code: lockRows.invalidMonthLock.error, message: "", headers: lockRows.invalidMonthLock.headers },
 })
 
 export const ownerApi: ReadonlyArray<AnyRoute> = [paymentsSolanaFunding, paymentsSolanaMonthLock]

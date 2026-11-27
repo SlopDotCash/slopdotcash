@@ -381,7 +381,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
     })
   })
 
-  it.effect('Solana funding and monthly setting preserve private malformed-body and signed-out method refusals (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off")', () => effect {
+  it.effect('Solana funding, month lock and monthly setting preserve private malformed-body refusals (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off")', () => effect {
     const site = "https://slop.test"
     const routes = [
       { route: "solana-funding", invalid: "invalid_funding_action" },
@@ -397,6 +397,12 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
       ]
       try same(answers, [expected(400, invalid), expected(400, invalid), expected(400, invalid), expected(401, "not_signed_in")])
     }
+    const monthLock = [
+      try posted("solana-month-lock", {}, site),
+      try posted("solana-month-lock", "{", site),
+      try posted("solana-month-lock", " ".repeat(4097), site),
+    ]
+    try same(monthLock, Array.from({ length: 3 }, () => expected(400, "invalid_month_lock")))
     try same(routeOutbound, [])
   })
 })

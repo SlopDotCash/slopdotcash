@@ -24,7 +24,7 @@ export const projectId = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
 
 function programNotFound() {
   const row = readinessRows.programNotFound
-  return refuse(row.status, row.error, row.message)
+  return refuse(row.status, row.error, row.message, row.headers)
 }
 
 function listingOf(project: ProjectView): ProjectListing {
@@ -121,8 +121,9 @@ export effect function cachedReadiness(id: string) {
   const request = try HttpServerRequest.HttpServerRequest
   const key = cacheKey(request.originalUrl, 0)
   const cache = try EdgeCache
+  const robots = readinessRows.programNotFound.headers["x-robots-tag"]
   const hit = try cache.match(key)
-  if (hit !== undefined) return hit
+  if (hit !== undefined) return HttpServerResponse.setHeader(hit, "x-robots-tag", robots)
   const answer = try readiness(id)
-  return try cache.put(key, json(answer, 200, { "cache-control": cacheControl(intakeReadiness.cache) }), readinessSeconds)
+  return try cache.put(key, json(answer, 200, { "cache-control": cacheControl(intakeReadiness.cache), "x-robots-tag": robots }), readinessSeconds)
 }

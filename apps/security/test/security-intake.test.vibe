@@ -297,7 +297,10 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const offReadiness = try promise(() => request(off, "/api/v1/security-programs/intake-fixture/intake"))
     const offAttempt = `ss_${(try promise(() => digest(`5150\nstored-off-key-00001\n${normalisedSha}`))).slice(0, 32)}`
     const offObject = try promise(() => storedObject(off, `security-reports/${offAttempt}/1-${normalisedSha}.json`))
-    const readiness = (project: string) => promise(() => request(world, `/api/v1/security-programs/${project}/intake`))
+    const readiness = (project: string) => effect {
+      const response = try promise(() => world.mf.dispatchFetch(`${origin}/api/v1/security-programs/${project}/intake`))
+      return { status: response.status, body: try promise(() => response.json()), cache: response.headers.get("cache-control"), robots: response.headers.get("x-robots-tag") }
+    }
     const unobserved = try readiness("intake-fixture")
     try promise(() => reportingStatus(world, "intake-fixture", { enabled: true, verifiedAt: new Date(Date.now() - 60_000).toISOString(), failure: null }))
     const fresh = try readiness("intake-fixture")
@@ -316,7 +319,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       bannedRetry: { interrupted: shown(interrupted), retry: shown(bannedRetry), object: retryObject, counts: try counts(world, "8080") },
       storedOff: { submit: shown(offSubmit), counts: try counts(off, "5150"), object: offObject, storedIntake: (offReadiness.body as Record<string, unknown>).storedIntake },
       readiness: [pick(unobserved), pick(fresh), pick(stale), pick(disabled)],
-      closed: shown(closed),
+      readyRobots: fresh.robots,
+      closed,
     }, {
       refused: [
         refusal(404, "project_not_found", "This project is not available for private reporting"),
@@ -337,7 +341,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         [200, "public, max-age=0, s-maxage=30", "ready", true, "off", true, "open", "https://github.com/slop-test/intake/security/advisories/new"],
         [200, "public, max-age=0, s-maxage=30", "disabled", false, "off", true, "closed", null],
       ],
-      closed: refusal(404, "program_not_found", "No security program"),
+      readyRobots: "noindex",
+      closed: { ...refusal(404, "program_not_found", "No security program"), cache: "private, no-store", robots: "noindex" },
     })
   })
 

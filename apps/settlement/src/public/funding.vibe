@@ -127,7 +127,7 @@ export effect function projectTotals(projectId: string) {
   const obligations = try rows(ObligationRow, sql`SELECT network, asset_address, asset_decimals, gross_base, fee_base, state FROM payment_obligations WHERE project_id = ${projectId}${testnetFilter(sql`network`, shown)} ORDER BY network, asset_address`)
   const cursors = try rows(CursorRow, sql`SELECT network, position, synced_at FROM payment_chain_cursors WHERE project_id = ${projectId}${testnetFilter(sql`network`, shown)} ORDER BY network`)
   const cursor = cursors[0]
-  if (obligations.length === 0 && cursor === undefined) throw new Refused({ status: notIndexed.status, code: notIndexed.error, message: "" })
+  if (obligations.length === 0 && cursor === undefined) throw new Refused({ status: notIndexed.status, code: notIndexed.error, message: "", headers: notIndexed.headers })
   const assets = new Map<string, AssetSums>()
   for (const row of obligations) {
     const gross = parseBaseUnits(row.gross_base)
