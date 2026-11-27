@@ -22,7 +22,10 @@ function memoryStorage(): SlotStorage {
 class Names {
   readonly toShell = new Map<string, string>();
   readonly toModel = new Map<string, string>();
-  constructor(private readonly make: (index: number, model: string) => string) {}
+  private readonly make: (index: number, model: string) => string;
+  constructor(make: (index: number, model: string) => string) {
+    this.make = make;
+  }
   shell(model: string): string {
     if (model === "") return "";
     const found = this.toShell.get(model);
@@ -55,16 +58,19 @@ function transactionBytes(model: string, nonce: number): string {
 function toShell(value: unknown, field?: string): unknown {
   if (Array.isArray(value)) return value.map((item) => toShell(item));
   if (typeof value === "string") {
+    if (field === "payer") payer = value;
     if (field === "identity") return identities.shell(value);
     if (field === "hash") return hashes.shell(value);
     return value;
   }
   if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  const scope = record.scope as { payer?: unknown } | undefined;
-  if (typeof scope?.payer === "string") payer = scope.payer;
-  const nonce = typeof record.nonce === "number" ? record.nonce : -1;
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, key === "bytesId" && typeof item === "string" ? transactionBytes(item, nonce) : toShell(item, key)]));
+  const entries: [string, unknown][] = Object.entries(value);
+  const nonceEntry = entries.find(([key]) => key === "nonce")?.[1];
+  const nonce = typeof nonceEntry === "number" ? nonceEntry : -1;
+  const ordered = entries.some(([key]) => key === "scope")
+    ? [...entries.filter(([key]) => key === "scope"), ...entries.filter(([key]) => key !== "scope")]
+    : entries;
+  return Object.fromEntries(ordered.map(([key, item]) => [key, key === "bytesId" && typeof item === "string" ? transactionBytes(item, nonce) : toShell(item, key)]));
 }
 
 function toModel(value: unknown): unknown {

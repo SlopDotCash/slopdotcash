@@ -82,11 +82,12 @@ function reversalsSince(repositoryId: number, since: string) {
       WHERE repository_id = ${repositoryId} AND resolution = 'upheld' AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at > ${since}`
 }
 
-function attemptsRead(scope: CapacityScope, since: string) {
+function attemptsRead(scope: CapacityScope, since: string, attemptKey?: string) {
+  const byKey = attemptKey === undefined ? sql`0` : sql`attempt_id = ${attemptKey}`
   return sql`SELECT ordinal, attempt_id, item_node_id, revision, state, closed_at FROM (
       SELECT attempt_id, item_node_id, revision, state, closed_at, ROW_NUMBER() OVER (ORDER BY rowid) AS ordinal
       FROM slopbot_close_attempts WHERE repository_id = ${scope.repositoryId})
-    WHERE state != 'confirmed' OR closed_at > ${since} OR item_node_id = ${scope.itemNodeId}
+    WHERE state != 'confirmed' OR closed_at > ${since} OR item_node_id = ${scope.itemNodeId} OR ${byKey}
       OR item_node_id IN (SELECT item FROM (${reversalsSince(scope.repositoryId, since)}))
     ORDER BY ordinal`
 }
@@ -123,12 +124,12 @@ effect function capacityOf(scope: CapacityScope, dailyCap: number, rows: Readonl
   return { capacity, attempts, lease, iso: try isoAt(millis) } satisfies CapacityLoaded
 }
 
-function capacityAggregate(scope: CapacityScope, dailyCap: number, fence: Statement, since: string): Aggregate<CapacityLoaded, NotAState | RowMismatch, never> {
+function capacityAggregate(scope: CapacityScope, dailyCap: number, fence: Statement, since: string, attemptKey?: string): Aggregate<CapacityLoaded, NotAState | RowMismatch, never> {
   return {
     name: `close capacity of repository ${scope.repositoryId}`,
     version: capacityVersion(scope, fence),
     reads: [
-      attemptsRead(scope, since),
+      attemptsRead(scope, since, attemptKey),
       sql`SELECT count(*) AS n FROM slopbot_close_attempts WHERE repository_id = ${scope.repositoryId}`,
       sql`SELECT item, at, kind FROM (${reversalsSince(scope.repositoryId, since)}) ORDER BY at, item`,
       sql`SELECT claim_token, status, lease_expires_at FROM slopbot_reviews WHERE review_key = ${scope.reviewKey}`,
@@ -172,10 +173,10 @@ effect function registryRead(reservation: Reservation, loaded: CapacityLoaded) {
   } satisfies RegistryRead
 }
 
-function reservationWrite(reservation: Reservation, at: string): Statement {
+function reservationWrite(reservation: Reservation, attemptKey: string, at: string): Statement {
   return sql`INSERT INTO slopbot_close_attempts (attempt_id, review_key, repository_id, project_id, item_node_id, author_id, revision,
       recovery_json, penalty_eligible, state, created_at)
-    VALUES (${reservation.claimToken}, ${reservation.reviewKey}, ${reservation.repositoryId}, ${reservation.fence.projectId}, ${reservation.itemNodeId},
+    VALUES (${attemptKey}, ${reservation.reviewKey}, ${reservation.repositoryId}, ${reservation.fence.projectId}, ${reservation.itemNodeId},
       ${reservation.authorId}, ${reservation.revision}, ${reservation.recovery}, ${reservation.penaltyEligible ? 1 : 0}, 'pending', ${at})`
 }
 
@@ -218,12 +219,13 @@ export effect function reserveSlot(reservation: Reservation) {
     const decided = admission(loaded.capacity, request, registry)
     if (decided !== "Admitted") return reserved({ kind: "refused", admission: decided }, [])
     try apply(loaded.capacity, { type: "reserve", request, registry })
-    return reserved({ kind: "admitted", attemptId: request.attemptId, attemptKey: reservation.claimToken }, [reservationWrite(reservation, loaded.iso)])
+    const attemptKey = `${reservation.claimToken}:${request.attemptId}`
+    return reserved({ kind: "admitted", attemptId: request.attemptId, attemptKey }, [reservationWrite(reservation, attemptKey, loaded.iso)])
   })
 }
 
 export effect function confirmSlot(confirmation: Confirmation) {
-  return try update(capacityAggregate(confirmation, defaultDailyCap, always, try weekAgo()), (loaded) => effect {
+  return try update(capacityAggregate(confirmation, defaultDailyCap, always, try weekAgo(), confirmation.attemptKey), (loaded) => effect {
     const attemptId = ordinalOf(loaded, confirmation.attemptKey)
     if (attemptId === undefined) throw new CloseAttemptMissing({ attemptKey: confirmation.attemptKey })
     const event: Event = { type: "confirm", closeEvent: { attemptId, item: confirmation.itemNodeId, revision: confirmation.revision, actor: "SlopbotApp", closedAt: seconds(confirmation.closedAt) } }
@@ -234,7 +236,7 @@ export effect function confirmSlot(confirmation: Confirmation) {
 }
 
 export effect function rejectSlot(refusal: Refusal) {
-  return try update(capacityAggregate(refusal, defaultDailyCap, always, try weekAgo()), (loaded) => effect {
+  return try update(capacityAggregate(refusal, defaultDailyCap, always, try weekAgo(), refusal.attemptKey), (loaded) => effect {
     const attemptId = ordinalOf(loaded, refusal.attemptKey)
     if (attemptId === undefined) throw new CloseAttemptMissing({ attemptKey: refusal.attemptKey })
     const event: Event = { type: "reject", githubRefusal: { attemptId, status: refusal.status } }

@@ -164,7 +164,7 @@ function roleOf(state: Appeal): Role {
 function view(state: Appeal): Observed {
   return {
     opened: state.opened,
-    subject: state.subject,
+    subject: state.subject.debit === 0 ? { ...state.subject, tableVersion: 0 } : state.subject,
     appellant: state.appellant,
     openedAt: state.openedAt,
     now: state.now,

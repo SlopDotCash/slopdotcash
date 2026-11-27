@@ -203,42 +203,53 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
   const project = yield* registry.project(source.projectId);
   if (project === undefined) return yield* Effect.fail(new PublicationFailed());
   if (admitted.mode === "single") {
-    const supersedes = admitted.supersedes[0] ?? null;
-    const recordJson = JSON.stringify({
-      schemaVersion: "slop-value-record:v1",
-      projectId: source.projectId,
-      repository: source.repository,
-      repositoryNodeId: source.repositoryNodeId,
-      repositoryDatabaseId: source.repositoryDatabaseId,
-      pullRequestNodeId: source.pullRequestNodeId,
-      pullRequestNumber: source.number,
-      headSha: "c".repeat(40),
-      mergeSha: null,
-      sourceDigest: admitted.result["sourceDigest"],
-      rubricVersion: admitted.result["rubricVersion"],
-      producerRevision: admitted.producerRevision,
-      assessedAt: admitted.result["assessedAt"],
-      supersedes,
-      revisionReason: admitted.revisionReason,
-      model: admitted.result["provenance"],
-    });
-    const registryFence = yield* registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] });
-    const stored = yield* appendValueRecord(recordJson, { installationId: admitted.installationId, projectId: source.projectId, registryFence });
-    return { recordDigest: stored.record_digest, sequence: stored.sequence };
+    const jointOwned = yield* first(Schema.Struct({ found: Schema.Number }), sql`SELECT 1 AS found FROM slopbot_work_unit_sources
+      WHERE repository_node_id = ${source.repositoryNodeId} AND pull_request_node_id = ${source.pullRequestNodeId} LIMIT 1`);
+    if (jointOwned === undefined) {
+      const supersedes = admitted.supersedes[0] ?? null;
+      const recordJson = JSON.stringify({
+        schemaVersion: "slop-value-record:v1",
+        projectId: source.projectId,
+        repository: source.repository,
+        repositoryNodeId: source.repositoryNodeId,
+        repositoryDatabaseId: source.repositoryDatabaseId,
+        pullRequestNodeId: source.pullRequestNodeId,
+        pullRequestNumber: source.number,
+        headSha: "c".repeat(40),
+        mergeSha: null,
+        sourceDigest: admitted.result["sourceDigest"],
+        rubricVersion: admitted.result["rubricVersion"],
+        producerRevision: admitted.producerRevision,
+        assessedAt: admitted.result["assessedAt"],
+        supersedes,
+        revisionReason: admitted.revisionReason,
+        model: admitted.result["provenance"],
+      });
+      const registryFence = yield* registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] });
+      const stored = yield* appendValueRecord(recordJson, { installationId: admitted.installationId, projectId: source.projectId, registryFence });
+      return { recordDigest: stored.record_digest, sequence: stored.sequence };
+    }
   }
+  const isolate = admitted.mode === "single";
   const recordJson = JSON.stringify({
     schemaVersion: "slop-work-unit-record:v1",
     projectId: source.projectId,
     sourceDigest: admitted.result["sourceDigest"],
-    sources: admitted.sources.map((member) => ({ repository: member.repository, repositoryNodeId: member.repositoryNodeId, repositoryDatabaseId: member.repositoryDatabaseId, pullRequestNodeId: member.pullRequestNodeId, pullRequestNumber: member.number })),
+    sources: admitted.sources.map((member) => ({
+      repository: member.repository,
+      repositoryNodeId: member.repositoryNodeId,
+      repositoryDatabaseId: member.repositoryDatabaseId,
+      pullRequestNodeId: isolate ? `${member.pullRequestNodeId}:${admitted.assessmentKey}` : member.pullRequestNodeId,
+      pullRequestNumber: member.number,
+    })),
     claims: [],
     units: [],
     rubricVersion: admitted.result["rubricVersion"],
     producerRevision: admitted.producerRevision,
     assessedAt: admitted.result["assessedAt"],
-    supersedes: admitted.supersedes,
-    legacyPredecessors: admitted.legacyPredecessors,
-    revisionReason: admitted.revisionReason,
+    supersedes: isolate ? [] : admitted.supersedes,
+    legacyPredecessors: isolate ? [] : admitted.legacyPredecessors,
+    revisionReason: isolate ? null : admitted.revisionReason,
   });
   const recordDigest = sha256(recordJson);
   yield* (yield* D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at)

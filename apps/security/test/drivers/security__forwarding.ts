@@ -170,11 +170,19 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
 function shown(state: Forwarding): Forwarding {
   return {
     ...state,
+    failure: state.phase === "Failed" ? state.failure : "None",
     activeClaim: claimOut(state.activeClaim),
     readyClaims: state.readyClaims.map(claimOut),
     canonical: copyOut(state.canonical),
     bindingCopies: state.bindingCopies.map(copyOut),
     receiptDigest: nameOf(state.receiptDigest),
+  };
+}
+
+function view(state: Forwarding): Forwarding {
+  return {
+    ...state,
+    failure: state.phase === "Failed" ? state.failure : "None",
   };
 }
 
@@ -195,4 +203,4 @@ export const driver: Driver & AsyncDisposable = {
   },
 };
 
-export const options: Options = { keys: ["first", "second"], walks: 4, steps: 12 };
+export const options: Options = { keys: ["first", "second"], view, walks: 4, steps: 12 };

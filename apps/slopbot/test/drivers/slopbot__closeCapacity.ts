@@ -70,6 +70,7 @@ type Observed = Pick<Capacity, "now" | "dailyCap"> & {
 let generation = 0;
 let cap = 25;
 let last = 0;
+let reserveSeq = 0;
 let reversalCount = 0;
 const attempts = new Map<number, string>();
 
@@ -87,8 +88,9 @@ async function reserve(event: Extract<Event, { type: "reserve" }>) {
   const { request } = event;
   if (request.attemptId <= last) return "refused" as const;
   current = event.registry;
-  const claimToken = `cap-g${generation}-token-${request.attemptId}`;
-  const reviewKey = `cap-g${generation}-review-${request.attemptId}`;
+  const seq = ++reserveSeq;
+  const claimToken = `cap-g${generation}-token-${seq}`;
+  const reviewKey = `cap-g${generation}-review-${seq}`;
   const holder = request.leaseToken > 0 && event.registry.leaseToken === request.leaseToken ? claimToken : event.registry.leaseToken === 0 ? null : `cap-g${generation}-other-${event.registry.leaseToken}`;
   await db.prepare(`INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at)
     VALUES (?, 1, ?, 'pull_request', 1, ?, 5, ?, 'c', 'p', ?, ?, ?, ?)`)

@@ -13,6 +13,7 @@ import { type ProjectView, Registry, RegistryManifests, Restrictions } from "@re
 import { Enforcement } from "@repo/ports/security";
 import type { Driver, Options } from "../../gen/slopbot__readyLabel.conformance.ts";
 import type { Event, MergeState, ReadyLine, ReadyObservation, ReadyPull, RowState } from "../../gen/slopbot__readyLabel.ts";
+import { submissionFeeMode } from "../../src/fee/store.vibe";
 import { webhookSettings } from "../../src/ingress/webhook.vibe";
 import { type Job, JobQueue } from "../../src/jobs/job.vibe";
 import { refreshReadyLabel } from "../../src/ready/refresh.vibe";
@@ -101,7 +102,7 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
 async function started(key: string): Promise<Held> {
   const db = databases.get(key);
   if (db === undefined) throw new Error(`no database for ${key}`);
-  for (const table of ["slopbot_ready_labels", "slopbot_reviews", "slopbot_item_comments", "slopbot_installations"]) await db.prepare(`DELETE FROM ${table}`).run();
+  for (const table of ["slopbot_ready_labels", "slopbot_reviews", "slopbot_item_comments", "slopbot_fee_gates", "submission_fee_items", "slopbot_installations"]) await db.prepare(`DELETE FROM ${table}`).run();
   await db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1)").bind(installationId, new Date(base).toISOString()).run();
   const fake = githubFake();
   const world = fake.world;
@@ -152,7 +153,7 @@ async function started(key: string): Promise<Held> {
   const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(current, fake)));
   const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-ready-conformance" }), http);
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "ready-conformance-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) });
-  const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, queue, ports, githubLayer, settings)) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
+  const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, queue, ports, githubLayer, settings, submissionFeeMode("live"))) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
   holder.state = { fake, runtime, clock, db, number, commentId, now: 1, heads: 1, manifest: JSON.stringify({ id: "ready-project" }), contributor: true, hidden: false, hiddenComment: false, report: {}, atWrite: "SameHead", reads: 0 };
   return holder.state;
 }
@@ -207,6 +208,15 @@ async function realize(state: Held, observed: ReadyObservation) {
   if (row !== undefined)
     await state.db.prepare("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, verdict, action, created_at) VALUES (?, ?, ?, 'pull_request', ?, ?, 301, ?, 'content', 'policy', ?, ?, 'comment', ?)")
       .bind(`ready-${head}`, installationId, repositoryId, state.number, pull.nodeId, head, row.status, row.verdict, new Date(base).toISOString()).run();
+  await state.db.prepare("DELETE FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).run();
+  await state.db.prepare("DELETE FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).run();
+  if (facts.feeUnpaid) {
+    const at = new Date(base).toISOString();
+    await state.db.prepare("INSERT INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at) VALUES (?, ?, ?, 'ada', 'widgets', 'asked', 'fee-needed', NULL, ?, NULL)")
+      .bind(repositoryId, state.number, installationId, at).run();
+    await state.db.prepare("INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at) VALUES (?, ?, 'ready-project', ?, '1000000', ?)")
+      .bind(repositoryId, state.number, `0x${"1".repeat(64)}`, at).run();
+  }
 }
 
 async function run<A>(state: Held, program: Effect.Effect<A, unknown, unknown>) {

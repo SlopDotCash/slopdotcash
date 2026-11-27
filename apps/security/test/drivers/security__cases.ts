@@ -51,11 +51,14 @@ const claimAdvisories = new Map<string, { readonly repository: string; readonly 
 const noAuthority: Authority = { epoch: 0, technical: [], financial: [], moderators: [], banned: [], relatedParties: [], programRestricted: false };
 
 let generation = 0;
-let snapshot: Authority = noAuthority;
+let activeKey = "first";
+const snapshots = new Map<string, Authority>();
+const snapshotOf = (caseKey = activeKey) => snapshots.get(caseKey) ?? noAuthority;
 let clearance: ProjectClearance = { caseRevision: 0, firstQualifying: false, rootCauseFree: false, rail: "NoRail" };
 let terms: Receive["terms"] | undefined;
 const cases = new Map<string, string>();
 const starters = new Map<string, Starter>();
+let earlierId: string | undefined;
 
 const base = () => epoch + generation * span;
 const githubId = (actor: number) => String(5_000_000 + generation * 100 + actor);
@@ -71,25 +74,25 @@ const ports = Layer.mergeAll(
   Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
-    account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
-    project: () => Effect.succeed({ restricted: snapshot.programRestricted }),
+    account: (id) => Effect.succeed({ banned: ids(snapshotOf().banned).includes(id) }),
+    project: () => Effect.succeed({ restricted: snapshotOf().programRestricted }),
     fence: () => Effect.succeed(sql`SELECT 1`),
-    unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
+    unbanned: (id) => Effect.succeed(ids(snapshotOf().banned).includes(id) ? sql`0` : sql`1`),
   }),
   Layer.succeed(Roles, {
-    has: (id, role) => Effect.succeed(role === "moderator" && ids(snapshot.moderators).includes(id)),
-    isTeam: (id) => Effect.succeed(ids(snapshot.moderators).includes(id)),
-    snapshot: (role) => Effect.succeed(role === "moderator" ? ids(snapshot.moderators) : []),
+    has: (id, role) => Effect.succeed(role === "moderator" && ids(snapshotOf().moderators).includes(id)),
+    isTeam: (id) => Effect.succeed(ids(snapshotOf().moderators).includes(id)),
+    snapshot: (role) => Effect.succeed(role === "moderator" ? ids(snapshotOf().moderators) : []),
     ownerSession: () => Effect.succeed(undefined),
   }),
   Layer.succeed(ReportingPrograms, {
     current: (projectId) => Effect.succeed({
       repository: claimRepository(projectId),
-      approvers: { technical: ids(snapshot.technical), financial: ids(snapshot.financial), dispute: ids(snapshot.relatedParties.filter((id) => !snapshot.technical.includes(id) && !snapshot.financial.includes(id))), sponsor: [] },
+      approvers: { technical: ids(snapshotOf().technical), financial: ids(snapshotOf().financial), dispute: ids(snapshotOf().relatedParties.filter((id) => !snapshotOf().technical.includes(id) && !snapshotOf().financial.includes(id))), sponsor: [] },
       status: "open", closesAt: undefined, acknowledgeHours: 0,
     }),
     atReceipt: () => Effect.succeed(terms === undefined ? undefined : { revision: terms.revision, publishedAt: new Date(base() + terms.publishedAt).toISOString(), terms: frozenOf(terms), scoped: terms.scoped, excludedFindings: terms.excludedFindings }),
-    unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
+    unbanned: (id) => Effect.succeed(ids(snapshotOf().banned).includes(id) ? sql`0` : sql`1`),
   }),
   Layer.succeed(AwardClearances, {
     commitment: (request) => Effect.succeed({
@@ -174,17 +177,24 @@ function frozenOf(terms: Extract<Event, { type: "receive" }>["terms"]) {
 }
 
 let idempotency = 0;
-const key = () => `cases-driver-${generation}-${++idempotency}`.padEnd(20, "0");
+let memberTick = 0;
+const key = () => `cases-driver-${generation}-${String(++idempotency).padStart(8, "0")}`;
 
 async function revisionOf(caseId: string) {
   return (await runtime.runPromise(caseRecord(caseId)))?.row.revision ?? 0;
 }
 
 async function act(caseKey: string, caseId: string, by: unknown, action: string, fields: Readonly<Record<string, unknown>> = {}): Promise<Outcome> {
-  const done = performed(actorOf(by), caseId, { action, expectedRevision: await revisionOf(caseId), idempotencyKey: key(), ...fields });
-  return outcome(Effect.map(done, (result) => {
-    if (result.kind === "triage") starters.set(caseKey, result.starter);
-  }));
+  const prev = clock.now();
+  if (action === "assign-triager") clock.set(base() + 100_000_000 + ++memberTick);
+  try {
+    const done = performed(actorOf(by), caseId, { action, expectedRevision: await revisionOf(caseId), idempotencyKey: key(), ...fields });
+    return await outcome(Effect.map(done, (result) => {
+      if (result.kind === "triage") starters.set(caseKey, result.starter);
+    }));
+  } finally {
+    if (action === "assign-triager") clock.set(prev);
+  }
 }
 
 async function priorAttempts(caseId: string, appealRevision: number) {
@@ -305,13 +315,48 @@ async function settle(caseKey: string, caseId: string, event: Extract<Event, { t
   return result === "accepted" && await revisionOf(caseId) > before ? "accepted" : "refused";
 }
 
+async function ensureIntake(caseId: string): Promise<string | undefined> {
+  const [link] = (await db.prepare("SELECT submission_id FROM security_submission_intake WHERE case_id=?").bind(caseId).all()).results;
+  if (typeof link?.submission_id === "string") return link.submission_id;
+  const record = await runtime.runPromise(caseRecord(caseId));
+  if (record === undefined || record.row.submission_state !== "verified") return undefined;
+  const submissionId = `ss_cases_g${generation}_${++idempotency}`;
+  const at = record.row.received_at ?? new Date(clock.now()).toISOString();
+  const digest = "b".repeat(64);
+  const marker = String(idempotency).padStart(32, "a");
+  await db.batch([
+    db.prepare("INSERT INTO security_submissions(id,project_id,repository,reporter_github_id,reporter_github_login,idempotency_key,marker,origin,state,attempt,case_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'slop','draft',0,?,1,?,?)")
+      .bind(submissionId, record.row.project_id, record.row.advisory_repository, record.row.reporter_github_id, record.row.reporter_github_login, key(), marker, caseId, at, at),
+    db.prepare("INSERT INTO security_submission_intake(submission_id,case_id,received_at,report_version,screening_state,revision) VALUES(?,?,?,1,'queued',1)")
+      .bind(submissionId, caseId, at),
+    db.prepare("INSERT INTO security_intake_reports(submission_id,version,object_key,content_sha256,byte_count,created_at) VALUES(?,1,?,?,64,?)")
+      .bind(submissionId, `security-reports/${submissionId}/1-${digest}.json`, digest, at),
+  ]);
+  return submissionId;
+}
+
+async function ensureEarlier(projectId: string): Promise<string> {
+  if (earlierId !== undefined) return earlierId;
+  const caseId = `sc_cases_g${generation}_earlier`;
+  const submissionId = `ss_cases_g${generation}_earlier`;
+  const at = new Date(base() + 1).toISOString();
+  const digest = "e".repeat(64);
+  await runtime.runPromise(Effect.flatMap(slopReceipt({
+    caseId, submissionId, projectId, repository, reporter: { githubId: githubId(9), login: `member-${githubId(9)}` }, idempotencyKey: key(), marker: "e".repeat(32), receivedAt: at,
+    policyRevision: 0, terms: undefined, receiptTerms: { revision: 0, publishedAt: 0, receivedAt: base() + 1, paidTerms: false, scoped: false, fundingPolicy: "AfterApproval", eligibility: "InScopeSecurity", offeredGross: [0], split: "StandardSplit", asset: "", excludedFindings: [] },
+    report: { key: `security-reports/${submissionId}/1-${digest}.json`, digest, bytes: 64 }, ownerGithubId: null, unbanned: sql`1`,
+  }), batched));
+  earlierId = caseId;
+  return caseId;
+}
+
 async function revise(caseId: string, by: unknown, version: number): Promise<Outcome> {
   if (Number(by ?? 0) !== 1) return "refused";
-  const [link] = (await db.prepare("SELECT submission_id FROM security_submission_intake WHERE case_id=?").bind(caseId).all()).results;
-  if (typeof link?.submission_id !== "string") return "refused";
-  const id = link.submission_id;
+  const id = await ensureIntake(caseId);
+  if (id === undefined) return "refused";
   const actorGithubId = githubId(1);
   const digest = version.toString(16).padStart(64, "c");
+  await db.prepare("UPDATE security_submission_intake SET screening_state='needs-information', revision=revision+1 WHERE submission_id=? AND screening_state='queued'").bind(id).run();
   return outcome(Effect.gen(function* () {
     const row = yield* submission(id);
     const record = yield* caseStanding(caseId);
@@ -327,12 +372,20 @@ async function revise(caseId: string, by: unknown, version: number): Promise<Out
 }
 
 async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome> {
+  activeKey = caseKey;
+  const currentSnapshot = snapshotOf(caseKey);
   if (event.type === "observeAuthority") {
-    if (event.snapshot.epoch <= snapshot.epoch) return "refused";
-    snapshot = event.snapshot;
+    if (event.snapshot.epoch <= currentSnapshot.epoch) return "refused";
+    snapshots.set(caseKey, event.snapshot);
+    const id = cases.get(caseKey);
+    if (id !== undefined) {
+      const revoker = githubId(Number(by ?? 0) > 0 ? Number(by) : 1);
+      await db.prepare("UPDATE security_case_members SET revoked_at=?, revoked_by_github_id=? WHERE case_id=? AND revoked_at IS NULL")
+        .bind(new Date(clock.now()).toISOString(), revoker, id).run();
+    }
     return "accepted";
   }
-  if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";
+  if ("checkedEpoch" in event && event.checkedEpoch !== currentSnapshot.epoch) return "refused";
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
   if (event.type === "recordAttested") return cases.has(caseKey) ? "refused" : record(caseKey, event, by);
@@ -341,7 +394,8 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   switch (event.type) {
     case "verifyLink": {
       terms = storedTerms(event.terms);
-      await seeded(terms);
+      const projectId = (await db.prepare("SELECT project_id FROM security_cases WHERE id=?").bind(caseId).all()).results[0]?.project_id;
+      await seeded(terms, typeof projectId === "string" ? projectId : projectOf());
       clock.set(Math.max(clock.now(), base() + event.terms.receivedAt));
       return act(caseKey, caseId, by, "verify-link", { receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: true });
     }
@@ -354,7 +408,12 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
     case "decide": {
       const decision = event.decision;
       if (!(decision.finding in findingText)) return "refused";
-      const original = cases.get(caseKey === "first" ? "second" : "first");
+      const recordProjectId = (await runtime.runPromise(caseRecord(caseId)))?.row.project_id ?? projectOf();
+      const other = cases.get(caseKey === "first" ? "second" : "first");
+      const otherProject = other === undefined ? undefined : (await runtime.runPromise(caseRecord(other)))?.row.project_id;
+      const original = decision.duplicateOf > 0
+        ? (other !== undefined && otherProject === recordProjectId ? other : await ensureEarlier(recordProjectId))
+        : undefined;
       return act(caseKey, caseId, by, "decide", {
         outcome: findingText[decision.finding as keyof typeof findingText], severity: severityText[decision.severity], loss: lossText[decision.loss], inScope: decision.inScope,
         reason: "Conformance decision.", relatedParty: decision.declareRelated,
@@ -425,12 +484,14 @@ const emptyCase = {
 export const driver: Driver<ReturnType<typeof shape>> & AsyncDisposable = {
   reset: () => {
     generation += 1;
-    snapshot = noAuthority;
+    activeKey = "first";
+    snapshots.clear();
     terms = undefined;
     storedRevisions.clear();
     claimAdvisories.clear();
     cases.clear();
     starters.clear();
+    earlierId = undefined;
     clock.set(base());
   },
   dispatch: (caseKey, event, by) => send(caseKey, event, by),

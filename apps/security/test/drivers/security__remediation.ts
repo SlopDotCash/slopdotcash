@@ -52,7 +52,7 @@ const githubId = (actor: number) => String(6_000_000 + generation * 100 + actor)
 const actorOf = (by: unknown) => ({ githubId: githubId(Number(by ?? 0)), login: `member-${githubId(Number(by ?? 0))}`, actorId: `actor-${githubId(Number(by ?? 0))}` });
 const ids = (actors: ReadonlyArray<number>) => actors.map(githubId);
 const hex = (digest: number) => digest.toString(16).padStart(64, "0");
-const key = () => `remediation-driver-${generation}-${++keys}`.padEnd(24, "0");
+const key = () => `remediation-driver-${generation}-${String(++keys).padStart(8, "0")}`;
 
 const fixture: ProjectView = {
   projectId: project, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
@@ -122,6 +122,7 @@ async function received() {
 }
 
 async function act(by: unknown, action: string, fields: Readonly<Record<string, unknown>>): Promise<Outcome> {
+  clock.advance(1);
   const revision = (await runtime.runPromise(caseRecord(caseId)))?.row.revision ?? 0;
   return outcome(performed(actorOf(by), caseId, { action, expectedRevision: revision, idempotencyKey: key(), ...fields }));
 }
@@ -135,6 +136,10 @@ async function send(event: Event, by: unknown): Promise<Outcome> {
   if (event.type === "observeAuthority") {
     if (event.snapshot.epoch <= snapshot.epoch) return "refused";
     snapshot = event.snapshot;
+    clock.advance(1);
+    const revoker = githubId(Number(by ?? 0) > 0 ? Number(by) : 1);
+    await db.prepare("UPDATE security_case_members SET revoked_at=?, revoked_by_github_id=? WHERE case_id=? AND revoked_at IS NULL")
+      .bind(new Date(clock.now()).toISOString(), revoker, caseId).run();
     return "accepted";
   }
   if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";

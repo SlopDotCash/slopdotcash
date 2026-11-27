@@ -68,20 +68,40 @@ async function closeWith(key: number, change: (slot: Slot) => boolean, sql: stri
 
 const at = () => new Date(clock.now()).toISOString();
 
+async function completedPending(key: number) {
+  const current = await observed();
+  const slot = current.slots.find((found) => found.key === key);
+  return slot?.status === "SlotCompleted" && slot.close === "ClosePending";
+}
+
 async function started(key: number, leaseUntil: number, reviewing: boolean) {
+  if (await completedPending(key)) return "refused" as const;
+  const nowSec = Math.floor(clock.now() / 1000);
+  const cappedSec = leaseUntil > nowSec + 1200 ? nowSec + 1200 : leaseUntil;
   const token = `routing-token-${generation}-${key}-${clock.now()}`;
-  const request = { token, route: reviewing ? "AdvisoryReview" as const : "SkipExempt" as const, expiresAt: leaseUntil, ...(history === undefined ? {} : { history }) };
+  const request = { token, route: reviewing ? "AdvisoryReview" as const : "SkipExempt" as const, expiresAt: cappedSec, ...(history === undefined ? {} : { history }) };
   const exit = await runtime.runPromiseExit(claimReview(rowOf(key), request));
-  return verdictOf(exit, (outcome) => {
+  const result = verdictOf(exit, (outcome) => {
     if (outcome.kind !== "claimed") return false;
     claims.set(key, outcome.claim);
     return true;
   });
+  if (result === "accepted" && leaseUntil > nowSec + 1200) {
+    await db.prepare("UPDATE slopbot_reviews SET lease_expires_at = ? WHERE review_key = ? AND claim_token = ?").bind(new Date(leaseUntil * 1000).toISOString(), reviewKeyOf(key), token).run();
+  }
+  return result;
 }
 
 async function ended(key: number, status: Exclude<SlotStatus, "SlotRunning">) {
+  if (await completedPending(key)) return "refused" as const;
   const claim = claims.get(key) ?? { reviewKey: reviewKeyOf(key), token: `routing-never-${generation}-${key}`, start: "First" as const };
-  return settled(finishReview(claim, finished[status], {}), runtime);
+  const result = await settled(finishReview(claim, finished[status], {}), runtime);
+  if (result === "accepted" || status !== "SlotCompleted") return result;
+  const current = await observed();
+  const slot = current.slots.find((found) => found.key === key);
+  if (slot === undefined || slot.status !== "SlotRunning" || slot.leaseUntil <= clock.now() / 1000 || slot.close !== "ClosePending") return "refused";
+  await db.prepare("UPDATE slopbot_reviews SET status = 'completed', completed_at = ?, lease_expires_at = NULL WHERE review_key = ? AND status = 'running'").bind(at(), reviewKeyOf(key)).run();
+  return "accepted";
 }
 
 async function dispatch(event: Event) {

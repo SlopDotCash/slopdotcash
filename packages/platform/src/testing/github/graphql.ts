@@ -45,13 +45,20 @@ export interface GraphQLContext {
 class Syntax extends Error {}
 
 class FieldFailure extends Error {
-  constructor(message: string, readonly type: string) {
+  readonly type: string;
+  constructor(message: string, type: string) {
     super(message);
+    this.type = type;
   }
 }
 
 class Obj {
-  constructor(readonly type: string, readonly value: unknown) {}
+  readonly type: string;
+  readonly value: unknown;
+  constructor(type: string, value: unknown) {
+    this.type = type;
+    this.value = value;
+  }
 }
 
 const lexeme = /[\s,]+|#[^\n\r]*|(\.\.\.|[!$&():=@[\]{|}])|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|("""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")|([_A-Za-z][_0-9A-Za-z]*)/uy;
@@ -76,7 +83,10 @@ function tokenize(source: string): Token[] {
 
 class Parser {
   #index = 0;
-  constructor(readonly tokens: ReadonlyArray<Token>) {}
+  readonly tokens: ReadonlyArray<Token>;
+  constructor(tokens: ReadonlyArray<Token>) {
+    this.tokens = tokens;
+  }
 
   #peek(): Token | undefined {
     return this.tokens[this.#index];
@@ -927,8 +937,12 @@ function nodeById(ctx: GraphQLContext, id: unknown): Obj {
 class Execution {
   readonly errors: GraphQLError[] = [];
   readonly variables: Readonly<Record<string, unknown>>;
+  readonly document: Document;
+  readonly ctx: GraphQLContext;
 
-  constructor(readonly document: Document, readonly ctx: GraphQLContext, variables: Readonly<Record<string, unknown>>, operation: Operation) {
+  constructor(document: Document, ctx: GraphQLContext, variables: Readonly<Record<string, unknown>>, operation: Operation) {
+    this.document = document;
+    this.ctx = ctx;
     const values: Record<string, unknown> = {};
     for (const declared of operation.variables) values[declared.name] = declared.name in variables ? variables[declared.name] : declared.fallback === undefined ? null : this.#evaluate(declared.fallback, {});
     this.variables = values;

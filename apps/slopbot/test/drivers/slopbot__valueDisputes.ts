@@ -55,6 +55,7 @@ function translated(event: Event): Event {
       return { ...event, source: { ...event.source, digest: digestOf(event.source.digest), item: item(event.source.item) } };
     case "accept":
     case "reject":
+    case "escalateBanAtAnswer":
       return { ...event, check: { ...event.check, item: item(event.check.item) } };
     default:
       return event;
@@ -108,7 +109,9 @@ async function dispatch(raw: Event, by: number): Promise<"accepted" | "refused">
     case "draft":
       return committed([{ event, by, confidence: confidenceOf(event.confidenceHundredths) }]);
     case "escalateDraft":
+    case "escalateBanAtAnswer":
     case "accept":
+    case "reject":
       return committed([...banned(), { event, by }]);
     case "postResolution":
       return posted();
