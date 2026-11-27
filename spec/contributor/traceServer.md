@@ -183,7 +183,7 @@ pure def stepConsumedStaysConsumed(before: TraceServer, after: TraceServer): boo
 The capability PUT is not bearer-authenticated. It needs a live intent, the
 owner's clear standing, fresh private intake, and the exact intent content
 type, size and digest. Existing content-addressed object metadata must match.
-Before any write, D1 reserves exactly one object for the run; the reservation
+Before any write, D1 reserves exactly one non-empty-digest object for the run; the reservation
 is permanent, even when storage or attachment fails, and a different digest
 then needs a new run. Attachment consumes the intent atomically, measured at
 the request's authorization time, and rechecks the ban, the finalized state
@@ -247,6 +247,7 @@ pure def stepOtherRunKeysPermanent(before: TraceServer, after: TraceServer): boo
   before.otherRunIntentKeys.every(k => after.otherRunIntentKeys.includes(k))
     and before.otherRunEventKeys.every(k => after.otherRunEventKeys.includes(k))
 pure def alwaysOneReservation(s: TraceServer): bool = s.reservation.length() <= 1
+  and s.reservation.every(o => o.digest != "")
   and s.puts.every(p => s.reservation.length() == 1 and s.reservation.nthOr(0, noObject) == p.blob)
 pure def alwaysAttachedObject(s: TraceServer): bool = s.attached != "" implies
   s.objects.some(o => o.digest == s.attached) and s.reservation.length() == 1

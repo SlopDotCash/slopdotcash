@@ -128,7 +128,9 @@ pure def finishRelease(p: LockPublication): LockPublication = { ...p, step: Lock
 ### Manual recovery is external and only after every affected process stopped
 
 A returned handle cannot be used after its process stopped, and recovery
-never reuses the saved-path identity.
+never reuses the saved-path identity. Release rename and release cleanup run
+only during a release operation, and a release reaches guard cleanup or finish
+without a primary error only once the actor's tombstone has been removed.
 
 ```quint
 pure def retire(h: Handle): Handle = if (h.published) { ...h, released: true, complete: true } else h
@@ -166,6 +168,9 @@ pure def alwaysOperationFacts(p: LockPublication): bool =
   and ((p.op == Acquiring and p.committed and not(p.rolledBack)) implies p.canonical == p.actor)
   and ((p.op == Releasing and (p.step == ReleaseCleanup or ((p.step == GuardCleanup or p.step == Finish) and p.primary == NoLockError)))
     implies handleOf(p, p.actor).released)
+  and ((p.step == ReleaseRename or p.step == ReleaseCleanup) implies p.op == Releasing)
+  and ((p.op == Releasing and (p.step == GuardCleanup or p.step == Finish) and p.primary == NoLockError)
+    implies not(p.tombstones.includes(p.actor)))
 pure def alwaysDiagnostics(p: LockPublication): bool =
   (p.diagnostic == Acquired implies handleOf(p, p.actor).published)
   and (p.diagnostic == CommittedWithoutHandle implies p.canonical == p.actor and not(handleOf(p, p.actor).published))

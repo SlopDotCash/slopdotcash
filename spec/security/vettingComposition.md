@@ -22,7 +22,9 @@ the repository's pending assessment, its current identity epoch and the
 revision the request was made at. A clean scan feeds clearance only when it
 passes: recorded clean, evidence retained and no explicit investigation of it
 open. Its evidence is read in the same request; missing, corrupt or expired
-evidence leaves it unverified. Each delivered scan's record is kept.
+evidence leaves it unverified. Each delivered scan's record is kept, and each
+repository's latest assessment matches its repository and never carries a
+future identity epoch.
 
 ```quint
 import admission as A from "./admission"
@@ -51,13 +53,16 @@ pure def recordFor(v: Vetting, assessment: int): A::AssessmentRecord =
     { assessment: 0, repository: 0, identityEpoch: 0, requestedAt: 0, result: A::NoDisposition, reused: false,
       evidenceAvailable: false, investigationOpen: false })
 pure def alwaysCleanFedOnlyByQualifiedRecord(v: Vetting): bool =
-  v.security.repositories.every(r => E::assessedClean(v.security, r) implies
-    (recordFor(v, E::latestOf(v.security, r).id).result == A::DClean and
-     recordFor(v, E::latestOf(v.security, r).id).evidenceAvailable and
-     not(recordFor(v, E::latestOf(v.security, r).id).investigationOpen) and
-     recordFor(v, E::latestOf(v.security, r).id).repository == r and
-     recordFor(v, E::latestOf(v.security, r).id).identityEpoch == E::identityOf(v.security, r) and
-     recordFor(v, E::latestOf(v.security, r).id).reused == E::latestOf(v.security, r).reused))
+  v.security.repositories.every(r =>
+    (E::latestOf(v.security, r).state == E::NotAssessed or E::latestOf(v.security, r).repository == r) and
+    E::latestOf(v.security, r).identity <= E::identityOf(v.security, r) and
+    (E::assessedClean(v.security, r) implies
+      (recordFor(v, E::latestOf(v.security, r).id).result == A::DClean and
+       recordFor(v, E::latestOf(v.security, r).id).evidenceAvailable and
+       not(recordFor(v, E::latestOf(v.security, r).id).investigationOpen) and
+       recordFor(v, E::latestOf(v.security, r).id).repository == r and
+       recordFor(v, E::latestOf(v.security, r).id).identityEpoch == E::identityOf(v.security, r) and
+       recordFor(v, E::latestOf(v.security, r).id).reused == E::latestOf(v.security, r).reused)))
 pure def alwaysRecordsUnique(v: Vetting): bool =
   v.records.every(r => r.assessment > 0 and v.records.select(o => o.assessment == r.assessment).length() == 1)
 pure def stepRecordsRetained(before: Vetting, after: Vetting): bool =
