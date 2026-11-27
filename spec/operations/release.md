@@ -314,7 +314,7 @@ pure def canRivalTakeLock(r: Release, rival: int): bool = r.lock.holder == NoWor
 pure def rivalTakeLock(r: Release, rival: int): Release =
   { ...r, lock: { ...r.lock, holder: ReleaseWorkflow, holderRun: rival, waiting: r.lock.waiting.select(w => w != rival) } }
 pure def alwaysOneLockHolder(r: Release): bool =
-  ((r.lock.holder == ReleaseWorkflow) iff (r.lock.holderRun > 0)) and r.lock.holderRun < r.lock.nextRival
+  ((r.lock.holder == ReleaseWorkflow) iff (r.lock.holderRun > 0)) and r.lock.holderRun < r.lock.nextRival and r.lock.nextRival > selfRun
     and (r.lock.holder != NoWorkflow and r.lock.holder != ReleaseWorkflow implies lockWorkflow(r.environment, r.lock.holder))
     and r.lock.waiting.every(w => w > selfRun and w < r.lock.nextRival and w != r.lock.holderRun)
     and r.lock.otherHolds >= 0 and r.lock.rivalsPublished >= 0
@@ -487,7 +487,8 @@ pure def alwaysSkippedServicesDisabled(r: Release): bool = r.services.every(s =>
 pure def alwaysFeeConverterBoundToSource(r: Release): bool =
   (serviceAt(r, FeeConverter).phase == ServiceBound implies r.fee.published and r.fee.source == r.source)
     and (r.fee.published implies r.fee.source <= r.source)
-    and F::alwaysPublishedPassedPreflight(r.fee) and F::alwaysStagingNeverSigns(r.fee)
+    and F::alwaysPublishedPassedPreflight(r.fee) and F::alwaysStagingNeverSigns(r.fee) and F::alwaysUnpublishedInert(r.fee)
+    and (not(r.configured) implies not(r.fee.published) and r.fee.environment == F::Production)
     and (r.configured implies (r.fee.environment == F::Staging iff r.environment == Staging))
 pure def alwaysEnvironmentServices(r: Release): bool =
   (r.environment == Staging implies serviceAt(r, Slopbot).phase == ServiceSkipped and serviceAt(r, Referral).phase == ServiceSkipped)
