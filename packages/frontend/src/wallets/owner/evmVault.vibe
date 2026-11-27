@@ -1,5 +1,5 @@
 // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"
-import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress } from "@repo/settlement/chain/evm/abi"
+import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress, factoryGetter } from "@repo/settlement/chain/evm/abi"
 import { vaultKey, vaultsCall } from "@repo/settlement/chain/evm/factories"
 import { sha256Hex } from "@repo/platform/crypto"
 import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals, totalsRefusalMessage } from "@repo/settlement/chain/evm/totals"
@@ -79,6 +79,7 @@ export const evmVaultMessages = {
   planUnreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
   malformed: "Malformed escrow state",
   codeUnavailable: "Escrow runtime code unavailable",
+  factoryCodeMismatch: "Escrow factory code does not match reviewed deployment",
 } as const
 
 const deploymentMessages: Readonly<Record<Exclude<DeploymentCheck, "ok">, string>> = {
@@ -143,13 +144,28 @@ function addressText(text: string): string {
   return parsed === undefined ? "" : addressWord(parsed)
 }
 
+effect function verifyFactory(connection: EvmConnection, review: VaultReview["factory"], block: string) {
+  const factory = evmAddress(review.address)
+  if (factory === undefined) throw refused(deploymentMessages.identity)
+  if ((try runtimeSha256(connection, factory, block)) !== review.codeSha256)
+    throw refused(evmVaultMessages.factoryCodeMismatch)
+  const answer = try evmRequest(connection, "eth_getStorageAt", [factory, IMPLEMENTATION_SLOT, block])
+  const slot = typeof answer === "string" ? answer.toLowerCase() : ""
+  if (!wordPattern.test(slot)) throw refused(deploymentMessages.slotInvalid)
+  if (slot !== addressText(review.implementation.address) || (try runtimeSha256(connection, review.implementation.address, block)) !== review.implementation.codeSha256)
+    throw refused(deploymentMessages.implementation)
+  if ((try word(connection, factory, factoryGetter("registrar"), block)) !== addressText(review.registrar))
+    throw refused(deploymentMessages.identity)
+  return factory
+}
+
 export effect function verifyDeployment(connection: EvmConnection, vault: EvmVault, block: string) {
   const review = vault.review
   const owner = evmAddress(vault.owner)
   const asset = evmAddress(vault.asset)
   const at = evmAddress(vault.vault)
-  const factory = evmAddress(review.factory)
-  if (owner === undefined || asset === undefined || at === undefined || factory === undefined) throw refused(deploymentMessages.identity)
+  if (owner === undefined || asset === undefined || at === undefined) throw refused(deploymentMessages.identity)
+  const factory = try verifyFactory(connection, review.factory, block)
   const code = try runtimeSha256(connection, at, block)
   const slotAnswer = try evmRequest(connection, "eth_getStorageAt", [at, IMPLEMENTATION_SLOT, block])
   const slot = typeof slotAnswer === "string" ? slotAnswer.toLowerCase() : ""

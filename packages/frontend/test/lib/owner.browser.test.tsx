@@ -59,10 +59,19 @@ const owner = account.address.toLowerCase();
 const chainId = 8453;
 const runtimeCode = "0x6080";
 const factory = "0x00000000000000000000000000000000000000fa";
+const factoryImplementation = "0x00000000000000000000000000000000000000f1";
+const registrar = "0x00000000000000000000000000000000000000f2";
 const feeRecipient = "0x00000000000000000000000000000000000000fe";
 const projectWord: Hex = `0x${"5".repeat(64)}`;
 const codeSha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([0x60, 0x80]))), (byte) => byte.toString(16).padStart(2, "0")).join("");
-const review: VaultReview = { codeSha256, implementation: undefined, factory, feeRecipient, bindingDelaySeconds: 0n, purpose: "OrdinaryPurpose" };
+const review: VaultReview = {
+  codeSha256,
+  implementation: undefined,
+  factory: { address: factory, codeSha256, implementation: { address: factoryImplementation, codeSha256 }, registrar },
+  feeRecipient,
+  bindingDelaySeconds: 0n,
+  purpose: "OrdinaryPurpose",
+};
 const nativeVault: EvmVault = { network: "base-mainnet", chainId: BigInt(chainId), vault: "0x00000000000000000000000000000000000000aa", asset: "0x0000000000000000000000000000000000000000", owner, review };
 const tokenVault: EvmVault = { ...nativeVault, vault: "0x00000000000000000000000000000000000000ab", asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" };
 const keys = { creation: "slop:vault-setup:v1:journey", transfer: `slop:vault-action:v1:base-mainnet:${nativeVault.vault}:${nativeVault.asset}` };
@@ -123,7 +132,14 @@ const monthAfter = (period: number, months: number) => {
   return Math.floor(index / 12) * 100 + (index % 12) + 1;
 };
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string }) {
+interface FactoryObservation {
+  readonly code?: string;
+  readonly slot?: string;
+  readonly implementationCode?: string;
+  readonly registrar?: `0x${string}`;
+}
+
+function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string; readonly factoryObservation?: FactoryObservation }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
@@ -133,6 +149,8 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
   const read = (to: string, data: string): string => {
     const vault = vaultOf(to);
     if (to.toLowerCase() === factory) {
+      if (data === encodeFunctionData({ abi: factoryAbi, functionName: "registrar" }))
+        return encodeFunctionResult({ abi: factoryAbi, functionName: "registrar", result: options.factoryObservation?.registrar ?? registrar });
       const found = vaultKeys.find((entry) => data.toLowerCase() === encodeFunctionData({ abi: factoryAbi, functionName: "vaults", args: [entry.key] }).toLowerCase());
       return encodeAbiParameters([{ type: "address" }], [(found?.vault.vault ?? "0x0000000000000000000000000000000000000000") as Hex]);
     }
@@ -224,8 +242,15 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
         return Promise.resolve(entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: entry.value });
       }
       if (method === "eth_getBlockByNumber") return Promise.resolve(params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) });
-      if (method === "eth_getCode") return Promise.resolve(runtimeCode);
-      if (method === "eth_getStorageAt") return Promise.resolve(`0x${"0".repeat(64)}`);
+      if (method === "eth_getCode") {
+        if (params[0] === factory) return Promise.resolve(options.factoryObservation?.code ?? runtimeCode);
+        if (params[0] === factoryImplementation) return Promise.resolve(options.factoryObservation?.implementationCode ?? runtimeCode);
+        return Promise.resolve(runtimeCode);
+      }
+      if (method === "eth_getStorageAt") {
+        const implementation = encodeAbiParameters([{ type: "address" }], [factoryImplementation]);
+        return Promise.resolve(params[0] === factory ? options.factoryObservation?.slot ?? implementation : `0x${"0".repeat(64)}`);
+      }
       return Promise.reject(Object.assign(new Error(`unsupported ${method}`), { code: 4200 }));
     },
   };
@@ -371,6 +396,26 @@ describe("Owner vault registration", () => {
       return { refused, saved: sessionStorage.getItem(keys.transfer), phase: (yield* page.machine.get()).transfer.phase, prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));
     expect(result).toEqual({ refused: lockedFundsText, saved: null, phase: "Reviewed", prompts: 0 });
+  });
+
+  it.each([
+    ["runtime", { code: "0x6081" }, "Escrow factory code does not match reviewed deployment"],
+    ["implementation slot", { slot: `0x${"0".repeat(64)}` }, "Escrow implementation does not match reviewed deployment"],
+    ["implementation runtime", { implementationCode: "0x6081" }, "Escrow implementation does not match reviewed deployment"],
+    ["registrar", { registrar: factoryImplementation }, "Escrow asset, factory or registrar does not match reviewed deployment"],
+  ] as const)('a changed factory %s refuses before saving or asking the owner wallet (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', async (_name, factoryObservation, message) => {
+    const chain = fakeChain({ atomic: false, send: "mine", factoryObservation });
+    const result = await started().runPromise(Effect.gen(function* () {
+      announce("f327a18b-2e62-4beb-9c1d-c4a94c6aab21", chain.provider);
+      const connection = yield* connected;
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
+      const refused = yield* Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt)), { onFailure: (error) => error.message, onSuccess: () => "sent" });
+      return { refused, saved: sessionStorage.getItem(keys.transfer) !== null, phase: (yield* page.machine.get()).transfer.phase };
+    }));
+    expect({ ...result, prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length })
+      .toEqual({ refused: message, saved: false, phase: "Reviewed", prompts: 0 });
   });
 });
 

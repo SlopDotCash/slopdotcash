@@ -11,7 +11,20 @@ function memoryStorage(): SlotStorage {
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => void values.set(key, value), removeItem: (key) => void values.delete(key) };
 }
 
-const review = { codeSha256: "0".repeat(64), implementation: undefined, factory: "0x00000000000000000000000000000000000000fa", feeRecipient: "0x00000000000000000000000000000000000000fe", bindingDelaySeconds: 0n, purpose: "OrdinaryPurpose" as const };
+const codeSha256 = "0".repeat(64);
+const review = {
+  codeSha256,
+  implementation: undefined,
+  factory: {
+    address: "0x00000000000000000000000000000000000000fa",
+    codeSha256,
+    implementation: { address: "0x00000000000000000000000000000000000000f1", codeSha256 },
+    registrar: "0x00000000000000000000000000000000000000f2",
+  },
+  feeRecipient: "0x00000000000000000000000000000000000000fe",
+  bindingDelaySeconds: 0n,
+  purpose: "OrdinaryPurpose" as const,
+};
 const vault = { network: "base-mainnet", chainId: 8453n, vault: "0x00000000000000000000000000000000000000aa", asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", owner: "0x00000000000000000000000000000000000000bb", review };
 const fresh = () => Effect.runPromise(provisionalVault(memoryStorage(), "slop:vault-action:v1:base-mainnet:provisional", vault, vault.owner, 1));
 let setup = await fresh();

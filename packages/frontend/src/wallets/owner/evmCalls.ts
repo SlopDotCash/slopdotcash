@@ -21,10 +21,18 @@ export interface VaultCallTerms {
   readonly native: boolean;
 }
 
+interface ContractReview {
+  readonly address: string;
+  readonly codeSha256: string;
+}
+
 export interface VaultReview {
   readonly codeSha256: string;
-  readonly implementation: { readonly address: string; readonly codeSha256: string } | undefined;
-  readonly factory: string;
+  readonly implementation: ContractReview | undefined;
+  readonly factory: ContractReview & {
+    readonly implementation: ContractReview;
+    readonly registrar: string;
+  };
   readonly feeRecipient: string;
   readonly bindingDelaySeconds: bigint;
   readonly purpose: VaultPurpose;
@@ -107,7 +115,12 @@ export function reviewedVaultOf(network: string, purpose: VaultPurpose): VaultRe
   return {
     codeSha256: factory.codeSha256,
     implementation: { address: factory.upgrade.vaultImplementation, codeSha256: factory.upgrade.vaultImplementationCodeSha256 },
-    factory: factory.factory,
+    factory: {
+      address: factory.factory,
+      codeSha256: factory.factoryCodeSha256,
+      implementation: { address: factory.upgrade.factoryImplementation, codeSha256: factory.upgrade.factoryImplementationCodeSha256 },
+      registrar: factory.registrar,
+    },
     feeRecipient: factory.feeRecipient,
     bindingDelaySeconds: factory.bindingDelaySeconds,
     purpose,
