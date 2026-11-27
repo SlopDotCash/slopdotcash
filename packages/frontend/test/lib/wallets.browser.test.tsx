@@ -83,7 +83,7 @@ function signable(typed: { domain: { name: string; version: string; chainId: str
 }
 
 async function ed25519Pair() {
-  const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   return {
     address: base58Encode(raw),
@@ -103,7 +103,7 @@ function solanaWallet(owner: Pair, tamper: boolean): Wallet {
     chains: ["solana:devnet"],
     accounts: [account],
     features: {
-      "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+      "standard:connect": { version: "1.0.0", connect: () => Promise.resolve({ accounts: [account] }) },
       "solana:signMessage": { version: "1.0.0", signMessage: async ({ message }: { message: Uint8Array }) => [{ signedMessage: message, signature: await owner.sign(message) }] },
       "solana:signTransaction": {
         version: "1.0.0",
@@ -226,17 +226,18 @@ function started(fetch: typeof globalThis.fetch) {
 
 const tagOf = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) => Effect.match(effect, { onFailure: (error) => error._tag, onSuccess: () => "ok" });
 
-describe('Choose a wallet without a lookalike taking its place (spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change")', () => {
-  it("a conflicting reannouncement blocks every provider object it names under every identifier, before any request reaches either provider, and a legacy provider is offered once", async () => {
-    const legacy = Object.assign(evmWallet(async () => "0x"), { isMetaMask: true });
+// spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"
+describe("Wallet discovery", () => {
+  it("conflicting reannouncement blocks providers and legacy is offered once", async () => {
+    const legacy = Object.assign(evmWallet(() => Promise.resolve("0x")), { isMetaMask: true });
     const page = window as unknown as { ethereum?: unknown };
     page.ethereum = legacy;
     cleanups.push(() => delete page.ethereum);
     const runtime = started(fakeBackend(undefined).fetch);
-    const alpha = evmWallet(async () => "0x");
-    const lookalike = evmWallet(async () => "0x");
-    const beta = evmWallet(async () => "0x");
-    const gamma = evmWallet(async () => "0x");
+    const alpha = evmWallet(() => Promise.resolve("0x"));
+    const lookalike = evmWallet(() => Promise.resolve("0x"));
+    const beta = evmWallet(() => Promise.resolve("0x"));
+    const gamma = evmWallet(() => Promise.resolve("0x"));
     const seen = await runtime.runPromise(Effect.gen(function* () {
       const choice = yield* WalletChoice;
       announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d01", "Alpha", alpha);
@@ -275,14 +276,15 @@ describe('Choose a wallet without a lookalike taking its place (spec/frontend/wa
   });
 });
 
-describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/frontend/walletAttempt.md, "Story: Ask the wallet once per saved attempt and keep an uncertain one"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only")', () => {
+// spec/frontend/walletAttempt.md, "Story: Ask the wallet once per saved attempt and keep an uncertain one"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"
+describe("Ask the wallet once per saved attempt and keep an uncertain one", () => {
   it("a saved request is sent once, a decline clears it, an uncertain send keeps it, and each account sees only its own slot", async () => {
     const replies: Array<() => Promise<unknown>> = [
-      async () => `0x${hex64("a")}`,
-      async () => Promise.reject(Object.assign(new Error("User rejected"), { code: 4001 })),
-      async () => Promise.reject(new Error("RPC timeout")),
+      () => Promise.resolve(`0x${hex64("a")}`),
+      () => Promise.reject(Object.assign(new Error("User rejected"), { code: 4001 })),
+      () => Promise.reject(new Error("RPC timeout")),
     ];
-    const wallet = evmWallet(async () => (replies.shift() ?? (async () => "0x"))());
+    const wallet = evmWallet(() => (replies.shift() ?? (() => Promise.resolve("0x")))());
     const slot = { name: "journey", key: (account: number) => `slop:vault-action:v1:base-sepolia:${evmVault}:${account}` };
     cleanups.push(() => {
       sessionStorage.removeItem(slot.key(7));
@@ -310,9 +312,10 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
       yield* journal.follow(7);
       const recovered = yield* journal.recovery();
       const cleared = yield* journal.clearSettled(recovered);
-      return { sent, stored: JSON.parse(stored ?? "null"), repeated, otherAccount, declined, afterDecline, uncertain, kept: { request: kept.bytesId, hash: kept.hash }, recovered: recovered.hash, cleared, finalSeven: sessionStorage.getItem(slot.key(7)) };
+      const parsedStored = JSON.parse(stored ?? "null") as { attemptId?: unknown; request?: string; hash?: string } | null;
+      return { sent, stored: parsedStored, repeated, otherAccount, declined, afterDecline, uncertain, kept: { request: kept.bytesId, hash: kept.hash }, recovered: recovered.hash, cleared, finalSeven: sessionStorage.getItem(slot.key(7)) };
     }));
-    expect({ ...result, stored: { ...result.stored, attemptId: typeof result.stored.attemptId }, sends: wallet.seen.filter((method) => method === "eth_sendTransaction").length }).toStrictEqual({
+    expect({ ...result, stored: { ...result.stored, attemptId: typeof result.stored?.attemptId }, sends: wallet.seen.filter((method) => method === "eth_sendTransaction").length }).toStrictEqual({
       sent: { hash: `0x${hex64("a")}`, saved: true },
       stored: { attemptId: "string", request: "deposit-1", hash: `0x${hex64("a")}` },
       repeated: "AttemptRefused",
@@ -331,7 +334,8 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
       const notice = (yield* journal.follow(8)).notice;
       const saved = yield* journal.recovery();
       const resend = yield* Effect.match(journal.submit("deposit-5", "unclear", (beforePrompt) => Effect.as(beforePrompt, `0x${hex64("c")}`)), { onFailure: (error) => (error._tag === "AttemptRefused" ? error.notice : error._tag), onSuccess: () => "sent" });
-      return { notice, saved: { request: saved.bytesId, hash: saved.hash }, resend, stored: JSON.parse(sessionStorage.getItem(slot.key(8)) ?? "null").request };
+      const parsedStored = JSON.parse(sessionStorage.getItem(slot.key(8)) ?? "null") as { request?: string } | null;
+      return { notice, saved: { request: saved.bytesId, hash: saved.hash }, resend, stored: parsedStored?.request };
     }));
     expect(reloaded).toStrictEqual({ notice: "Recover", saved: { request: "deposit-4", hash: "" }, resend: "Occupied", stored: "deposit-4" });
   });
@@ -357,11 +361,11 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
       const journal = yield* attemptJournal(slot, storage);
       yield* journal.follow(9);
       const sent = yield* journal.submit("deposit-6", "unclear", prompt);
-      const kept = JSON.parse(sessionStorage.getItem(slot.key(9)) ?? "null");
+      const kept = JSON.parse(sessionStorage.getItem(slot.key(9)) ?? "null") as { request?: string; hash?: string } | null;
       sessionStorage.removeItem(slot.key(9));
       refuse = () => true;
       const blocked = yield* Effect.match(journal.submit("deposit-7", "unclear", prompt), { onFailure: (error) => (error._tag === "AttemptRefused" ? error.notice : error._tag), onSuccess: () => "sent" });
-      return { sent, kept: { request: kept.request, hash: kept.hash ?? "" }, blocked, after: sessionStorage.getItem(slot.key(9)) };
+      return { sent, kept: { request: kept?.request, hash: kept?.hash ?? "" }, blocked, after: sessionStorage.getItem(slot.key(9)) };
     }));
     expect({ ...result, prompts }).toStrictEqual({
       sent: { hash: `0x${hex64("b")}`, saved: false },
@@ -373,11 +377,12 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
   });
 });
 
-describe(`Sign exactly the binding the server prepared (spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => {
+// spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"
+describe("Sign exactly the binding the server prepared", () => {
   it("an EVM wallet is confirmed on each EVM chain and then binds a reserved payment, every request naming the expected account", async () => {
     const backend = fakeBackend(undefined);
     const runtime = started(backend.fetch);
-    const wallet = evmWallet(async () => "0x");
+    const wallet = evmWallet(() => Promise.resolve("0x"));
     const outcome = await runtime.runPromise(Effect.gen(function* () {
       const choice = yield* WalletChoice;
       announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d21", "Payout wallet", wallet);
@@ -408,7 +413,7 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
   it("a consent naming another destination is refused before the wallet is asked to sign", async () => {
     const backend = fakeBackend(undefined, (path, body) => path.endsWith("/bind-challenge") ? { ...body, claimId: "another-claim" } : body);
     const runtime = started(backend.fetch);
-    const wallet = evmWallet(async () => "0x");
+    const wallet = evmWallet(() => Promise.resolve("0x"));
     const outcome = await runtime.runPromise(Effect.gen(function* () {
       const choice = yield* WalletChoice;
       announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d31", "Payout wallet", wallet);
@@ -431,7 +436,7 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
   it("a connected wallet other than the authorized claim is refused, and nothing is prepared, signed or registered", async () => {
     const backend = fakeBackend(undefined);
     const runtime = started(backend.fetch);
-    const wallet = evmWallet(async () => "0x");
+    const wallet = evmWallet(() => Promise.resolve("0x"));
     const outcome = await runtime.runPromise(Effect.gen(function* () {
       const choice = yield* WalletChoice;
       announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d41", "Payout wallet", wallet);
@@ -461,7 +466,7 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
     const wallet = testProvider(async (method, params) => {
       if (method === "eth_requestAccounts" || method === "eth_accounts") return [evmAccount.address];
       if (method === "eth_chainId") return `0x${baseSepolia.toString(16)}`;
-      if (method === "eth_signTypedData_v4") return other.signTypedData(signable(JSON.parse(String(params[1]))));
+      if (method === "eth_signTypedData_v4") return other.signTypedData(signable(JSON.parse(String(params[1])) as Parameters<typeof signable>[0]));
       throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
     });
     const outcome = await runtime.runPromise(Effect.gen(function* () {

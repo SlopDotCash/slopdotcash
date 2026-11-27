@@ -7,6 +7,12 @@ import { Ban, BookOpen, CalendarCheck, CircleSlash, FolderPlus, GitPullRequest, 
 import type { ReactNode } from "react";
 import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
 import { maxShareBasisPoints } from "../../../gen/settlement__maintainerShare.ts";
+import {
+  STANDING_DEPOSIT_OPEN_CAP,
+  STANDING_DEPOSIT_STRIKE_WINDOW_DAYS,
+  STANDING_DEPOSIT_SWITCHED_ON,
+  STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS,
+} from "../../flows/account/standingDeposit.vibe";
 import { Milestones, PaymentLifecycle, payoutTimeline } from "./PaymentLifecycle.tsx";
 import { ContributionPointTiers, PenaltyPointTable, pointsNotice } from "./PointsRules.tsx";
 
@@ -225,7 +231,7 @@ export function HowItWorksPage() {
             </Answer>
             <Answer question="Is there a fee to open a pull request?">
               <p>
-                Only on a project whose owner turned on the refundable submission fee. There, Slopbot comments once on a pull request from an outside contributor with a link to its pay page on slop.cash, and holds its review until the fee is recorded. The fee is {submissionFee} USDC on Base or {submissionFee} USDG on Robinhood Chain unless the owner set another amount, or the same fee in SLOP on Robinhood Chain at half the price. It is a deposit: a merge sends it back, and so do {refundUndecidedDays} days without a maintainer decision. A pull request closed without a merge for {keptAfterClosedDays} days keeps it: a stablecoin fee goes to Slop and a SLOP fee is burned. A pull request for an issue labelled {wantedLabelName} is the exception: it is sent back unless a maintainer marks it with {keepFeeLabel}. An unpaid pull request is never closed for that reason, the fee does not buy a merge and scoring does not read it. Pay only through the page linked in Slopbot&apos;s own comment.
+                Only on a project whose owner turned on the refundable submission fee. There, Slopbot comments once on a pull request from an outside contributor with a link to its pay page on slop.cash, and holds its review until the fee is recorded. The fee is {submissionFee} USDC on Base or Solana, or {submissionFee} USDG on Robinhood Chain, unless the owner set another amount, or the same fee in SLOP on Robinhood Chain at half the price. It is a deposit: a merge sends it back, and so do {refundUndecidedDays} days without a maintainer decision. A pull request closed without a merge for {keptAfterClosedDays} days keeps it: a stablecoin fee goes to Slop and a SLOP fee is burned. A pull request for an issue labelled {wantedLabelName} is the exception: it is sent back unless a maintainer marks it with {keepFeeLabel}. An unpaid pull request is never closed for that reason, the fee does not buy a merge and scoring does not read it. Pay only through the page linked in Slopbot&apos;s own comment.
               </p>
             </Answer>
             <Answer question="Is there a deposit to file a security report?">
@@ -263,12 +269,20 @@ export function HowItWorksPage() {
                 When an owner locks a month in the project vault, that month&apos;s pool is locked in the vault until it is paid out: the vault contract refuses to withdraw it, and it can be paid even if the owner turns automatic payment off. The owner can still lower an individual contributor&apos;s amount before the cutoff, with a public reason. A locked month that is never reserved for payout can be released back to the owner&apos;s free funds from the 4th of the second month after it, by a transaction anyone can send; the project&apos;s manage page offers it. Without a lock, Slop&apos;s pages refuse that withdrawal but the contract does not. Slop&apos;s upgrade key can still change the vault contract.
               </p>
             </Answer>
-            <Answer question="Is there a standing deposit for regular contributors?">
+            <Answer question="Can I skip the fee on every pull request?">
               <p>
-                Yes. A contributor can post one refundable SLOP deposit on Robinhood Chain worth $10 at Slop&apos;s published SLOP rate. While it stands, Slopbot does not ask the per pull request submission fee on a project that accepts standing deposits once you have had a pull request merged there.{" "}
-                <a className={link} href="/deposit">
-                  Standing deposit
-                </a>
+                {STANDING_DEPOSIT_SWITCHED_ON
+                  ? "Yes, with a standing deposit: one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate."
+                  : "Not yet. Slop has not opened standing deposits. Once they are open, one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate will stand in for the fee."}{" "}
+                While it stands, Slopbot does not ask you the fee on a project that accepts standing deposits, once you have had a pull request merged there, for up to {STANDING_DEPOSIT_OPEN_CAP} covered pull requests open at once. It is kept, and burned, only if a maintainer closes a covered pull request without a merge within {STANDING_DEPOSIT_STRIKE_WINDOW_DAYS} days and adds {keepFeeLabel}; an ordinary close costs nothing. You can withdraw it at any time, and it is sent back {STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS} days later. It does not buy a review, a merge or Points.{" "}
+                {STANDING_DEPOSIT_SWITCHED_ON ? (
+                  <>
+                    <a className={link} href="/deposit">
+                      Post or manage yours
+                    </a>
+                    .
+                  </>
+                ) : null}
               </p>
             </Answer>
             <Answer question="Where can I see public payout receipts?">

@@ -143,13 +143,18 @@ whose commit is an ancestor of this release's, whose exact attempt has
 exactly one successful "Prepare checked browser bundle" job with exactly one
 successful "Generate live contribution data" step, and whose one unexpired
 `slop-source-<head sha>` artifact, at most 2 GiB and at most six days old,
-matches its GitHub sha256 digest. Only its ledger and profiles are taken,
-with their own generation time; the [retained-data age
+matches its GitHub sha256 digest. Its ledger and profiles retain their
+generation time. The [retained-data age
 check](../points/retainedFreshness.md) still refuses data older than
 production serves. The extraction bounds (`data/leaderboard.json` at most
 25 MiB, at most eight `data/leaderboard/<sha256>.part` of at most 8 MiB each,
 `data/profiles.json` at most 8 MiB, each a regular non-empty file named once)
-are the shell's.
+are the shell's. A successful fresh collector can preserve the raw leaderboard
+SHA-256 as one optional 65-byte regular artifact entry,
+`data/leaderboard-fresh.sha256`, for this recovery path. The builder checks
+that digest against the exact reconstructed leaderboard before using any
+first-time [out-of-window review credits](../points/journal.md). Only a
+verified fresh producer receipt establishes that authority after restore.
 
 ```quint
 pure def canCollectData(r: Release, environment: Environment, registryDigest: int, githubDigest: int, recordedAt: int): bool =
@@ -502,13 +507,22 @@ named `slop-submission-fee`, has no `workers.dev` address, no preview URLs
 and no routes, exactly the two crons `*/5 * * * *` (deposits) and
 `7 * * * *` (rates), and one D1 binding `SUBMISSION_FEE_DB` to the
 production `slop-private` database; no resolver key or keyed endpoint name
-may appear among its plain variables. Its settings must parse completely
+(EVM or Solana, including `RPC_URL_SUBMISSION_FEE_SOLANA` and
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED`) may appear among its plain variables.
+Its settings must parse completely
 (as `dry_run` when the mode is `off`, which reads no chain and loads no key),
 and its mode must be `off` or the mode they parse to; anything else, which
-`FeeUnknown` stands for, is refused. Live mode also needs a contract address and a start block for every
+`FeeUnknown` stands for, is refused. When the reviewed Slopbot configuration is
+checked beside it, Slopbot's `SUBMISSION_FEE_MODE === "live"` must match the
+published submission-fee terms' `switchedOn` flag. The Solana ledger has its own
+switch (`SUBMISSION_FEE_SOLANA_MODE`): `live` must match the published Solana
+switch, and any Solana mode other than `off` requires valid lamport limits, the
+published Solana program ID and start slot, and `RPC_URL_SUBMISSION_FEE_SOLANA`
+(plus `SUBMISSION_FEE_SOLANA_RESOLVER_SEED` in `live` mode). Live mode also
+needs a contract address and a start block for every
 network of the published terms, and a Worker secret inventory, read by name
-only, that holds `SUBMISSION_FEE_RESOLVER_KEY` and nothing beyond it and the
-two optional keyed endpoints. `dry_run` and `off` need neither key nor
+only, that holds `SUBMISSION_FEE_RESOLVER_KEY` and nothing beyond it, the
+two optional keyed EVM endpoints and the two optional Solana secrets. `dry_run` and `off` need neither key nor
 contracts. Binding the optional endpoints from `PAYMENT_RPC_URLS` before the
 deploy, the tagged deploy and the active-tag readback are the shell's, as for
 every service; a refusal fails the service and leaves the release partially
@@ -705,23 +719,252 @@ pure val gatesValues = Set(Set(Types, Unit, Isolation, Identity, ModelInventory,
   Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, BrowserSmoke), Set(Types, Unit))
 pure val skipProofsValues = Set(true, false)
 pure val skipBrowserTestsValues = Set(true, false)
-pure val weight_setVariable = 3
-pure val weight_rivalStart = 3
-pure val weight_rivalTakeLock = 4
-pure val weight_rivalFinish = 4
-pure val weight_workflowTakeLock = 3
-pure val weight_workflowFinish = 4
-pure val weight_configure = 10
-pure val weight_build = 10
-pure val weight_collectData = 10
-pure val weight_resumeDiscussions = 4
-pure val weight_revalidate = 6
-pure val weight_recordGates = 12
-pure val weight_check = 15
-pure val weight_acquireLock = 15
-pure val weight_beginPublication = 15
-pure val weight_publishService = 30
-pure val weight_publishSite = 15
-pure val weight_reconcilePublication = 15
-pure val weight_verifyServed = 15
+pure val weight_configure = 2
+pure val weight_build = 2
+pure val weight_collectData = 2
+pure val weight_recordGates = 2
+pure val weight_check = 2
+pure val weight_acquireLock = 2
+pure val weight_beginPublication = 2
+pure val weight_publishService = 3
+pure val weight_publishSite = 2
+pure val weight_reconcilePublication = 2
+pure val weight_verifyServed = 2
+pure val eval_witness_sometimesUnanchoredRefused = ("configure", Production, goodRef, false, TrustedWorkflow)
+pure val eval_witness_sometimesRestoredCollectionPublished = (
+  ("configure", Production, { ...goodRef, kind: WorkflowDispatch }, true, TrustedWorkflow),
+  ("restoreCollection", goodProducer, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow))
+pure val eval_witness_sometimesResumedPublished = (
+  ("configure", Production, { ...goodRef, kind: WorkflowDispatch }, true, TrustedWorkflow),
+  ("resumeDiscussions", trustedAttempt, TrustedWorkflow),
+  ("revalidate", true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow))
+pure val eval_witness_sometimesVerified = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow),
+  ("reconcilePublication", { environment: Production, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) }, TrustedWorkflow),
+  ("verifyServed", { deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true }, TrustedWorkflow))
+pure val eval_witness_sometimesFeeConverterSkipped = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow),
+  ("reconcilePublication", { environment: Production, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) }, TrustedWorkflow),
+  ("verifyServed", { deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true }, TrustedWorkflow))
+pure val eval_witness_sometimesVerifiedAfterAdvance = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow),
+  ("reconcilePublication", { environment: Production, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) }, TrustedWorkflow),
+  ("advanceBranch", TrustedWorkflow),
+  ("verifyServed", { deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true }, TrustedWorkflow))
+pure val eval_witness_sometimesPartialAfterMovedHead = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("advanceBranch", TrustedWorkflow),
+  ("failMovedHead", TrustedWorkflow))
+pure val eval_witness_sometimesRecoveredUnpublished = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow),
+  ("proveUnpublished", { environment: Production, sinceAttempt: 1, entries: List() }, TrustedWorkflow))
+pure val eval_witness_sometimesStaging = (
+  ("configure", Staging, { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", FeeConverter, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", RepositoryAccess, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow),
+  ("reconcilePublication", { environment: Staging, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) }, TrustedWorkflow),
+  ("verifyServed", { deployment: 1, digest: 7, environment: Staging, dnsTlsHeaders: true }, TrustedWorkflow))
+pure val eval_witness_sometimesStagingAncestorPublished = (
+  ("configure", Staging, { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("advanceBranch", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", FeeConverter, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", RepositoryAccess, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow))
+pure val eval_witness_sometimesRevalidatedReuse = (
+  ("configure", Production, { ...goodRef, kind: WorkflowDispatch }, true, TrustedWorkflow),
+  ("resumeDiscussions", trustedAttempt, TrustedWorkflow),
+  ("revalidate", true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow))
+pure val eval_witness_sometimesSubmissionFeeBound = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow))
+pure val eval_witness_sometimesStagingDryRunBound = (
+  ("configure", Staging, { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", FeeConverter, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow))
+pure val eval_witness_sometimesStagingRollbackRefused = (
+  ("configure", Staging, { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("advanceBranch", TrustedWorkflow),
+  ("rivalStart", TrustedWorkflow),
+  ("rivalTakeLock", 2, TrustedWorkflow),
+  ("rivalFinish", 2, TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("supersede", TrustedWorkflow))
+pure val eval_witness_sometimesUncertain = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("publishService", PaymentAttesters, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", IdentityWorker, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", VettingSandbox, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", Referral, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow),
+  ("publishSite", TrustedWorkflow))
+pure val eval_witness_sometimesPartial = (
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
+  ("failService", PaymentAttesters, TrustedWorkflow))
+pure val eval_witness_sometimesFeeConverterBound = (
+  ("setVariable", FeeConverter, true, Owner),
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 1 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, TrustedWorkflow),
+  ("publishService", FeeConverter, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 1 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, reviewedSubmissionFee, TrustedWorkflow))
+pure val eval_witness_sometimesFeeRotationInherited = (
+  ("setVariable", FeeConverter, true, Owner),
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 1 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, TrustedWorkflow),
+  ("publishService", FeeConverter, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 1 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, reviewedSubmissionFee, TrustedWorkflow))
+pure val eval_witness_sometimesInheritanceRefused = (
+  ("setVariable", FeeConverter, true, Owner),
+  ("configure", Production, goodRef, true, TrustedWorkflow),
+  ("collectData", Production, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("refuseInheritance", { latestUpload: { versionId: 2, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, TrustedWorkflow))
+pure val eval_witness_sometimesNonReleaseRecordIgnored = (
+  ("configure", Staging, { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
+  ("build", 7, TrustedWorkflow),
+  ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
+  ("check", TrustedWorkflow),
+  ("recordNonReleaseDeployment", TrustedWorkflow),
+  ("acquireLock", TrustedWorkflow),
+  ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow))
 ```

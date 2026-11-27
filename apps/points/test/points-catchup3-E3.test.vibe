@@ -1,7 +1,9 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import type { LeaderboardSnapshot, ScoreEvent } from "../src/client/snapshot/schema.vibe"
-import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
+import { settableClock } from "@repo/platform/testing/clock"
+import { journalPenaltyAppliedThirds } from "../src/client/journal.vibe"
+import type { LeaderboardSnapshot, OmittedReviewCredit, ScoreEvent, ValueAssessmentSupersession } from "../src/client/snapshot/schema.vibe"
+import { decodeSnapshot, validateSnapshot } from "../src/client/snapshot/validate.vibe"
 import type { Award, Journal, Revision as Row } from "../src/kernels/records/canonical.ts"
 import { instantOf } from "../src/kernels/records/instants.ts"
 import { repositoriesOf } from "../src/journal/build.vibe"
@@ -10,6 +12,7 @@ import { reconcilePenalties } from "../src/journal/penalties.vibe"
 import { applyRetainedReviews, retainedAwards, retainedEvents } from "../src/journal/retained.vibe"
 import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
 import { members } from "../src/publication/projections.vibe"
+import { scoreSnapshot } from "../src/score/snapshot.vibe"
 import { periodOf } from "../gen/points__periods.ts"
 import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
 
@@ -134,6 +137,195 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     try reconcilePenalties(store, repositories, penalized, penaltyDigest, recordedAt)
 
     const totals = [...(try members(totalsJournal))].sort((left, right) => left.id.localeCompare(right.id)).map((member) => ({ id: member.id, total: member.total }))
+    const appliedPenalties = [...journalPenaltyAppliedThirds(totalsJournal)].sort((left, right) => left[0].localeCompare(right[0]))
+    const reversedPenaltyJournal: Journal = {
+      ...totalsJournal,
+      revisions: [
+        ...totalsJournal.revisions,
+        {
+          ...totalsJournal.revisions[4]!,
+          id: "a5_reversed",
+          previous: "a5",
+          recordedAt: "2026-11-02T00:00:00.000Z",
+          award: { ...totalsJournal.revisions[4]!.award, amount: 0 },
+        },
+      ],
+    }
+    const afterReversalPenalties = [...journalPenaltyAppliedThirds(reversedPenaltyJournal)].sort((left, right) => left[0].localeCompare(right[0]))
+
+    const predecessorDigest = "1".repeat(64)
+    const successorDigest = "2".repeat(64)
+    const reviewDigest = "3".repeat(64)
+    const reviewer = { id: "U_late_reviewer", login: "late-reviewer", avatarUrl: "https://avatars.githubusercontent.com/u/77", url: "https://github.com/late-reviewer", kind: "User" }
+    const author = { id: "U_pr_author", login: "pr-author", avatarUrl: "https://avatars.githubusercontent.com/u/78", url: "https://github.com/pr-author", kind: "User" }
+    const scoredOmitted = try scoreSnapshot({
+      mode: "rolling",
+      valueInput: true,
+      windowFrom: "2026-11-05T00:00:00.000Z",
+      windowTo: "2026-12-10T00:00:00.000Z",
+      merged: [{
+        id: "PR_late_review_target",
+        number: 701,
+        repository: "elizaOS/eliza",
+        project: "eliza",
+        url: "https://github.com/elizaOS/eliza/pull/701",
+        title: "Merge after early review",
+        mergedAt: "2026-11-15T00:00:00.000Z",
+        author,
+        headRefOid: "a".repeat(40),
+        commits: [{ oid: "a".repeat(40), parentCount: 1, author, retained: null, additions: 10, deletions: 2, attributions: [], resolutions: [] }],
+        reviews: [{
+          id: "PRR_early_review",
+          url: "https://github.com/elizaOS/eliza/pull/701#pullrequestreview-701",
+          author: reviewer,
+          state: "APPROVED",
+          submittedAt: "2026-11-02T00:00:00.000Z",
+          body: "Verified correctness and edge cases thoroughly.",
+          inlineCommentCount: 1,
+          commitId: "a".repeat(40),
+          traceUpload: false,
+        }],
+        assessment: {
+          tier: "medium",
+          source: "PaidApiReceipt",
+          digest: reviewDigest,
+          rubric: "slop-value-v1",
+          model: "claude-opus-4-6",
+          head: "a".repeat(40),
+          recordedAt: "2026-11-15T01:00:00.000Z",
+          rationale: "Solid fix.",
+        },
+        ratification: null,
+        reviewValues: [{ reviewId: "PRR_early_review", tier: "standard", finding: "Confirmed boundary checks.", outcome: "accepted" }],
+        externalPrize: false,
+        traceUpload: false,
+        automatedReviews: [],
+      }],
+      closedUnmerged: [],
+      contexts: [],
+      joint: [],
+      attributionHolds: new Set(),
+      heldUnits: [],
+      openReviewedAt: [],
+      penalties: [],
+      projects: new Map([["elizaOS/eliza", "eliza"]]),
+      bans: new Map(),
+      activity: new Map(),
+    })
+    const omittedCredit: OmittedReviewCredit | undefined = scoredOmitted.omittedReviewCredits[0]
+    const { paymentReviewBasis: _basis, paymentReviewBasisOmitted: _omittedBasis, ...baseSnapshot } = snapshot
+    const knownRepositories = snapshot.repositories.filter((entry) => entry.id === "elizaOS/eliza")
+    const knownSourceRepositories = snapshot.source.repositories.filter((entry) => entry.id === "elizaOS/eliza")
+    const omittedSnapshot: LeaderboardSnapshot = {
+      ...baseSnapshot,
+      repositories: knownRepositories,
+      generatedAt: "2026-12-10T00:00:00.000Z",
+      sourceUpdatedAt: "2026-11-15T00:00:00.000Z",
+      source: {
+        ...snapshot.source,
+        repositories: knownSourceRepositories,
+        counts: { ...snapshot.source.counts, mergedPullRequests: 1, detailedMergedPullRequests: 1, closedUnmergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+        verificationWindow: { days: 35, from: "2026-11-05T00:00:00.000Z", to: "2026-12-10T00:00:00.000Z" },
+        fetchedAt: "2026-12-10T00:00:00.000Z",
+        cutoffAt: "2026-12-10T00:00:00.000Z",
+      },
+      window: { days: 35, from: "2026-11-05T00:00:00.000Z", to: "2026-12-10T00:00:00.000Z" },
+      leaders: [],
+      ledger: [],
+      opportunities: [],
+      attributions: [],
+      invalidAttributionMarkers: [],
+      attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, invalidSourceCount: 0, missingSourceCount: 0, humanOnlySourceCount: 0 },
+      workQueue: { issues: [], pullRequests: [] },
+      penalties: [],
+      valuePolicyEffectiveAt: "2026-11-01T00:00:00.000Z",
+      valueAssessmentCoverage: [{ pullRequestId: "PR_late_review_target", pullRequestNumber: 701, repository: "elizaOS/eliza", status: "assessed", recordDigest: reviewDigest }],
+      valueAssessmentSupersessions: [{ predecessorDigest, successorDigest: reviewDigest }],
+      reviewExclusions: scoredOmitted.reviewExclusions,
+      ...(omittedCredit === undefined ? {} : { omittedReviewCredits: [omittedCredit] }),
+    }
+    const decemberClock = settableClock(Date.parse("2026-12-10T00:00:00.000Z")).layer
+    const omittedValidated = Effect.provide(validateSnapshot(omittedSnapshot, registry), decemberClock) catch (error) => `${error._tag}:${error.message}`
+    const omittedBad = Effect.provide(validateSnapshot({ ...omittedSnapshot, reviewExclusions: [] }, registry), decemberClock) catch (error) => error._tag
+    const omittedStore = try storeOf("2026-11-01T00:00:00.000Z", [], [])
+    const omittedDigest = try sha256Hex(JSON.stringify(omittedSnapshot))
+    try applySnapshots(omittedStore, repositories, [{ snapshot: omittedSnapshot, digest: omittedDigest }], "2026-12-10T00:00:00.000Z", omittedDigest)
+    const materialized = [...omittedStore.latest.values()].find((entry) => entry.award.sourceId === "PRR_early_review")
+    const reissuedSnapshot: LeaderboardSnapshot = {
+      ...omittedSnapshot,
+      generatedAt: "2026-12-10T00:01:00.000Z",
+      ...(omittedCredit === undefined ? {} : { omittedReviewCredits: [{ ...omittedCredit, scoreThirds: omittedCredit.scoreThirds + 3 }] }),
+    }
+    const reissuedDigest = try sha256Hex(JSON.stringify(reissuedSnapshot))
+    try applySnapshots(omittedStore, repositories, [{ snapshot: reissuedSnapshot, digest: reissuedDigest }], "2026-12-10T00:01:00.000Z", reissuedDigest)
+    const afterReissue = omittedStore.latest.get(materialized?.award.key ?? "")
+
+    const soloMergeEvent: ScoreEvent = {
+      id: "PR_old_solo:merged",
+      actor: author,
+      category: "merged-pull-request",
+      points: 3,
+      scoreThirds: 9,
+      workUnitId: "wu_eliza_pr_old_solo",
+      scoreDecisionSourceId: `value:${predecessorDigest}`,
+      scoreDecisionAt: "2026-11-02T00:00:00.000Z",
+      occurredAt: "2026-11-02T00:00:00.000Z",
+      repository: "elizaOS/eliza",
+      source: { id: "PR_old_solo", kind: "pull-request", number: 801, title: "Old solo merge", url: "https://github.com/elizaOS/eliza/pull/801" },
+      reason: "Provisional solo assessment.",
+    }
+    const jointMergeEvent: ScoreEvent = {
+      id: "PR_new_joint:joint:wu_joint_802:merged:U_pr_author",
+      actor: author,
+      category: "merged-pull-request",
+      points: 3,
+      scoreThirds: 9,
+      workUnitId: "wu_joint_802",
+      scoreDecisionSourceId: `value:${successorDigest}`,
+      scoreDecisionAt: "2026-11-18T00:00:00.000Z",
+      occurredAt: "2026-11-18T00:00:00.000Z",
+      repository: "elizaOS/eliza",
+      source: { id: "PR_new_joint", kind: "pull-request", number: 802, title: "Joint successor merge", url: "https://github.com/elizaOS/eliza/pull/802" },
+      reason: "Provisional joint value assessment.",
+    }
+    const supersessionPairs: ReadonlyArray<ValueAssessmentSupersession> = [{ predecessorDigest, successorDigest }]
+    const initialSoloSnapshot: LeaderboardSnapshot = {
+      ...snapshot,
+      generatedAt: "2026-11-03T00:00:00.000Z",
+      window: { days: 35, from: "2026-11-01T00:00:00.000Z", to: "2026-11-03T00:00:00.000Z" },
+      valueAssessmentCoverage: [],
+      reviewExclusions: [],
+      ledger: [soloMergeEvent],
+    }
+    const unpublishedJointSnapshot: LeaderboardSnapshot = {
+      ...snapshot,
+      generatedAt: "2026-11-17T00:00:00.000Z",
+      window: { days: 35, from: "2026-11-10T00:00:00.000Z", to: "2026-11-17T00:00:00.000Z" },
+      valueAssessmentCoverage: [],
+      reviewExclusions: [],
+      valueAssessmentSupersessions: supersessionPairs,
+      ledger: [],
+    }
+    const publishedJointSnapshot: LeaderboardSnapshot = {
+      ...snapshot,
+      generatedAt: "2026-11-19T00:00:00.000Z",
+      window: { days: 35, from: "2026-11-10T00:00:00.000Z", to: "2026-11-19T00:00:00.000Z" },
+      valueAssessmentCoverage: [],
+      reviewExclusions: [],
+      valueAssessmentSupersessions: supersessionPairs,
+      ledger: [jointMergeEvent],
+    }
+    const badSupersession = validateSnapshot({ ...publishedJointSnapshot, valueAssessmentSupersessions: [{ predecessorDigest: successorDigest, successorDigest }] }, registry) catch (error) => error._tag
+    const unpublishedSupersession = validateSnapshot(unpublishedJointSnapshot, registry) catch (error) => error._tag
+    const supersessionStore = try storeOf("2026-11-01T00:00:00.000Z", [], [])
+    try applySnapshots(supersessionStore, repositories, [{ snapshot: initialSoloSnapshot, digest: try sha256Hex(JSON.stringify(initialSoloSnapshot)) }], "2026-11-03T00:00:00.000Z")
+    const soloRow = [...supersessionStore.latest.values()].find((entry) => entry.award.sourceId === "PR_old_solo")
+    try applySnapshots(supersessionStore, repositories, [{ snapshot: unpublishedJointSnapshot, digest: try sha256Hex(JSON.stringify(unpublishedJointSnapshot)) }], "2026-11-17T00:00:00.000Z")
+    const afterUnpublished = supersessionStore.latest.get(soloRow?.award.key ?? "")
+    try applySnapshots(supersessionStore, repositories, [{ snapshot: publishedJointSnapshot, digest: try sha256Hex(JSON.stringify(publishedJointSnapshot)) }], "2026-11-19T00:00:00.000Z")
+    const retiredSolo = supersessionStore.latest.get(soloRow?.award.key ?? "")
+    const retiredChainLength = chainOf(supersessionStore, soloRow?.award.key ?? "").length
+    try applySnapshots(supersessionStore, repositories, [{ snapshot: { ...publishedJointSnapshot, generatedAt: "2026-11-20T00:00:00.000Z" }, digest: try sha256Hex("reapply-supersession") }], "2026-11-20T00:00:00.000Z")
 
     try Effect.try(() => assert.deepStrictEqual({
       retained: {
@@ -154,6 +346,24 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
         replayed: store.revisions.length - afterPenalty,
       },
       totals,
+      appliedPenalties,
+      afterReversalPenalties,
+      omittedReview: {
+        emitted: omittedCredit !== undefined && omittedCredit.scoreThirds > 0 && omittedCredit.reviewId === "PRR_early_review",
+        validated: typeof omittedValidated === "string" ? omittedValidated : "ok",
+        rejectedWithoutExclusion: omittedBad,
+        materializedAmount: materialized?.award.amount === (omittedCredit?.scoreThirds ?? 0) * 10,
+        preservedOnReissue: afterReissue?.id === materialized?.id && afterReissue?.award.amount === materialized?.award.amount,
+      },
+      explicitSupersession: {
+        badSupersession,
+        unpublishedSupersession,
+        keptWhenUnpublished: afterUnpublished?.id === soloRow?.id && (afterUnpublished?.award.amount ?? 0) > 0,
+        retiredAmount: retiredSolo?.award.amount,
+        retiredFollows: retiredSolo?.previous === soloRow?.id,
+        retiredDecision: retiredSolo?.decision?.sourceId,
+        reappliedNoOp: chainOf(supersessionStore, soloRow?.award.key ?? "").length === retiredChainLength,
+      },
     }, {
       retained: {
         zero: { amount: 0, follows: true, digest: false, decided: false, appended: 1 },
@@ -168,6 +378,24 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       },
       penalty: { applied: true, bounded: true, request: debitThirds * 10, replayed: 0 },
       totals: [{ id: "U_A", total: 75 }, { id: "U_B", total: 0 }],
+      appliedPenalties: [["penalty_a", 1.5], ["penalty_c", 0]],
+      afterReversalPenalties: [["penalty_a", 0], ["penalty_c", 0]],
+      omittedReview: {
+        emitted: true,
+        validated: "ok",
+        rejectedWithoutExclusion: "SnapshotInvalid",
+        materializedAmount: true,
+        preservedOnReissue: true,
+      },
+      explicitSupersession: {
+        badSupersession: "SnapshotInvalid",
+        unpublishedSupersession: "SnapshotInvalid",
+        keptWhenUnpublished: true,
+        retiredAmount: 0,
+        retiredFollows: true,
+        retiredDecision: `value:${successorDigest}`,
+        reappliedNoOp: true,
+      },
     }))
   })
 })

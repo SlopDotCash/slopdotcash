@@ -50,10 +50,6 @@ export const getSlopbotSummary = {
   },
 } as const
 
-export const slopbotGetHealth = {
-  ...withStatus500,
-} as const
-
 export const slopbotGetV1Penalties = {
   invalidPenaltyQuery: { status: 400, error: "Invalid penalty query", headers: jsonUncachedPlain },
   penaltiesAreUnavailable: { status: 503, error: "Penalties are unavailable", headers: jsonNoStorePlain },

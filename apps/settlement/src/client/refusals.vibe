@@ -4,7 +4,6 @@ const jsonNoStoreSlopProjectApiContract = { "cache-control": "no-store", "conten
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const jsonPrivateNoStorePlain = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" } as const
 const jsonPublicMaxAge300 = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
-const jsonPublicMaxAge60SMaxage60 = { "cache-control": "public, max-age=60, s-maxage=60", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const jsonNoStoreSlopTraceApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } as const
 const textUncachedPlain = { "content-type": "text/plain;charset=UTF-8" } as const
 const jsonUncachedPlain = { "content-type": "application/json" } as const
@@ -260,13 +259,6 @@ export const getReferralsAccrualsByPeriod = {
   },
 } as const
 
-export const getPoolFunding = {
-  ...withInternalErrorPrivateNoStore,
-  otherMethods: {
-    methodNotAllowedPublicMaxAge60SMaxage60: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge60SMaxage60 },
-  },
-} as const
-
 export const postPaymentsProjectsByIdSolanaFunding = {
   ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV7,
   ...withInvalidFundingAction,
@@ -301,29 +293,6 @@ export const getPaymentsProjectsByIdTotals = {
 
 export const getPaymentsProjectsByIdVault = {
   ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV9,
-} as const
-
-export const getPaymentsReceived = {
-  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV10,
-  otherMethods: {
-    ...withNotFoundPrivateNoStore,
-  },
-} as const
-
-export const getPaymentsProjectsByIdDirectTransfers = {
-  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV8,
-} as const
-
-export const getPaymentsActorsByGithubIdDirectTransfers = {
-  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV8,
-} as const
-
-export const getPaymentsVaultPayments = {
-  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV6,
-} as const
-
-export const getPaymentsProjectsByIdVaultPayments = {
-  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV6,
 } as const
 
 export const getPaymentsActorsByGithubIdVaultPayments = {
@@ -424,50 +393,11 @@ export const attesterPostV1BindDestinations = {
   ...withNotFoundV2AndMonthlyAlreadyAdmittedV2,
 } as const
 
-export const attesterPostV1CommitMonthly = {
-  ...withNotFoundV2AndMonthlyAlreadyAdmittedV2,
-} as const
-
 export const attesterPostV1MonthlyReserveRelease = {
   ...withNotFoundV2AndMonthlyAlreadyAdmitted,
   ...withInvalidRequestS400,
 } as const
 
-export const attesterPostV1MonthlyAuthorization = {
-  ...withNotFoundV2AndMonthlyAlreadyAdmittedV2,
-} as const
-
-export const attesterPostV1AttemptStatus = {
-  ...withNotFoundV2AndMonthlyAlreadyAdmittedV2,
-} as const
-
-export const attesterPostV1CancelUnsubmitted = {
-  ...withNotFoundV2AndMonthlyAlreadyAdmittedV2,
-} as const
-
 export const attesterPostV1Pay = {
   ...withNotFoundV2,
-} as const
-
-export const attesterPostV1CompleteBind = {
-  ...withNotFoundV2,
-} as const
-
-export const attesterPostV1SecurityAny = {
-  ...withNotFoundV2AndNotFoundEntrypoint,
-} as const
-
-export const keeperPostTick = {
-  keeperRunFailed: { status: 503, error: "keeper_run_failed", headers: jsonUncachedPlain },
-  otherMethods: {
-    ...withNotFoundV2V2,
-  },
-} as const
-
-export const keeperWorkerAnyAny = {
-  ...withNotFoundV2V2,
-} as const
-
-export const referralAccrualAnyAny = {
-  ...withNotFoundV2V2,
 } as const

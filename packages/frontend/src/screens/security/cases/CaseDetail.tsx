@@ -29,7 +29,7 @@ import {
   severityPresentation,
   submissionPresentation,
 } from "./labels.ts";
-import { Fact, StaleNotice } from "./parts.tsx";
+import { CaseFact, StaleNotice } from "./parts.tsx";
 import { type CasesRuntime, actOnCase, caseChanged, openCase, reloadCase, watchCase } from "./runtime.vibe";
 
 export type Retried = "analyze" | "triage-appeal";
@@ -115,11 +115,11 @@ const advisoryStateLabels: Readonly<Record<string, string>> = {
 const closingReceipts = new Set(["duplicate", "out-of-scope", "rejected"]);
 
 function Receipt({ record }: { record: SecurityCase }) {
-  const advisoryState = record.advisory?.state ? advisoryStateLabels[record.advisory.state] : undefined;
+  const advisoryState = record.advisory?.githubState ? advisoryStateLabels[record.advisory.githubState] : undefined;
   const closeOnGithub =
     record.advisory !== null &&
     record.advisory !== undefined &&
-    (record.advisory.state === "triage" || record.advisory.state === "draft") &&
+    (record.advisory.githubState === "triage" || record.advisory.githubState === "draft") &&
     closingReceipts.has(record.receiptState ?? "") &&
     record.viewerRoles.some((role) => role === "owner" || role === "triager" || role === "maintainer");
   return (
@@ -207,14 +207,14 @@ function PaymentFacts({ record, controls, onSend, onStart }: { record: SecurityC
       ) : null}
       <dl className="flex flex-col gap-2">
         {record.paymentRail === "direct" && settlement.remainingTransfers ? (
-          <Fact term="Progress">
+          <CaseFact term="Progress">
             <span className="inline-flex items-center gap-2">
               <Progress aria-label="Transfers confirmed" value={confirmed} max={total} className="w-24" /> {confirmed}/{total}
             </span>
-          </Fact>
+          </CaseFact>
         ) : null}
         {finalized.map((transactionId) => (
-          <Fact
+          <CaseFact
             key={transactionId}
             term={
               <span role="img" aria-label="Finalized" title="Finalized" className="inline-flex">
@@ -223,7 +223,7 @@ function PaymentFacts({ record, controls, onSend, onStart }: { record: SecurityC
             }
           >
             <CopyIdentifier value={transactionId} label="payment transaction ID" />
-          </Fact>
+          </CaseFact>
         ))}
       </dl>
       {recovery ? (
@@ -257,17 +257,17 @@ function History({ record }: { record: SecurityCase }) {
         </p>
       ) : null}
       <dl className="flex flex-col gap-2">
-        <Fact term="Case">
+        <CaseFact term="Case">
           <CopyIdentifier value={record.id} label="case ID" />
-        </Fact>
-        <Fact term="Terms">
+        </CaseFact>
+        <CaseFact term="Terms">
           {record.terms && record.terms.grossMinor !== undefined ? money(record.terms.grossMinor, record.terms) : "None"} · rev {record.policyRevision ?? "—"}
-        </Fact>
-        {record.reporter ? <Fact term="Reporter">@{record.reporter.githubLogin}</Fact> : null}
-        {record.payee ? <Fact term="Payee">@{record.payee.githubLogin}</Fact> : null}
-        {owner && record.rootCauseKey ? <Fact term="Root cause">{record.rootCauseKey}</Fact> : null}
-        {owner && record.duplicateOf ? <Fact term="Duplicate of">{record.duplicateOf}</Fact> : null}
-        {owner && triagers.length > 0 ? <Fact term="Triagers">{triagers.map((entry) => `@${entry.githubLogin}`).join(", ")}</Fact> : null}
+        </CaseFact>
+        {record.reporter ? <CaseFact term="Reporter">@{record.reporter.githubLogin}</CaseFact> : null}
+        {record.payee ? <CaseFact term="Payee">@{record.payee.githubLogin}</CaseFact> : null}
+        {owner && record.rootCauseKey ? <CaseFact term="Root cause">{record.rootCauseKey}</CaseFact> : null}
+        {owner && record.duplicateOf ? <CaseFact term="Duplicate of">{record.duplicateOf}</CaseFact> : null}
+        {owner && triagers.length > 0 ? <CaseFact term="Triagers">{triagers.map((entry) => `@${entry.githubLogin}`).join(", ")}</CaseFact> : null}
       </dl>
       {events.length > 0 ? (
         <ol className="mt-3 flex flex-col gap-2">
@@ -328,33 +328,33 @@ export function CaseDetailView({ record, note, refreshError, onReload, retrying,
         </span>
       </p>
       <dl className="flex flex-col gap-2">
-        <Fact term="Receipt">
+        <CaseFact term="Receipt">
           <Receipt record={record} />
-        </Fact>
+        </CaseFact>
         {record.receiptState ? (
-          <Fact term="Owner response">
+          <CaseFact term="Owner response">
             <span className="inline-flex flex-wrap items-center gap-2">
               <Status presentation={receiptPresentation(record.receiptState)} />
               {response ? <q>{response}</q> : null}
             </span>
-          </Fact>
+          </CaseFact>
         ) : null}
         {record.award && record.terms ? null : (
-          <Fact term="Award">
+          <CaseFact term="Award">
             <Status presentation={badge(awardText(record))} />
-          </Fact>
+          </CaseFact>
         )}
         {record.relatedParty === "related" && record.relatedPartyReview !== "not-applicable" ? (
-          <Fact term="Related party">
+          <CaseFact term="Related party">
             <Status presentation={relatedPartyPresentation(record.relatedPartyReview)} />
-          </Fact>
+          </CaseFact>
         ) : null}
-        <Fact term="Payout">
+        <CaseFact term="Payout">
           <span className="inline-flex flex-wrap items-center gap-2">
             <Status presentation={payoutPresentation(record)} />
             {record.paymentDeadline ? <TimeChip at={record.paymentDeadline} name="Payment deadline" /> : null}
           </span>
-        </Fact>
+        </CaseFact>
       </dl>
       {record.award && record.terms ? (
         <section aria-label="Award and payment" className="flex flex-col gap-3">
@@ -362,8 +362,8 @@ export function CaseDetailView({ record, note, refreshError, onReload, retrying,
             <Metric label="Award" value={money(record.award.grossMinor, record.terms)} detail={pending ? <Status presentation={badge(pending, "Caution", "Clock")} /> : undefined} />
           </MetricGrid>
           <dl className="flex flex-col gap-2">
-            <Fact term="Researcher">{money(record.award.researcherMinor, record.terms)}</Fact>
-            <Fact term="Slop">{money(record.award.slopMinor, record.terms)}</Fact>
+            <CaseFact term="Researcher">{money(record.award.researcherMinor, record.terms)}</CaseFact>
+            <CaseFact term="Slop">{money(record.award.slopMinor, record.terms)}</CaseFact>
           </dl>
         </section>
       ) : null}

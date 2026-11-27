@@ -391,4 +391,8 @@ pure val weight_reconcileCopies = 30
 pure val weight_readReceipt = 30
 pure val weight_expireVerification = 10
 pure val weight_finishTriage = 10
+pure val eval_witness_sometimesReceiptQueued = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1))
 ```

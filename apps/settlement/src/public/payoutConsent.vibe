@@ -1,0 +1,94 @@
+// spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
+import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { nowSeconds } from "@repo/platform/clock"
+import { RegistryManifests } from "@repo/ports/backend"
+import { type RetainedPayoutConsent, payoutBindingStatus } from "../../gen/settlement__bindingAuthority.effect.vibe"
+import { U64_MAX, bindingCall, decodeBinding, evmAddress } from "../chain/evm/abi.ts"
+import type { EvmPayoutBindingStatus } from "../client/public.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { isNetworkKey } from "../kernels/networks.ts"
+import { PaymentNetworks } from "../owner/networks.vibe"
+import { projectDeployments } from "../vault/deployments.vibe"
+import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import type { EvmDeployment } from "../vault/policy.vibe"
+
+export schema PayoutConsentRow {
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+  readonly claimAddress: string
+  readonly claimDigest: string
+  readonly chainId: string
+  readonly version: string
+  readonly expiresAt: string
+}
+
+export function payoutBindingKey(project: string, network: string, vault: string) {
+  return `${project}\n${network}\n${vault.toLowerCase()}`
+}
+
+effect function bindingAtFinality(deployment: EvmDeployment, actor: bigint) {
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined) return undefined
+  const chain = try EvmRpc
+  const head = try chain.head("finalized")
+  try verifyEvmDeployment(deployment, head.number)
+  const read = decodeBinding(try chain.call({ to: vault, data: bindingCall(actor), block: head.number }))
+  return read === undefined ? undefined : { read, timestamp: head.timestamp }
+}
+
+effect function readBinding(row: PayoutConsentRow, actor: bigint) {
+  if (!isNetworkKey(row.network)) return undefined
+  const networks = try Effect.serviceOption(PaymentNetworks)
+  const registry = try Effect.serviceOption(RegistryManifests)
+  if (Option.isNone(networks) || Option.isNone(registry)) return undefined
+  const urls = try networks.value.urls(row.network)
+  const manifest = try registry.value.project(row.projectId)
+  if (urls === undefined || manifest === undefined) return undefined
+  const deployment = (try projectDeployments(manifest, "ordinary")).find((entry) => entry.family === "evm" && entry.network === row.network && entry.vault.toLowerCase() === row.vault)
+  if (deployment?.family !== "evm" || deployment.chainId.toString() !== row.chainId) return undefined
+  return try Effect.provide(bindingAtFinality(deployment, actor), evmRpc({ urls, chainId: deployment.chainId }))
+}
+
+effect function statusOf(row: PayoutConsentRow, actor: bigint, rows: ReadonlyArray<PayoutConsentRow>, now: number) {
+  const binding = timeout(readBinding(row, actor), "5 seconds") catch () => undefined
+  const claimBound = binding !== undefined && binding.read.version > 0n && !binding.read.cancelled
+    && binding.read.destination === row.claimAddress.toLowerCase() && binding.read.claimDigest === `0x${row.claimDigest}`
+    && binding.read.activatesAt <= binding.timestamp
+  const retained: RetainedPayoutConsent[] = []
+  for (const consent of rows) {
+    const expiresAt = parseBaseUnits(consent.expiresAt, U64_MAX)
+    if (consent.chainId === row.chainId && expiresAt !== undefined && expiresAt <= Number.MAX_SAFE_INTEGER)
+      retained.push({ version: consent.version, expiresAt: Number(expiresAt) })
+  }
+  return match (payoutBindingStatus(binding !== undefined, claimBound, binding?.read.version.toString() ?? "", now, retained)) {
+    when "ConsentPending": "pending" as const;
+    when "BindingFinalized": "finalized" as const;
+    when "BindingUnavailable": "unavailable" as const;
+    when "AwaitingConsent": undefined;
+  }
+}
+
+export effect function payoutBindings(githubId: string, rows: ReadonlyArray<PayoutConsentRow>) {
+  const result = new Map<string, EvmPayoutBindingStatus>()
+  const actor = parseBaseUnits(githubId, U64_MAX)
+  if (rows.length === 0 || actor === undefined || actor === 0n) return result
+  const targets = new Map<string, { first: PayoutConsentRow; consents: PayoutConsentRow[] }>()
+  for (const row of rows) {
+    const key = payoutBindingKey(row.projectId, row.network, row.vault)
+    const target = targets.get(key)
+    if (target === undefined) targets.set(key, { first: row, consents: [row] })
+    else target.consents.push(row)
+    result.set(key, "unavailable")
+  }
+  const now = try nowSeconds()
+  const refresh = effect {
+    for concurrent(4) (const [key, { first, consents }] of targets) {
+      const status = try statusOf(first, actor, consents, now)
+      if (status === undefined) result.delete(key)
+      else result.set(key, status)
+    }
+  }
+  timeout(refresh, "7 seconds") catch () => undefined
+  return result
+}

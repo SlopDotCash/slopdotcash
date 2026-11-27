@@ -6,7 +6,7 @@ import { type CompleteProof, type CopiedClaim, type CorrectionActor, type Correc
 import { isOctober, isOriginalContributorContext } from "./october.vibe"
 import { isOriginalContributorFollowup, isOriginalContributorRepair, originalContributorSource, reviewedOriginalSource, validParentShas } from "./original.vibe"
 
-export { check, correctionClaimCommit, correctionFailure, digestPattern, isNodeId, validActor }
+export { check, correctionClaimCommit, correctionFailure, digestPattern, isNodeId }
 
 export interface Scope { readonly commit: string; readonly path: string }
 

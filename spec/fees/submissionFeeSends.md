@@ -278,4 +278,130 @@ pure def sometimesRevertParksNothing(s: Sends): bool = s.result == BatchReverted
 pure def sometimesParkedReleased(s: Sends): bool = s.parks >= 1 and not(s.parked)
 pure val refusedValues = Set(true, false)
 pure val brokenValues = Set(true, false)
+pure val eval_witness_sometimesSettled = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesFailedThenSentAgain = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("recordFailed", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesSecondBatchSettled = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker),
+  ("planNextBatch", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesOverBudget = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker),
+  ("planNextBatch", Worker),
+  ("refuseOverBudget", { maximum: 200000000000001 }, Worker))
+pure val eval_witness_sometimesParkedAndRestSent = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("refusePayout", true, Chain),
+  ("park", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+```
+
+## Story: Isolate Solana failed sends and configuration errors
+
+> As Slop, I want a Solana resolve transaction that landed and failed on chain
+> to isolate the failing deposit into single-deposit sends and park it on a
+> single failure, and I want a Solana configuration error to never stop the EVM
+> ledgers from running.
+
+### A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last
+
+A Solana resolve transaction carries at most five deposits (`solanaMaxBatch`),
+and destinations and simulations are read at confirmed commitment right before
+signing while recording and settlement proofs stay at finalized commitment
+(operator decision, 26 November 2026; `formal/models/fees/submission_fee_solana_failed_send.qnt`,
+#3378). A send whose blockhash expired before landing (`solanaExpiredReason`)
+paid no fee and is excluded from the UTC day's lamport spend; a send that landed
+and failed on chain (`solanaLandedFailedReason`) paid its fee and counts toward
+the day's spend. Any deposit that was in a live send which landed and failed is
+from then on sent alone (`solanaMayJoinBatch` accepts it only at batch size 0
+and stops adding further deposits), so it can never fail another deposit's
+batch. A deposit whose own single send landed and failed is parked
+(`reverted_alone`) before marking the send failed, waits 24 hours before
+recheck, and from then on is ordered after every other due deposit and sent
+only while less than half of the day's lamport ceiling is spent
+(`solanaCourtesyAllowed`, shared with unaccepted courtesy refunds).
+
+```quint
+pure val solanaMaxBatch = 5
+pure val solanaExpiredReason = "blockhash expired before the transaction landed"
+pure val solanaLandedFailedReason = "resolve transaction failed"
+pure def solanaCountsTowardDailyBudget(mode: R::Mode, sendRow: SendRow, reason: str): bool =
+  mode == R::Live and not(sendRow == Failed and reason == solanaExpiredReason)
+pure def solanaMayJoinBatch(batchSize: int, tainted: bool): bool =
+  if (tainted) batchSize == 0 else batchSize >= 0 and batchSize < solanaMaxBatch
+pure def solanaCourtesyAllowed(live: bool, spentToday: int, perDayLamports: int): bool =
+  not(live) or spentToday * 2 < perDayLamports
+pure def solanaParkOnSingleFailure(depositCount: int, reason: str): bool =
+  depositCount == 1 and reason == solanaLandedFailedReason
+pure def lawSolanaExpiredPaysNoBudget(mode: R::Mode): bool =
+  not(solanaCountsTowardDailyBudget(mode, Failed, solanaExpiredReason))
+pure def lawSolanaLandedFailedCountsBudget(reason: str): bool =
+  reason == solanaLandedFailedReason implies solanaCountsTowardDailyBudget(R::Live, Failed, reason)
+pure def lawSolanaTaintedNeverBatchesWithAnother(batchSize: int): bool =
+  batchSize > 0 implies not(solanaMayJoinBatch(batchSize, true))
+pure def lawSolanaSingleFailureParksOnlySingleLandedFail(depositCount: int, reason: str): bool =
+  solanaParkOnSingleFailure(depositCount, reason) implies (depositCount == 1 and reason == solanaLandedFailedReason)
+pure val modeValues = Set(R::Off, R::DryRun, R::Live)
+pure val sendRowValues = Set(NoSendRow, Submitted, Unknown, Finalized, Failed)
+pure val reasonValues = Set("", solanaExpiredReason, solanaLandedFailedReason)
+pure val batchSizeValues = Set(0, 1, 2, 4, 5)
+pure val depositCountValues = Set(0, 1, 2, 5)
+```
+
+### A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers
+
+The Solana ledger has its own switch (`SUBMISSION_FEE_SOLANA_MODE`) and its own
+configuration parse, isolated from Base and Robinhood Chain. When Solana is
+`off` it is inert even with incomplete configuration; when Solana is `dry_run`
+or `live` and its configuration cannot be read (missing endpoint, lamport limit
+or live seed), only the Solana ledger records an error while the EVM ledgers
+still run.
+
+```quint
+type WorkerLedgerResult = LedgerOff | LedgerRan | LedgerError
+type WorkerOutcomes = { evm: WorkerLedgerResult, solana: WorkerLedgerResult }
+pure def workerRunOutcomes(evmOn: bool, solanaMode: R::Mode, solanaConfigOk: bool): WorkerOutcomes =
+  { evm: if (evmOn) LedgerRan else LedgerOff,
+    solana: if (solanaMode == R::Off) LedgerOff else if (solanaConfigOk) LedgerRan else LedgerError }
+pure def lawSolanaConfigErrorLeavesEvmRunning(evmOn: bool, solanaMode: R::Mode, solanaConfigOk: bool): bool =
+  val outcomes = workerRunOutcomes(evmOn, solanaMode, solanaConfigOk)
+  (outcomes.solana == LedgerError and evmOn) implies outcomes.evm == LedgerRan
+pure def lawSolanaOffIsInert(evmOn: bool, solanaConfigOk: bool): bool =
+  workerRunOutcomes(evmOn, R::Off, solanaConfigOk).solana == LedgerOff
+pure val evmOnValues = Set(true, false)
+pure val solanaModeValues = Set(R::Off, R::DryRun, R::Live)
+pure val solanaConfigOkValues = Set(true, false)
 ```

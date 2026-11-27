@@ -1,5 +1,5 @@
 // spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"
-import { GitHub } from "@repo/platform/github"
+import { GitHub, exchanged, githubApi, githubJson, manualRedirects, parsed } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
 import type { AnalysisReport } from "../analysis/prompts.ts"
 import { ghsaPattern, markerLine } from "../forwarding/advisories.vibe"
@@ -101,6 +101,35 @@ export effect function privateReports(repository: string) {
     }
     return reports.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.ghsa.localeCompare(right.ghsa))
   }
+}
+
+export type IdentityFacts =
+  | { readonly state: "found"; readonly login: string }
+  | { readonly state: "missing" }
+  | { readonly state: "unavailable" }
+
+const identityLimitBytes = 64 * 1024
+const identityTimeoutMs = 10_000
+
+export effect function githubAccountIdentity(githubId: string) {
+  const services = try installed()
+  if (services === undefined) return undefined
+  const jwtExit = try exit(services.app.appJwt())
+  if (Exit.isFailure(jwtExit)) {
+    const failure = Cause.squash(jwtExit.cause)
+    if (typeof failure === "object" && failure !== null && "_tag" in failure && failure._tag === "GitHubUnavailable" && "path" in failure && failure.path === "/app") return undefined
+    return { state: "unavailable" } satisfies IdentityFacts
+  }
+  const url = `${githubApi}/user/${encodeURIComponent(githubId)}`
+  const exchange = { client: manualRedirects(services.client), authority: githubApi, userAgent: "slop.cash", timeoutMs: identityTimeoutMs }
+  const answer = exchanged(exchange, { method: "GET", url, accept: githubJson, bearer: Redacted.make(jwtExit.value), followRenamed: false }, identityLimitBytes) catch effect (error) => {
+    return error._tag === "NotFound" ? ({ state: "missing" } satisfies IdentityFacts) : ({ state: "unavailable" } satisfies IdentityFacts)
+  }
+  if ("state" in answer) return answer
+  if (answer.status !== 200) return { state: "unavailable" } satisfies IdentityFacts
+  const body = record(parsed(answer.bytes, url) catch () => undefined)
+  if (body === undefined || String(body.id) !== githubId || typeof body.login !== "string") return { state: "unavailable" } satisfies IdentityFacts
+  return { state: "found", login: body.login } satisfies IdentityFacts
 }
 
 export effect function advisoryReport(repository: string, ghsa: string) {

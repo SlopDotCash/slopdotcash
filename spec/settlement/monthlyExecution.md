@@ -695,4 +695,11 @@ pure val journalValues = Set(
   monthJournal(202612, 1), monthJournal(202612, 2), monthJournal(202612, 3), monthJournal(202612, 4),
   v2Journal(202612, treeR1, 1), v2Journal(202612, treeR1, 2), v2Journal(202612, treeR1, 3), v2Journal(202612, treeR1, 4), v2Journal(202612, treeR1, 5),
   v2Journal(202612, treeR2, 1), v2Journal(202612, treeR2, 2), v2Journal(202612, treeR2, 3), v2Journal(202612, treeR2, 5))
+pure val eval_witness_sometimesPrerequisiteIncluded = (
+  ("publish", 1, 1, 202611, 1, 1, true, true, true, false, treeR1, "scheduler"),
+  ("publish", 2, 1, 202612, 1, 1, true, true, true, false, treeR1, "scheduler"),
+  ("startRun", Mc::windowClosesAt(202611), "scheduler"),
+  ("selectRow", 1, false, "scheduler"),
+  ("selectRow", 2, true, "scheduler"),
+  ("markAttempt", 2, true, true, true, false, "scheduler"))
 ```

@@ -176,7 +176,7 @@ const initialView = (w: World): Monthly => ({
   eligibility: w.facts.eligibility, revision: { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
   currentRevision: w.facts.current ?? { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
   cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0, trigger: "NoTrigger",
-  frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0,
+  frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0, reviewedOctober: false,
 });
 
 const view = (state: Monthly): Monthly => ({ ...state, underfundedNotice: false, coordinatorRetries: 0, pledgedVault: state.pledgedVault === state.currentRevision.vault ? state.pledgedVault : "" });

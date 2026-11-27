@@ -6,7 +6,7 @@ import { millisOf } from "@repo/platform/clock"
 import type { RegistryManifests } from "@repo/ports/backend"
 import { type Registry, exactIdentifier, registryOf, repositoryIdFromUrl } from "../../client/snapshot/checks.vibe"
 import { leaderboardMethodology } from "../../client/snapshot/methodology.vibe"
-import type { AttributionCoverage, InvalidAttributionMarker, LeaderboardSnapshot, ModelAttribution, PublishedRepository, RegisteredRepository, ScoreOpportunity } from "../../client/snapshot/schema.vibe"
+import type { AttributionCoverage, InvalidAttributionMarker, LeaderboardSnapshot, ModelAttribution, PublishedRepository, RegisteredRepository, ScoreOpportunity, ValueAssessmentSupersession } from "../../client/snapshot/schema.vibe"
 import { ruleVersion, schemaVersion, scoreWindowDays } from "../../client/snapshot/schema.vibe"
 import { type HistoricalPin, type HistoricalProject, historicalRepository, validateHistoricalSnapshot } from "../../client/snapshot/validate.vibe"
 import { AssemblyRefused, type Collection, SnapshotAssembly } from "../../collect/run/pipeline.vibe"
@@ -18,10 +18,11 @@ import { type ReviewFacts, type ReviewState, isExpandableReviewOpportunity, revi
 import { emptyReview } from "../../../gen/points__reviews.effect.vibe"
 import { type AttributionContext, assessModelAttribution, exactModelIdentifiers } from "../attribution/markers.vibe"
 import { compareCodeUnits, isBot, sameActor } from "../facts.vibe"
-import type { ImplementationHistory, LeaderEntry, PaymentReviewBasis, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
+import type { ImplementationHistory, JointUnitPublication, LeaderEntry, PaymentReviewBasis, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
 import { sortedModels } from "../ranks.vibe"
 import { scoreSnapshot } from "../snapshot.vibe"
 import { valueCoverage } from "./coverage.vibe"
+import type { JointRead, ValueDecision } from "./decisions.vibe"
 import { type AttributionSources, assemblyInputs, verifiedEverySource } from "./inputs.vibe"
 import type { JointEvidence } from "./lines.vibe"
 import { reviewedImplementationUnits, reviewedUnitsBySource } from "./membership.vibe"
@@ -37,6 +38,21 @@ schema JointSources {
   readonly status: string
   readonly record?: { readonly sources: ReadonlyArray<{ readonly repository: string; readonly repositoryNodeId: string }> } | null
 }
+
+schema SoloHistoryRecord {
+  readonly pullRequestNodeId?: Schema.Unknown
+  readonly supersedes?: Schema.Unknown
+}
+
+schema AncestorJointRecord {
+  readonly legacyPredecessors?: Schema.Unknown
+  readonly supersedes?: Schema.Unknown
+  readonly sources?: Schema.Unknown
+}
+
+const decodeSoloHistory = Schema.decodeUnknownEffect(Schema.fromJsonString(SoloHistoryRecord))
+const decodeAncestorJoint = Schema.decodeUnknownEffect(Schema.fromJsonString(AncestorJointRecord))
+const sha256Pattern = /^[a-f0-9]{64}$/u
 
 interface RetainedAttributions {
   readonly events: ReadonlySet<string>
@@ -107,8 +123,8 @@ function compareOpportunities(left: ScoreOpportunity, right: ScoreOpportunity) {
   return millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.source.number - right.source.number || left.id.localeCompare(right.id)
 }
 
-function hasOpportunitySignal(pullRequest: PullRequestRecord, files: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }>) {
-  if (isNearMaterialTestChange([...files]) || materialTestStats([...files]).additions > 0) return true
+function hasOpportunitySignal(pullRequest: PullRequestRecord, files: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }> | null) {
+  if (files !== null && (isNearMaterialTestChange([...files]) || materialTestStats([...files]).additions > 0)) return true
   if (pullRequest.reviews.some((review) => review.author !== null && !isBot(review.author) && pullRequest.author !== null && !sameActor(review.author, pullRequest.author))) return true
   return pullRequest.commitCount >= 1 && pullRequest.changedFiles >= 1 && pullRequest.additions + pullRequest.deletions >= 20
 }
@@ -117,14 +133,14 @@ effect function openPullRequestOpportunities(registry: Registry, openPullRequest
   const opportunities: ScoreOpportunity[] = []
   for (const pullRequest of openPullRequests) {
     const files = pullRequest.files
-    if (pullRequest.mergedAt !== null || files === null) continue
+    if (pullRequest.mergedAt !== null) continue
     const repository = repositoryIdFromUrl(registry, pullRequest.url)
     if (repository === undefined) throw new AssemblyRefused({ message: `Cannot derive a target repository from URL: ${pullRequest.url}` })
     const title = boundedSourceTitle(pullRequest.title)
     const source = { id: pullRequest.id, kind: "pull-request", number: pullRequest.number, title, url: pullRequest.url }
     const author = pullRequest.author
     if (author !== null && !isBot(author) && !pullRequest.isDraft) {
-      if (isNearMaterialTestChange([...files])) {
+      if (files !== null && isNearMaterialTestChange([...files])) {
         opportunities.push({
           id: `${pullRequest.id}:opportunity:near-material-test`,
           actor: author,
@@ -353,6 +369,146 @@ export function rollingRepositories(collection: Collection) {
   return collection.registry.targets.map((target, index) => published(target, index === 0 ? "primary" : "member"))
 }
 
+function stringList(value: unknown): ReadonlyArray<string> {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string")
+}
+
+function ancestorMembersOf(record: AncestorJointRecord | undefined): ReadonlySet<string> {
+  const members = new Set<string>()
+  if (record === undefined || !Array.isArray(record.sources)) return members
+  for (const source of record.sources) {
+    if (typeof source === "object" && source !== null && "pullRequestNodeId" in source && typeof source.pullRequestNodeId === "string") {
+      members.add(source.pullRequestNodeId)
+    }
+  }
+  return members
+}
+
+effect function soloChainDigests(decisions: ReadonlyMap<string, ValueDecision>, memberId: string) {
+  const solo = decisions.get(memberId)
+  if (solo === undefined || solo.history.length === 0) return null
+  const digests: string[] = []
+  let previous: string | null = null
+  for (const row of solo.history) {
+    const record = decodeSoloHistory(row.record_json) catch () => undefined
+    if (record === undefined || !sha256Pattern.test(row.record_digest) || record.pullRequestNodeId !== memberId || record.supersedes !== previous) return null
+    digests.push(row.record_digest)
+    previous = row.record_digest
+  }
+  return solo.latestDigest === previous ? digests : null
+}
+
+effect function valueAssessmentSupersessionsOf(
+  reads: ReadonlyArray<JointRead>,
+  decisions: ReadonlyMap<string, ValueDecision>,
+  ledger: ReadonlyArray<ScoreEvent>,
+  jointUnitPublication: ReadonlyMap<string, ReadonlyArray<JointUnitPublication>>,
+) {
+  const publishedDecisionDigests = new Set(
+    ledger.flatMap((event) =>
+      event.category === "merged-pull-request" && event.scoreDecisionSourceId?.startsWith("value:") === true
+        ? [event.scoreDecisionSourceId.slice(6)]
+        : [],
+    ),
+  )
+  const supersessionRows = new Map<string, string>()
+  for (const read of reads) {
+    const successor = read.decision.digest
+    if (!publishedDecisionDigests.has(successor)) continue
+    const units = jointUnitPublication.get(successor) ?? []
+    const publishes = (memberIds: ReadonlySet<string> | null) => {
+      const covering = memberIds === null
+        ? units
+        : units.filter((unit) => [...unit.coveredPullRequestIds].some((id) => memberIds.has(id)))
+      return covering.length > 0 && covering.every((unit) => unit.complete)
+    }
+    const ancestors = new Map<string, AncestorJointRecord>()
+    for (const row of read.history) {
+      const parsed = decodeAncestorJoint(row.record_json) catch () => undefined
+      if (parsed !== undefined) ancestors.set(row.record_digest, parsed)
+    }
+    const declaredSolo = new Set<string>(read.legacyPredecessors)
+    const ancestorDigests: string[] = []
+    const pending = [...read.supersedes]
+    const visited = new Set<string>()
+    while (pending.length > 0) {
+      const digest = pending.pop()
+      if (digest === undefined || visited.has(digest)) continue
+      visited.add(digest)
+      const ancestor = ancestors.get(digest)
+      if (ancestor === undefined) continue
+      ancestorDigests.push(digest)
+      for (const declared of stringList(ancestor.legacyPredecessors)) declaredSolo.add(declared)
+      for (const parent of stringList(ancestor.supersedes)) pending.push(parent)
+    }
+    const currentMembers = new Set(read.indexed)
+    const walkMembers = new Set(currentMembers)
+    for (const digest of ancestorDigests) {
+      for (const member of ancestorMembersOf(ancestors.get(digest))) walkMembers.add(member)
+    }
+    const gateMembersFor = (member: string): ReadonlySet<string> => {
+      if (currentMembers.has(member)) return new Set([member])
+      const members = new Set<string>()
+      for (const digest of ancestorDigests) {
+        const sources = ancestorMembersOf(ancestors.get(digest))
+        if (sources.has(member)) for (const source of sources) members.add(source)
+      }
+      return members.size > 0 ? members : new Set([member])
+    }
+    const chains = new Map<string, ReadonlyArray<string>>()
+    const chainOwners = new Map<string, string[]>()
+    for (const member of walkMembers) {
+      const chain = try soloChainDigests(decisions, member)
+      if (chain === null) continue
+      chains.set(member, chain)
+      for (const digest of chain) chainOwners.set(digest, [...(chainOwners.get(digest) ?? []), member])
+    }
+    const resolveMembers = (predecessorDigest: string): ReadonlySet<string> | null => {
+      const owners = chainOwners.get(predecessorDigest)
+      if (owners !== undefined && owners.length > 0) {
+        const members = new Set<string>()
+        for (const owner of owners) for (const member of gateMembersFor(owner)) members.add(member)
+        return members
+      }
+      if (ancestors.has(predecessorDigest)) return ancestorMembersOf(ancestors.get(predecessorDigest))
+      for (const digest of ancestorDigests) {
+        const ancestor = ancestors.get(digest)
+        if (stringList(ancestor?.legacyPredecessors).includes(predecessorDigest)) return ancestorMembersOf(ancestor)
+      }
+      return null
+    }
+    const addProvenRow = effect (predecessorDigest: string) => {
+      if (predecessorDigest === successor || !publishes(resolveMembers(predecessorDigest))) return
+      const existing = supersessionRows.get(predecessorDigest)
+      if (existing !== undefined && existing !== successor) throw new AssemblyRefused({ message: "Joint assessments disagree about a predecessor's successor" })
+      supersessionRows.set(predecessorDigest, successor)
+    }
+    for (const predecessorDigest of [...read.legacyPredecessors, ...read.supersedes]) try addProvenRow(predecessorDigest)
+    for (const digest of ancestorDigests) try addProvenRow(digest)
+    for (const digest of ancestorDigests) {
+      for (const declared of stringList(ancestors.get(digest)?.legacyPredecessors)) try addProvenRow(declared)
+    }
+    if (declaredSolo.size > 0) {
+      for (const chain of chains.values()) {
+        let cutoff = -1
+        for (const declared of declaredSolo) {
+          const index = chain.indexOf(declared)
+          if (index > cutoff) cutoff = index
+        }
+        for (let index = 0; index <= cutoff; index += 1) {
+          const digest = chain[index]
+          if (digest !== undefined) try addProvenRow(digest)
+        }
+      }
+    }
+  }
+  const rows: ReadonlyArray<ValueAssessmentSupersession> = [...supersessionRows.entries()]
+    .map(([predecessorDigest, successorDigest]) => ({ predecessorDigest, successorDigest }))
+    .sort((left, right) => left.predecessorDigest.localeCompare(right.predecessorDigest, "en") || left.successorDigest.localeCompare(right.successorDigest, "en"))
+  return rows
+}
+
 export effect function assembleSnapshot(collection: Collection, scope: AssemblyScope) {
   const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {})
   const scored = try scoreSnapshot(inputs.facts)
@@ -363,6 +519,7 @@ export effect function assembleSnapshot(collection: Collection, scope: AssemblyS
   const retained: RetainedAttributions = { events: new Set((inputs.facts.retainedReviews ?? []).map((event) => event.id)), attributions: collection.acceptedReviewHistory.value.attributions }
   const order = scoringOrder(inputs.facts)
   const current = try attributed(scored.ledger, scored.leaders, inputs.attribution, order, retained)
+  const supersessions = try valueAssessmentSupersessionsOf(inputs.jointReads, inputs.decisions, current.ledger, scored.jointUnitPublication)
   const basis = scored.paymentReviewBasis
   const payments = basis === undefined ? undefined : try attributed(paymentLedger(scored.ledger, basis), basis.leaders, inputs.attribution, order, retained)
   const omitted = scored.paymentReviewBasisOmitted
@@ -380,8 +537,10 @@ export effect function assembleSnapshot(collection: Collection, scope: AssemblyS
     leaders: current.leaders,
     valuePolicyEffectiveAt: collection.valuePolicyEffectiveAt,
     valueAssessmentCoverage: coverage,
+    ...(supersessions.length === 0 ? {} : { valueAssessmentSupersessions: supersessions }),
     ledger: current.ledger,
     reviewExclusions: scored.reviewExclusions,
+    ...(scope.mode === "rolling" && scored.omittedReviewCredits.length > 0 ? { omittedReviewCredits: scored.omittedReviewCredits } : {}),
     penalties: inputs.penalties,
     ...(collection.penaltyHistory === undefined ? {} : { penaltyHistory: collection.penaltyHistory }),
     ...(basis === undefined || payments === undefined ? {} : {

@@ -5,7 +5,7 @@ import { changedAcceptedOutcome, outcomeReviewWinner, reviewAwardPoints, reviewT
 import { reviewExclusionReason } from "../kernels/scoring/reviewBody.ts"
 import { reviewTierPoints, valueTierBand } from "../kernels/scoring/tiers.ts"
 import { ReviewRecords } from "./book.vibe"
-import { type Actor, type ClosedPull, FactsRefused, type MergedPull, type Review, type ReviewDecision, type ReviewExclusion, type ReviewExclusionReason, type ReviewLoad, type ReviewValue, type ScoreEvent, compareCodeUnits, isBot, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import { type Actor, type ClosedPull, FactsRefused, type MergedPull, type OmittedReviewCredit, type Review, type ReviewDecision, type ReviewExclusion, type ReviewExclusionReason, type ReviewLoad, type ReviewValue, type ScoreEvent, compareCodeUnits, isBot, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import type { Merges } from "./merges.vibe"
 
 export interface Credit {
@@ -127,7 +127,7 @@ effect function valueCandidate(pull: Source, review: Review, acceptedAt: number,
   return { review, actor: review.author, submittedAt: review.submittedAt, at: submitted, points, valued } satisfies Candidate
 }
 
-effect function allocateValueReviews(pull: Source, acceptedAt: number, candidates: ReadonlyArray<Candidate>, awarded: ReadonlySet<string>, sizeFloor: number, context: ReviewContext, exclude: Exclude) {
+effect function allocateValueReviews(pull: Source, acceptedAt: number, candidates: ReadonlyArray<Candidate>, awarded: ReadonlySet<string>, sizeFloor: number, context: ReviewContext, exclude: Exclude, omitted: OmittedReviewCredit[]) {
   const eligible: Candidate[] = []
   for (const candidate of candidates) {
     if (awarded.has(candidate.actor.id)) exclude(candidate.review, "already-awarded-reviewer")
@@ -185,8 +185,25 @@ effect function allocateValueReviews(pull: Source, acceptedAt: number, candidate
     }
     creditedActors.push(source.actor.id)
     for (const candidate of repeats) exclude(candidate.review, "already-awarded-reviewer")
+    const reason = `Provisional ${source.valued.value.tier} review value; reviewer ${index + 1} of ${record.reviewers.length} credited, ${shareThirds} of ${poolThirds} review-credit thirds: ${source.valued.value.finding} ${source.valued.value.outcome}`
     if (source.at < context.windowFrom) {
       exclude(source.review, "review-credit-outside-window")
+      if (source.actor.kind !== "User" || source.valued.recordedAt === "") continue
+      omitted.push({
+        id: `${pull.id}:value-review:${source.review.id}`,
+        reviewId: source.review.id,
+        pullRequestId: pull.id,
+        pullRequestNumber: pull.number,
+        repository: pull.repository,
+        reviewer: source.actor,
+        scoreThirds: shareThirds,
+        submittedAt: source.submittedAt,
+        acceptedAt: "mergedAt" in pull ? pull.mergedAt : pull.closedAt,
+        url: source.review.url,
+        scoreDecisionSourceId: `value:${source.valued.digest}`,
+        scoreDecisionAt: source.valued.recordedAt,
+        reason,
+      })
       continue
     }
     try context.ledger.credit({
@@ -201,7 +218,7 @@ effect function allocateValueReviews(pull: Source, acceptedAt: number, candidate
       occurredAt: source.submittedAt,
       repository: pull.repository,
       source: reviewSource(pull, source.review),
-      reason: `Provisional ${source.valued.value.tier} review value; reviewer ${index + 1} of ${record.reviewers.length} credited, ${shareThirds} of ${poolThirds} review-credit thirds: ${source.valued.value.finding} ${source.valued.value.outcome}`,
+      reason,
     })
   }
   return creditedActors
@@ -321,7 +338,7 @@ function excluder(pull: Source, exclusions: ReviewExclusion[]): Exclude {
   }
 }
 
-effect function mergedReviews(pull: MergedPull, context: ReviewContext, exclude: Exclude) {
+effect function mergedReviews(pull: MergedPull, context: ReviewContext, exclude: Exclude, omitted: OmittedReviewCredit[]) {
   const mergedAt = try millisAt(pull.mergedAt, pull.id)
   const credited = context.merges.creditActors.get(pull.id) ?? new Set<string>()
   const events: ScoreEvent[] = []
@@ -373,7 +390,7 @@ effect function mergedReviews(pull: MergedPull, context: ReviewContext, exclude:
       when "unchanged-outcome": exclude(review, "unchanged-outcome");
     }
   }
-  if (valuePolicy) for (const actor of try allocateValueReviews(pull, mergedAt, candidates, awarded, sizeFloor, context, exclude)) awarded.add(actor)
+  if (valuePolicy) for (const actor of try allocateValueReviews(pull, mergedAt, candidates, awarded, sizeFloor, context, exclude, omitted)) awarded.add(actor)
   const winner = outcomeReviewWinner(outcomes.length)
   for (const [index, { review, actor }] of outcomes.entries()) {
     if (index === winner) try award(review, actor, true)
@@ -383,7 +400,7 @@ effect function mergedReviews(pull: MergedPull, context: ReviewContext, exclude:
   try ratifierFallback(pull, credited, awarded, local)
 }
 
-effect function closedReviews(pull: ClosedPull, context: ReviewContext, exclude: Exclude) {
+effect function closedReviews(pull: ClosedPull, context: ReviewContext, exclude: Exclude, omitted: OmittedReviewCredit[]) {
   const closedAt = try millisAt(pull.closedAt, pull.id)
   if (closedAt < valuePolicyAt) return
   const candidates: Candidate[] = []
@@ -395,12 +412,13 @@ effect function closedReviews(pull: ClosedPull, context: ReviewContext, exclude:
     const candidate = try valueCandidate(pull, review, closedAt, new Set(), context, exclude)
     if (candidate !== null && candidate !== undefined) candidates.push(candidate)
   }
-  try allocateValueReviews(pull, closedAt, candidates, new Set(), sizeFloor, context, exclude)
+  try allocateValueReviews(pull, closedAt, candidates, new Set(), sizeFloor, context, exclude, omitted)
 }
 
 export effect function reviewCredit(pulls: ReadonlyArray<MergedPull>, closed: ReadonlyArray<ClosedPull>, context: ReviewContext) {
   const exclusions: ReviewExclusion[] = []
-  for (const pull of pulls) if (!context.held.has(pull.id)) try mergedReviews(pull, context, excluder(pull, exclusions))
-  for (const pull of closed) if (!context.held.has(pull.id)) try closedReviews(pull, context, excluder(pull, exclusions))
-  return exclusions
+  const omittedReviewCredits: OmittedReviewCredit[] = []
+  for (const pull of pulls) if (!context.held.has(pull.id)) try mergedReviews(pull, context, excluder(pull, exclusions), omittedReviewCredits)
+  for (const pull of closed) if (!context.held.has(pull.id)) try closedReviews(pull, context, excluder(pull, exclusions), omittedReviewCredits)
+  return { exclusions, omittedReviewCredits }
 }

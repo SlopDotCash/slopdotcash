@@ -1,15 +1,16 @@
 # Daily contribution data collection
 
 PRD section 9 (operator decision, 19 November 2026): published contribution
-data refreshes itself once a day. The source is development's
-`.github/workflows/daily-collection.yml` (07:17 UTC), `scripts/daily-collection.ts`
-and its model `formal/models/release/daily_collection.qnt`. The controller
-reads and dispatches runs of `.github/workflows/deploy.yml` on `main` only: it
-never publishes anything itself, never edits a run's data and never touches a
-run that is not a trusted main release. Its `start` command runs on the daily
-schedule; its `follow-up <run id>` command runs after each main release. Every
-release it dispatches asks for `skip_proofs` and `skip_browser_tests`; the
-[release](./release.md) still checks everything else, and a retained-data
+data refreshes itself once a day. The repository's default branch registers
+`.github/workflows/daily-collection.yml` at 07:17 UTC and receives completed
+release events. Both automated jobs check out the controller from `main`.
+A manual dispatch uses its selected `main` revision. The controller reads
+and dispatches trusted `main` runs of `.github/workflows/deploy.yml`. It
+leaves the release workflow responsible for publication and its data. The
+`start` command runs on the daily schedule, and `follow-up <run id>` runs
+after each main release. Its dispatches set `skip_proofs` and
+`skip_browser_tests`. The [release](./release.md) still checks everything
+else, and a retained-data
 release still refuses data older than the live site
 ([retained freshness](../points/retainedFreshness.md)). A push release's
 collection shares the release workflow's one fresh-collection lane, so it is

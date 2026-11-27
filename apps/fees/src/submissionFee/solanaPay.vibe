@@ -10,6 +10,7 @@ import {
   DEPOSIT_OFFSETS,
   SOLANA_PAY_LIMITS,
   SOLANA_PAY_READS,
+  SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES,
   SOLANA_SUBMISSION_FEE_KEPT_TO,
   SOLANA_SUBMISSION_FEE_MINT,
   SOLANA_SUBMISSION_FEE_NETWORK,
@@ -23,6 +24,7 @@ import {
   decodeSubmissionConfig,
   decodeSubmissionDeposit,
   depositInstruction,
+  hex32Bytes,
   isSolanaAddress,
   reclaimInstruction,
   submissionConfigAddress,
@@ -38,9 +40,59 @@ export interface SolanaFeeDeployment {
   readonly rpcUrl: Redacted.Redacted<string>
 }
 
+export interface SolanaPayEnv {
+  readonly RPC_URL_SUBMISSION_FEE_SOLANA?: string
+  readonly PAYMENT_RPC_URLS?: string
+}
+
+export interface SolanaPayOverrides {
+  readonly switchedOn?: boolean
+  readonly programId?: string | null
+  readonly mint?: string
+  readonly feeWallet?: string
+}
+
 export service SolanaSubmissionFeeDeployment {
   readonly deployment: SolanaFeeDeployment | undefined
   static readonly defaultValue = () => ({ deployment: undefined })
+}
+
+const allowedSolanaRpc = /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/u
+
+function solanaRpcFromEnv(env: SolanaPayEnv): string | undefined {
+  const direct = env.RPC_URL_SUBMISSION_FEE_SOLANA?.trim() ?? ""
+  if (direct !== "") return allowedSolanaRpc.test(direct) ? direct : undefined
+  const raw = env.PAYMENT_RPC_URLS?.trim() ?? ""
+  if (raw === "") return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined
+    const candidate = (parsed as Readonly<Record<string, unknown>>)[SOLANA_SUBMISSION_FEE_NETWORK]
+    if (typeof candidate !== "string") return undefined
+    const trimmed = candidate.trim()
+    return allowedSolanaRpc.test(trimmed) ? trimmed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function resolveSolanaPayDeployment(env: SolanaPayEnv, overrides: SolanaPayOverrides = {}): SolanaFeeDeployment | undefined {
+  const switchedOn = overrides.switchedOn ?? SOLANA_SUBMISSION_FEE_SWITCHED_ON
+  const programId = overrides.programId === undefined ? SOLANA_SUBMISSION_FEE_PROGRAM_ID : overrides.programId
+  if (!switchedOn || programId === null || !isSolanaAddress(programId)) return undefined
+  const rpcUrl = solanaRpcFromEnv(env)
+  if (rpcUrl === undefined) return undefined
+  return {
+    network: SOLANA_SUBMISSION_FEE_NETWORK,
+    programId,
+    mint: overrides.mint ?? SOLANA_SUBMISSION_FEE_MINT,
+    feeWallet: overrides.feeWallet ?? SOLANA_SUBMISSION_FEE_KEPT_TO,
+    rpcUrl: Redacted.make(rpcUrl),
+  }
+}
+
+export function solanaSubmissionFeeDeployment(env: SolanaPayEnv, overrides: SolanaPayOverrides = {}) {
+  return Layer.succeed(SolanaSubmissionFeeDeployment, { deployment: resolveSolanaPayDeployment(env, overrides) })
 }
 
 schema MultipleAccountsReply {
@@ -61,7 +113,7 @@ schema SimulateReply {
 
 schema ProgramAccountsReply {
   readonly pubkey: string
-  readonly account: { readonly data: ReadonlyArray<string> }
+  readonly account: { readonly owner: string; readonly data: ReadonlyArray<string> }
 }
 
 schema TxStatusReply {
@@ -70,7 +122,7 @@ schema TxStatusReply {
 
 schema SolanaPayBody {
   readonly step: "review" | "check" | "reclaim-review" | "reclaim-check"
-  readonly repositoryId: number
+  readonly repositoryId: number | string
   readonly pullNumber: number
   readonly wallet: string
   readonly nonce?: string
@@ -108,7 +160,7 @@ function consumeRate(key: string, limit: number, now: number): boolean {
 }
 
 function withinRateLimits(ip: string, repositoryId: number, pullNumber: number, now: number): boolean {
-  if (!consumeRate(`all`, SOLANA_PAY_LIMITS.all, now)) return false
+  if (!consumeRate("all", SOLANA_PAY_LIMITS.all, now)) return false
   if (!consumeRate(`ip:${ip}`, SOLANA_PAY_LIMITS.address, now)) return false
   if (!consumeRate(`item:${repositoryId}:${pullNumber}`, SOLANA_PAY_LIMITS.item, now)) return false
   return true
@@ -166,35 +218,34 @@ effect function checkTx(deployment: SolanaFeeDeployment, reads: ReadCounter, tra
 }
 
 export effect function handleSolanaSubmissionFee(request: HttpServerRequest.HttpServerRequest) {
-  const configured = (try SolanaSubmissionFeeDeployment).deployment
-  const active = configured ?? (SOLANA_SUBMISSION_FEE_SWITCHED_ON && SOLANA_SUBMISSION_FEE_PROGRAM_ID !== null
-    ? undefined
-    : undefined)
+  const active = (try SolanaSubmissionFeeDeployment).deployment
   if (active === undefined) return json({ error: "not_found" }, 404, noStore)
   const rawBody = try request.text
   if (rawBody.length > MAX_BODY_BYTES) return refuse("Request body is too large.", "invalid_request", 400)
   const decoded = Effect.try(() => JSON.parse(rawBody) as unknown) catch () => undefined
   const parsed = decoded === undefined ? undefined : (Schema.decodeUnknownEffect(SolanaPayBody)(decoded) catch () => undefined)
   if (parsed === undefined) return refuse("Invalid Solana submission fee request.", "invalid_request", 400)
-  if (!pullIdPattern.test(String(parsed.repositoryId)) || !pullIdPattern.test(String(parsed.pullNumber)))
+  const repositoryIdText = String(parsed.repositoryId)
+  if (!pullIdPattern.test(repositoryIdText) || !pullIdPattern.test(String(parsed.pullNumber)))
     return refuse("Invalid pull request identifier.", "invalid_request", 400)
+  const repositoryId = Number(repositoryIdText)
   if (!isSolanaAddress(parsed.wallet)) return refuse("Invalid Solana wallet address.", "invalid_request", 400)
   const ip = request.headers["cf-connecting-ip"] ?? "unknown"
   const now = try Clock.currentTimeMillis
-  if (!withinRateLimits(ip, parsed.repositoryId, parsed.pullNumber, now))
+  if (!withinRateLimits(ip, repositoryId, parsed.pullNumber, now))
     return json({ error: "rate_limited", message: "Too many Solana payment requests. Try again shortly." }, 429, noStore)
-  const itemRow = try (try SubmissionFeeItems).byPull({ repositoryId: parsed.repositoryId, pullNumber: parsed.pullNumber })
+  const itemRow = try (try SubmissionFeeItems).byPull({ repositoryId, pullNumber: parsed.pullNumber })
   if (itemRow === null) return json({ error: "not_found" }, 404, noStore)
   const reads: ReadCounter = { count: 0 }
   const run = effect {
     if (parsed.step === "check") {
-      if (parsed.transactionId === undefined || parsed.blockhash === undefined || parsed.nonce === undefined)
+      if (parsed.transactionId === undefined || parsed.transactionId.length > 100 || parsed.blockhash === undefined || !isSolanaAddress(parsed.blockhash) || parsed.nonce === undefined || !NONCE_PATTERN.test(parsed.nonce))
         return refuse("Missing transaction check parameters.", "invalid_request", 400)
       const status = try checkTx(active, reads, parsed.transactionId)
       return ok({ status })
     }
     if (parsed.step === "reclaim-check") {
-      if (parsed.transactionId === undefined || parsed.blockhash === undefined || parsed.deposit === undefined)
+      if (parsed.transactionId === undefined || parsed.transactionId.length > 100 || parsed.blockhash === undefined || !isSolanaAddress(parsed.blockhash) || parsed.deposit === undefined || !isSolanaAddress(parsed.deposit))
         return refuse("Missing reclaim check parameters.", "invalid_request", 400)
       const status = try checkTx(active, reads, parsed.transactionId)
       return ok({ status })
@@ -203,6 +254,8 @@ export effect function handleSolanaSubmissionFee(request: HttpServerRequest.Http
       if (parsed.nonce === undefined || !NONCE_PATTERN.test(parsed.nonce)) return refuse("Invalid deposit nonce.", "invalid_request", 400)
       const nonce = try orDie(Effect.try(() => BigInt(parsed.nonce ?? "0")))
       if (nonce > U64_MAX) return refuse("Deposit nonce is out of range.", "invalid_request", 400)
+      if (itemRow.paidDepositId !== null || itemRow.outcome !== null)
+        return refuse("This pull request is already recorded as paid. Nothing was prepared.", "fee_already_paid")
       const configAddress = submissionConfigAddress(active.programId)
       const feeAccount = associatedUsdcAccount(active.feeWallet, active.mint)
       const payerAccount = associatedUsdcAccount(parsed.wallet, active.mint)
@@ -250,29 +303,34 @@ export effect function handleSolanaSubmissionFee(request: HttpServerRequest.Http
         },
       })
     }
-    const itemHex = itemRow.item.slice(2)
-    const itemBytes = new Uint8Array(32)
-    for (let i = 0; i < 32; i += 1) itemBytes[i] = Number.parseInt(itemHex.slice(i * 2, i * 2 + 2), 16)
+    const itemBytes = hex32Bytes(itemRow.item)
+    if (itemBytes === undefined) return refuse("Solana deposits are not available right now.")
     const found = try rpcCall(active, reads, "getProgramAccounts", [
       active.programId,
       {
         commitment: "finalized",
         encoding: "base64",
         filters: [
+          { dataSize: SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES },
           { memcmp: { offset: 0, bytes: base58Encode(DEPOSIT_DISCRIMINATOR) } },
           { memcmp: { offset: DEPOSIT_OFFSETS.payer, bytes: parsed.wallet } },
           { memcmp: { offset: DEPOSIT_OFFSETS.item, bytes: base58Encode(itemBytes) } },
         ],
       },
     ], Schema.Array(ProgramAccountsReply))
-    const open = found.slice(0, RECLAIM_CANDIDATES)
+    const open = found
       .map((entry) => {
+        if (entry.account.owner !== active.programId) return undefined
         const bytes = base64Decode(entry.account.data[0] ?? "")
         const decodedDeposit = bytes === undefined ? undefined : decodeSubmissionDeposit(bytes)
-        return decodedDeposit === undefined ? undefined : { account: entry.pubkey, deposit: decodedDeposit }
+        if (decodedDeposit === undefined) return undefined
+        if (decodedDeposit.payer !== parsed.wallet || decodedDeposit.item.toLowerCase() !== itemRow.item.toLowerCase()) return undefined
+        if (entry.pubkey !== submissionDepositAddress(active.programId, parsed.wallet, decodedDeposit.nonce)) return undefined
+        return { account: entry.pubkey, deposit: decodedDeposit }
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined && entry.deposit.mint === active.mint)
-      .sort((a, b) => a.deposit.depositedAt - b.deposit.depositedAt)
+      .sort((a, b) => (a.deposit.id < b.deposit.id ? -1 : a.deposit.id > b.deposit.id ? 1 : 0))
+      .slice(0, RECLAIM_CANDIDATES)
     if (open.length === 0) return refuse("No deposit from this wallet for this pull request is still held by the deposit program.", "no_open_deposit")
     const configAddress = submissionConfigAddress(active.programId)
     const payerAccount = associatedUsdcAccount(parsed.wallet, active.mint)
@@ -319,9 +377,3 @@ export effect function handleSolanaSubmissionFee(request: HttpServerRequest.Http
   }
   return run catch () => json({ error: "temporarily_unavailable" }, 503, noStore)
 }
-
-export const defaultSolanaFeeTerms = {
-  network: SOLANA_SUBMISSION_FEE_NETWORK,
-  mint: SOLANA_SUBMISSION_FEE_MINT,
-  feeWallet: SOLANA_SUBMISSION_FEE_KEPT_TO,
-} as const

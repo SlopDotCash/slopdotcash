@@ -16,6 +16,7 @@ interface Problem {
 }
 
 const accountChanged: Problem = { status: 409, message: "Your account changed. Retry the access check." }
+const accessUnchecked = "Project access could not be checked. Retry."
 
 function problemOf(failure: CallFailure): Problem {
   switch (failure._tag) {
@@ -33,7 +34,7 @@ function problemOf(failure: CallFailure): Problem {
 
 function checked(problem: Problem | undefined): MaintainerCheck {
   if (problem === undefined) return { kind: "Allowed" }
-  return problem.status === 403 ? { kind: "NotAllowed" } : { kind: "Failed", message: problem.message }
+  return problem.status === 403 ? { kind: "NotAllowed" } : { kind: "Failed", message: problem.status === 409 ? problem.message : accessUnchecked }
 }
 
 export effect function maintainerCheck(projectId: string, actorGithubId: string) {

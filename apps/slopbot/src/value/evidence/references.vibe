@@ -1,6 +1,6 @@
 // spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
 import { GitHub } from "@repo/platform/github"
-import { githubLinkDestinations, withoutClosedCodeFences, withoutClosedCodeSpans } from "@repo/points/corrections"
+import { githubDiscussionReferences } from "@repo/points/corrections"
 import { EvidenceRefused, type Limitation, type RelatedPullRequest, type UnavailableReference } from "./types.vibe"
 
 export const valueReferenceQuery =
@@ -10,7 +10,6 @@ const repositoryQuery =
 const missingItem: ReadonlyArray<ReadonlyArray<string>> = [["repository", "issueOrPullRequest"]]
 const repositoryNodeId = /^(?:R_[A-Za-z0-9_-]+|[A-Za-z0-9+/]+=*)$/u
 const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
-const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu
 
 schema SourceRepository { readonly nameWithOwner: string; readonly isPrivate: boolean }
 export schema TimelineSource {
@@ -46,8 +45,6 @@ export interface RelatedReferences {
   readonly limitations: ReadonlyArray<Limitation>
 }
 
-interface Target { readonly repository: string; readonly number: number }
-
 export function referenceTimelineRequest(repository: string, number: number, cursor: string | null) {
   const [owner, name] = repository.split("/")
   return {
@@ -78,25 +75,6 @@ effect function renamedIdentity(owner: string, name: string) {
   const github = try GitHub
   const answer: RenamedAnswer | undefined = github.graphql(repositoryQuery, { owner, name }, RenamedAnswer) catch () => undefined
   return answer?.repository ?? undefined
-}
-
-function sameTarget(entry: RelatedPullRequest, target: Target) {
-  return entry.repository.toLowerCase() === target.repository.toLowerCase() && entry.number === target.number
-}
-
-function outgoingTargets(repository: string, number: number, sourceTexts: ReadonlyArray<string>) {
-  const candidates = new Map<string, Target>()
-  for (const text of sourceTexts) {
-    const referencesText = githubLinkDestinations(withoutClosedCodeSpans(withoutClosedCodeFences(text)))
-    for (const found of referencesText.matchAll(referencePattern)) {
-      const targetRepository = found[1] ?? found[3] ?? repository
-      const targetNumber = Number(found[2] ?? found[4])
-      if (!Number.isSafeInteger(targetNumber) || targetNumber <= 0) continue
-      if (targetRepository.toLowerCase() === repository.toLowerCase() && targetNumber === number) continue
-      candidates.set(`${targetRepository.toLowerCase()}#${targetNumber}`, { repository: targetRepository, number: targetNumber })
-    }
-  }
-  return [...candidates.values()]
 }
 
 export effect function relatedPullRequests(repository: string, number: number, pullId: string, sourceTexts: ReadonlyArray<string>, completeTimeline?: ReadonlyArray<TimelineNode>) {
@@ -139,8 +117,11 @@ export effect function relatedPullRequests(repository: string, number: number, p
       cursor = page.endCursor
     }
   }
-  for (const target of outgoingTargets(repository, number, sourceTexts)) {
-    if ([...references.values()].some((entry) => sameTarget(entry, target))) continue
+  const sourceRepository = repository.toLowerCase()
+  for (const target of githubDiscussionReferences(repository, sourceTexts)) {
+    const targetRepository = target.repository.toLowerCase()
+    if (targetRepository === sourceRepository && target.number === number) continue
+    if ([...references.values()].some((entry) => entry.repository.toLowerCase() === targetRepository && entry.number === target.number)) continue
     const [targetOwner = "", targetName = ""] = target.repository.split("/")
     let resolvedRepository = target.repository
     let result = try reference(targetOwner, targetName, target.number)

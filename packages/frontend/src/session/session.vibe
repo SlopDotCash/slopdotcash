@@ -49,6 +49,7 @@ export service Session {
   view(): SessionView!!
   current(): (WebSession | null)!CallFailure!HttpClient.HttpClient
   refresh(returned?: boolean): Observation!!HttpClient.HttpClient
+  clear(): void!!
 }
 
 function settled(read: WebSession | null | { readonly failure: CallFailure }): SessionView {
@@ -81,6 +82,9 @@ export const sessionLayer = Layer.effect(Session, effect {
         const view = afterReturn(published.view, answer)
         return [{ view, current: true }, { generation: mine, view }]
       })
+    },
+    clear: effect () => {
+      try SubscriptionRef.update(held, (published): Published => ({ generation: published.generation + 1, view: { status: "signedOut" } }))
     },
   }
 })

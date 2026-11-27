@@ -13,6 +13,8 @@ const administrator = "7"
 const responsible = "41"
 const steward = "51"
 const roles = { ADMIN_GITHUB_IDS: `${moderatorA},${moderatorB},${administrator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderatorA},${moderatorB}` }
+const exemptProject = "exempt-hold"
+const exemptRepository = "4004"
 
 service World {
   readonly github: GitHubFake
@@ -25,6 +27,10 @@ const Built = Layer.effect(World, effect {
     github.world.addUser({ id: 41, login: "responsible-41" })
     github.world.addUser({ id: 18633264, login: "moderator-a" })
     github.world.addUser({ id: 5000, login: "slop-reader" })
+    github.world.addUser({ id: 5001, login: "owner" })
+    github.world.addUser({ id: Number(steward), login: "member-51", nodeId: "U_steward" })
+    github.world.addRepo({ id: Number(exemptRepository), nodeId: `R_${exemptRepository}`, owner: "owner", name: exemptProject, defaultBranch: "main" })
+    github.world.setPermission(`owner/${exemptProject}`, "member-51", "maintain")
   }))
   return { github, net: internet({ github: github.handler }) }
 })
@@ -32,7 +38,18 @@ const Built = Layer.effect(World, effect {
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
-  return areaLayer({ root: new URL("../../points", import.meta.url).pathname, config: "test/support/backendRoutes/vite.config.ts", entry: "backendRoutes", d1: { SLOP_DB: "slop-private" }, vars: { ...roles, SLOP_GITHUB_READ_TOKEN: reader }, services: { ASSETS: () => new Response("Not found", { status: 404 }) }, internet: net })
+  return areaLayer({
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
+    d1: { SLOP_DB: "slop-private" },
+    r2: ["VETTING_EVIDENCE"],
+    vars: { ...roles, SLOP_GITHUB_READ_TOKEN: reader },
+    services: { ASSETS: (request) => request.url.endsWith("/skill-templates/index.json")
+      ? Response.json({ templateSha256: "d".repeat(64) })
+      : new Response("Not found", { status: 404 }) },
+    internet: net,
+  })
 }), Built)
 
 effect function same(actual: unknown, expected: unknown) {
@@ -197,6 +214,60 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
         { sequence: 4, action: "deny_reinstatement", state_after: "banned", appeal_after: "denied", actor_role: "project-moderator" },
       ],
       listing: [{ status: "paused", tier: "retired", revision: 2 }],
+    })
+  })
+
+  it.effect('An owner-approved admission cannot lift an ordinary moderator quarantine without fresh scan evidence (spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository")', () => effect {
+    const area = try Area
+    const { net } = try World
+    const firstModerator = try member(moderatorA)
+    const reviewer = try member(moderatorB)
+    const admin = try member(administrator)
+    const owner = try member(steward)
+    const digest = try project(exemptProject, [{ status: "active", tier: "community", kind: "Created" }], exemptRepository)
+    const grantId = `vex_${exemptProject}`
+    try area.sql(
+      "INSERT INTO vetting_admission_exemptions (id, project_id, revision, manifest_sha256, repository_id, repository_node_id, steward_id, steward_node_id, granted_by_github_id, granted_by_github_login, granted_at, reason, decision_reference, covered_assessment_ids) VALUES (?, ?, 1, ?, ?, ?, ?, 'U_steward', ?, 'admin-7', '2026-11-02T00:00:00.000Z', 'Owner-approved admission for the journey', 'admission-decision', '[]')",
+      grantId, exemptProject, digest, exemptRepository, `R_${exemptRepository}`, steward, administrator,
+    )
+    const overview = try area.request("/api/v1/admin/vetting", { as: admin })
+    try same(overview.status, 200)
+    const entry = (field(overview.body, "projects") as ReadonlyArray<unknown>).find((candidate) => field(candidate, "id") === exemptProject)
+    try same([field(entry, "status"), field(entry, "revision"), field(entry, "clearance")], ["active", 1, {
+      state: "cleared",
+      repositories: [{ repositoryId: exemptRepository, state: "cleared", basis: "Owner-approved exemption" }],
+    }])
+
+    const quarantined = try act(firstModerator, exemptProject, "quarantine")
+    const appealed = try area.request("/api/v1/project-appeals", {
+      json: { projectId: exemptProject, reason: "The project requests review of its quarantine", evidenceReference: "review-request" },
+      as: owner,
+    })
+    const fence = try nextFence(reviewer, exemptProject)
+    const decision = { action: "reinstate", reason: "Review of the ordinary quarantine", evidenceReference: "review-request", ...fence }
+    const placer = try decide(firstModerator, exemptProject, decision)
+    const preview = try decide(reviewer, exemptProject, decision, true)
+    const decided = try decide(reviewer, exemptProject, decision)
+    const listing = try area.sql("SELECT status, json_extract(manifest, '$.listingTier') AS tier, revision FROM projects WHERE id = ?", exemptProject)
+    const journal = try area.sql("SELECT action, state_after, appeal_after, actor_role FROM project_enforcements WHERE project_id = ? ORDER BY sequence", exemptProject)
+    const grants = try area.sql("SELECT g.id, v.revoked_at FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations v ON v.exemption_id = g.id WHERE g.project_id = ?", exemptProject)
+    try same({
+      journaled: [outcome(quarantined), outcome(appealed)],
+      refused: [outcome(placer), outcome(preview), outcome(decided)],
+      readHead: net.requests.some((request) => request.method === "GET" && request.url.endsWith(`/repos/owner/${exemptProject}/branches/main`)),
+      listing,
+      journal,
+      grants,
+    }, {
+      journaled: [[200, null], [200, null]],
+      refused: [[403, "independent_review_required"], [409, "vetting_required"], [409, "vetting_required"]],
+      readHead: true,
+      listing: [{ status: "paused", tier: "retired", revision: 2 }],
+      journal: [
+        { action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
+        { action: "request_reinstatement", state_after: "quarantined", appeal_after: "requested", actor_role: "project-steward" },
+      ],
+      grants: [{ id: grantId, revoked_at: null }],
     })
   })
 

@@ -59,11 +59,13 @@ export const staleAfterMs = 1_800_000
 
 export const vaultEdgeSeconds = 60
 
-export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private" })
+const privateNoStore = { "cache-control": "private, no-store" } as const
 
-export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
+export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
 
-export const VaultDeposit = Schema.Struct({
+export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds }, refusalHeaders: privateNoStore })
+
+const VaultDepositSchema = Schema.Struct({
   id: Schema.String,
   projectId: Schema.String,
   network: Schema.String,
@@ -77,16 +79,16 @@ export const VaultDeposit = Schema.Struct({
   transactionId: Schema.String,
   depositedAt: Schema.String.check(Schema.makeFilter((text: string) => Number.isFinite(Date.parse(text)))),
 })
-export type VaultDeposit = typeof VaultDeposit.Type
+export type VaultDeposit = typeof VaultDepositSchema.Type
 
-export const ProjectDeposits = Schema.Struct({
+const ProjectDepositsSchema = Schema.Struct({
   projectId: Schema.String,
-  deposits: Schema.Array(VaultDeposit),
+  deposits: Schema.Array(VaultDepositSchema),
   total: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   servedAt: Schema.String,
 })
-export type ProjectDeposits = typeof ProjectDeposits.Type
+export type ProjectDeposits = typeof ProjectDepositsSchema.Type
 
-export const projectDeposits = route({ method: "GET", path: "/api/v1/payments/projects/:id/deposits", access: "public", limitKib: 1, request: undefined, answer: ProjectDeposits, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
+export const projectDeposits = route({ method: "GET", path: "/api/v1/payments/projects/:id/deposits", access: "public", limitKib: 1, request: undefined, answer: ProjectDepositsSchema, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds }, refusalHeaders: privateNoStore })
 
 export const vaultApi = [projectTotals, projectVault, projectDeposits]

@@ -18,7 +18,7 @@ export const meta: ComponentMeta<PayoutRowProps> = {
   play: {
     // spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
     NeedsWallet: async () => {
-      await expect(screen.getByRole("link", { name: "Awaiting wallet: add or confirm your Base wallet" }).getAttribute("href")).toBe("/account#wallets");
+      await expect(screen.getByRole("link", { name: /Awaiting wallet: add or confirm your Base wallet/u }).getAttribute("href")).toBe("/account#wallets");
     },
   },
 };

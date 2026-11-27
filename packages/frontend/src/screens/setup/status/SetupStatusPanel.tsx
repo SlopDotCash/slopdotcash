@@ -38,9 +38,10 @@ function ActorSetup({ runtime, projectId, actorId, generation = "initial", initi
       onSetup?.(next.setup);
     });
   const follow = () => {
-    const resumed = startedRef.current.has(key);
+    const started = startedRef.current.has(key);
+    const checkFirst = started ? latestRef.current.busy || latestRef.current.setup === null : attempt.count > 0 || initial === undefined;
     startedRef.current.add(key);
-    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !resumed, initial: latestRef.current.setup, checkFirst: resumed || attempt.count > 0 || initial === undefined }, show);
+    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !started, initial: latestRef.current.setup, checkFirst }, show);
   };
   const run = useRun(runtime, key, follow, setupUnfinished);
   const shown: SetupView = run?.status === "failed" ? { ...view, busy: false, error: run.message } : view;
@@ -50,7 +51,7 @@ function ActorSetup({ runtime, projectId, actorId, generation = "initial", initi
   return <SetupSummary projectId={projectId} view={shown} onCheck={check} showProjectLink={showProjectLink} />;
 }
 
-/** The project's setup status for one account, checked on arrival unless given, again on request, again when the reader returns while it waits on them, and read once more when a hidden panel that stopped its check is shown again, never repeating a scan request. */
+/** The project's setup status for one account, checked on arrival unless given, again on request, and again when the reader returns while it waits on them. If a check was interrupted, resume it without requesting another scan. */
 export function SetupStatusPanel(props: SetupStatusPanelProps) {
   return <ActorSetup key={`${props.projectId}:${props.actorId}:${props.generation ?? "initial"}`} {...props} />;
 }

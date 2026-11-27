@@ -22,6 +22,7 @@ const runtime = ManagedRuntime.make(
       view: () => Effect.succeed({ status: "signedOut" as const }),
       current: () => Effect.succeed(null),
       refresh: () => Effect.succeed({ view: { status: "signedOut" as const }, current: true }),
+      clear: () => Effect.void,
     }),
   ),
 ) as unknown as PageRuntime;

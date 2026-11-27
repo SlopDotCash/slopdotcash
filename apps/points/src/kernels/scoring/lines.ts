@@ -1,5 +1,6 @@
 //@ backend dafny
 // spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced in Dafny //@ ensures contract
 import { type ActorKind, eligibleKind, linesFor } from "../../../gen/points__authorship.ts";
 
 export interface CommitActor { id: string; kind: string }
@@ -20,8 +21,6 @@ export interface LineWeight { actorId: string; lines: number }
 
 export type LineWeights = { kind: "weights"; weights: LineWeight[] } | { kind: "incomplete" };
 
-export const agentCommitAccountIds: string[] = ["MDQ6VXNlcjgxODQ3", "U_kgDOD-0LXg", "U_kgDOC972lw"];
-
 /** @throws {never} */
 //@ pure
 export function isAgentAccount(id: string): boolean {
@@ -38,13 +37,6 @@ export function commitActorKind(actor: CommitActor): ActorKind {
 //@ pure
 export function isCreditEligibleCommitAuthor(actor: CommitActor | null): boolean {
   return actor !== null && actor.kind !== "Bot" && !isAgentAccount(actor.id);
-}
-
-/** @throws {never} */
-export function eligibleAuthorKind(actor: CommitActor): boolean {
-  //@ ensures \result === isCreditEligibleCommitAuthor(actor)
-  //@ ensures \result === eligibleKind(commitActorKind(actor))
-  return eligibleKind(commitActorKind(actor));
 }
 
 /** @throws {never} */

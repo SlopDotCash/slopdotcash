@@ -23,6 +23,10 @@ on:
         description: "Retain the qualified replay inputs in encrypted private storage for owner review"
         type: boolean
         default: false
+      require_no_active_assessments:
+        description: "Qualify the replay in a separate queue only if the complete catalog has no scoped active assessments"
+        type: boolean
+        default: false
       reviewed_packet_sha256:
         description: "Owner-reviewed SHA-256 of the private canonical project packet"
         type: string
@@ -33,7 +37,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.operation == 'replay-assessments' && 'slop-quality-refs/heads/main-collect' || 'slop-production' }}
+  group: ${{ inputs.operation == 'replay-assessments' && (inputs.require_no_active_assessments && 'slop-historical-catalog-replay' || 'slop-quality-refs/heads/main-collect') || 'slop-production' }}
   cancel-in-progress: false
 env:
   CI: "true"
@@ -47,7 +51,7 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.operation == 'replay-assessments' && 360 || 90 }}
+    timeout-minutes: ${{ inputs.operation == 'replay-assessments' && !inputs.require_no_active_assessments && 360 || 90 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -58,13 +62,14 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           APPLY: ${{ inputs.apply }}
           STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
+          REQUIRE_NO_ACTIVE_ASSESSMENTS: ${{ inputs.require_no_active_assessments }}
           PACKET_SHA: ${{ inputs.reviewed_packet_sha256 }}
           AUDIT_PROJECT: ${{ inputs.audit_project }}
           AUDIT_SOURCE_SHA: ${{ inputs.audit_source_sha256 }}
           AUDIT_BASELINE_SHA: ${{ inputs.audit_baseline_sha256 }}
         run: |
           set -euo pipefail
-          if [ "$STAGE_REVIEW" = true ]; then
+          if [ "$STAGE_REVIEW" = true ] || [ "$REQUIRE_NO_ACTIVE_ASSESSMENTS" = true ]; then
             test "$OPERATION" = replay-assessments
           fi
           case "$OPERATION" in
@@ -133,9 +138,9 @@ jobs:
           set -euo pipefail
           node apps/points/dist/programs/main.js git install "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
-      - name: Mint the read-only collector token for replay
+      - name: Mint the read-only collector token for assessment source reads
         id: collector-token
-        if: inputs.operation == 'replay-assessments' && vars.COLLECTOR_APP_CLIENT_ID != ''
+        if: (inputs.operation == 'audit-assessments' || inputs.operation == 'replay-assessments') && vars.COLLECTOR_APP_CLIENT_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         with:
@@ -159,6 +164,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           HISTORICAL_POINTS_APPLY: ${{ inputs.apply }}
           HISTORICAL_ASSESSMENT_STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
+          HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: ${{ inputs.require_no_active_assessments }}
           PRIVATE_PACKET_ENCRYPTION_KEY: ${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}
           REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
           HISTORICAL_ASSESSMENT_PROJECT: ${{ inputs.audit_project }}

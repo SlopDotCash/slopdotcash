@@ -346,7 +346,7 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
       return act(caseKey, caseId, by, "verify-link", { receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: true });
     }
     case "rejectLink": return act(caseKey, caseId, by, "reject-link", { reason: "The advisory names another account." });
-    case "assignTriager": return act(caseKey, caseId, by, "assign-triager", { githubId: githubId(event.actor), githubLogin: `member-${githubId(event.actor)}` });
+    case "assignTriager": return act(caseKey, caseId, by, "assign-triager", { githubId: githubId(event.actor), githubLogin: githubUser(event.actor) });
     case "revokeTriager": return act(caseKey, caseId, by, "revoke-triager", { githubId: githubId(event.actor) });
     case "requestInformation": return act(caseKey, caseId, by, "request-information", { reason: "Show the affected amount." });
     case "reviseReport": return revise(caseId, by, event.version);

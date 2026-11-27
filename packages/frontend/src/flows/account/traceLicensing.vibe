@@ -11,6 +11,7 @@ export type TraceTermsVersion = Schema.Schema.Type<typeof TraceTermsVersionSchem
 const TraceSettingSchema = Schema.Struct({
   enabled: Schema.Boolean,
   since: Schema.NullOr(Schema.String),
+  providerTermsConfirmed: Schema.optional(Schema.Boolean),
   confirmedTermsVersion: Schema.NullOr(TraceTermsVersionSchema),
 })
 
@@ -18,10 +19,13 @@ const TraceRowSchema = Schema.Struct({
   runId: Schema.String,
   finalizedAt: Schema.String,
   projectId: Schema.String,
+  repository: Schema.optional(Schema.String),
   provider: Schema.String,
   model: Schema.String,
+  client: Schema.optional(Schema.String),
   termsVersion: TraceTermsVersionSchema,
   licence: Schema.Literals(["none", "licensed", "withdrawn"]),
+  pullRequestUrl: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
 const TraceListingSchema = Schema.Struct({
@@ -35,12 +39,35 @@ const TraceListingSchema = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
 })
 
+const TraceSettingPutSchema = Schema.Struct({
+  setting: TraceSettingSchema,
+  withdrawn: Schema.Number,
+})
+
+const TraceLicencesPostSchema = Schema.Struct({
+  licensed: Schema.Number,
+})
+
 export type TraceSetting = Schema.Schema.Type<typeof TraceSettingSchema>
 export type TraceRow = Schema.Schema.Type<typeof TraceRowSchema>
 export type TraceListing = Schema.Schema.Type<typeof TraceListingSchema>
+export type TraceSettingAnswer = Schema.Schema.Type<typeof TraceSettingPutSchema>
+export type TraceLicencesAnswer = Schema.Schema.Type<typeof TraceLicencesPostSchema>
+
+export type TraceOptInRequest =
+  | { readonly runIds: ReadonlyArray<string> }
+  | { readonly all: true; readonly expectedCount: number }
 
 export error TraceLicensingError {
   readonly message: string
+  readonly code: string | null
+}
+
+function errorDetail(status: number, body: unknown, fallback: string): { readonly message: string; readonly code: string | null } {
+  const record = typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Readonly<Record<string, unknown>>) : undefined
+  const code = typeof record?.error === "string" ? record.error : null
+  const message = status < 500 && typeof record?.message === "string" ? record.message : fallback
+  return { message, code }
 }
 
 export effect function loadTraceListing(githubId: string, cursor?: string) {
@@ -48,41 +75,54 @@ export effect function loadTraceListing(githubId: string, cursor?: string) {
   const response = HttpClient.get(path, {
     headers: { "x-slop-expected-github-id": githubId },
   }) catch effect () => {
-    throw new TraceLicensingError({ message: "Your trace licensing settings could not be loaded. Retry." })
+    throw new TraceLicensingError({ message: "Your trace licensing settings could not be loaded. Retry.", code: null })
   }
-  const body = boundedJson(response, 131_072, "Trace licensing") catch effect () => {
-    throw new TraceLicensingError({ message: "Your trace licensing settings could not be read. Retry." })
+  const body = boundedJson(response, 1_048_576, "Trace licensing") catch effect () => {
+    throw new TraceLicensingError({ message: "Your trace licensing settings could not be read. Retry.", code: null })
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new TraceLicensingError({ message: "Your trace licensing settings could not be loaded. Retry." })
+    throw new TraceLicensingError(errorDetail(response.status, body, "Trace licensing is unavailable. Retry later."))
   }
   return Schema.decodeUnknownEffect(TraceListingSchema)(body) catch effect () => {
-    throw new TraceLicensingError({ message: "The server returned an unexpected trace licensing response." })
+    throw new TraceLicensingError({ message: "Trace licensing returned an invalid answer.", code: null })
   }
 }
 
-export effect function setTraceLicensing(githubId: string, enabled: boolean, termsVersion: TraceTermsVersion = "private-trace-v3") {
-  const response = HttpClient.post(TRACE_LICENSING_API, {
+export effect function setTraceLicensing(githubId: string, enabled: boolean, providerTermsConfirmed?: boolean) {
+  const payload = enabled
+    ? { enabled: true, providerTermsConfirmed: providerTermsConfirmed === true }
+    : { enabled: false }
+  const response = HttpClient.put(TRACE_LICENSING_API, {
     headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
-    body: HttpBody.text(JSON.stringify({ enabled, termsVersion }), "application/json"),
+    body: HttpBody.text(JSON.stringify(payload), "application/json"),
   }) catch effect () => {
-    throw new TraceLicensingError({ message: "Could not save your trace licensing preference. Retry." })
+    throw new TraceLicensingError({ message: "Could not save your trace licensing preference. Retry.", code: null })
+  }
+  const body = boundedJson(response, 1_048_576, "Trace licensing") catch effect () => {
+    throw new TraceLicensingError({ message: "Trace licensing returned an invalid answer.", code: null })
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new TraceLicensingError({ message: "Could not save your trace licensing preference. Retry." })
+    throw new TraceLicensingError(errorDetail(response.status, body, "Trace licensing is unavailable. Retry later."))
   }
-  return try loadTraceListing(githubId)
+  return Schema.decodeUnknownEffect(TraceSettingPutSchema)(body) catch effect () => {
+    throw new TraceLicensingError({ message: "Trace licensing returned an invalid answer.", code: null })
+  }
 }
 
-export effect function updateTraceLicences(githubId: string, action: "opt-in" | "withdraw", runIds?: ReadonlyArray<string>) {
+export effect function licenseTraces(githubId: string, choice: TraceOptInRequest) {
   const response = HttpClient.post(TRACE_LICENCES_API, {
     headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
-    body: HttpBody.text(JSON.stringify({ action, ...(runIds === undefined ? {} : { runIds }) }), "application/json"),
+    body: HttpBody.text(JSON.stringify(choice), "application/json"),
   }) catch effect () => {
-    throw new TraceLicensingError({ message: "Could not update trace licences. Retry." })
+    throw new TraceLicensingError({ message: "Could not update trace licences. Retry.", code: null })
+  }
+  const body = boundedJson(response, 1_048_576, "Trace licensing") catch effect () => {
+    throw new TraceLicensingError({ message: "Trace licensing returned an invalid answer.", code: null })
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new TraceLicensingError({ message: "Could not update trace licences. Retry." })
+    throw new TraceLicensingError(errorDetail(response.status, body, "Trace licensing is unavailable. Retry later."))
   }
-  return try loadTraceListing(githubId)
+  return Schema.decodeUnknownEffect(TraceLicencesPostSchema)(body) catch effect () => {
+    throw new TraceLicensingError({ message: "Trace licensing returned an invalid answer.", code: null })
+  }
 }

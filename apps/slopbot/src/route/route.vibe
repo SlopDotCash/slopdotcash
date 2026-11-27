@@ -117,13 +117,6 @@ export function routeProviders(keys: ProviderKeys) {
   })
 }
 
-export function providerOf(call: CallRecord): Provider | undefined {
-  return triageRoute.find((provider) => {
-    const step = stepOf(provider)
-    return step.gateway === call.gateway && step.model === call.requestedModel
-  })
-}
-
 export function outcomeOf(call: CallRecord): CallOutcome {
   if (call.outcome === "ok") return "CallOk"
   return call.failure === budgetExhausted ? "CallBudgetDenied" : "CallFailed"

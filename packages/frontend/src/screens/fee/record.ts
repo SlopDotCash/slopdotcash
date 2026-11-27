@@ -5,9 +5,21 @@ import { toAmount } from "@repo/settlement/kernels/amounts";
 import type { FeeOutcome, FeeRecord, FeeWay as RuleWay, Subject } from "../../../gen/frontend__feePages.ts";
 import type { RegistryBoot, RegistryProject } from "../../reads/registry.vibe";
 import { findHistoricalProjectByRepositoryId } from "../../reads/registry.vibe";
-import { type FeeTerms, type FeeWay, type WayKind, publishedWay, tokenOf, wayKey } from "../../wallets/fee/feeCalls.ts";
+import {
+  type FeeTerms,
+  type FeeWay,
+  type SolanaFeeWay,
+  type WayKind,
+  checkSolanaWay,
+  isSolanaFeeNetwork,
+  isSolanaSignature,
+  isSolanaTransactionOrAddress,
+  publishedWay,
+  tokenOf,
+  wayKey,
+} from "../../wallets/fee/feeCalls.ts";
 
-export type { FeeTerms, FeeWay };
+export type { FeeTerms, FeeWay, SolanaFeeWay };
 
 export type RecordOutcome = "refund_due" | "kept_due" | "refunded" | "kept";
 
@@ -39,7 +51,9 @@ export interface FeePayment {
 
 export interface ShownRecord {
   readonly item: string;
+  readonly stableMinor: string;
   readonly due: ReadonlyArray<FeeWay>;
+  readonly solana: SolanaFeeWay | null;
   readonly slopWithheld: boolean;
   readonly paid: FeePayment | null;
   readonly outcome: RecordOutcome | null;
@@ -59,7 +73,8 @@ export interface FeeRates {
 
 export type FeeSubject =
   | { readonly kind: "PullRequestFee"; readonly repositoryId: string; readonly pullNumber: number; readonly item: string }
-  | { readonly kind: "ReportDeposit"; readonly caseId: string; readonly item: string };
+  | { readonly kind: "ReportDeposit"; readonly caseId: string; readonly item: string }
+  | { readonly kind: "StandingDeposit"; readonly githubId: string; readonly item: string };
 
 const ownerPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
 const repoPattern = /^[A-Za-z0-9._-]{1,100}$/u;
@@ -98,6 +113,16 @@ function amountOf(value: string): bigint {
 }
 
 /** @throws {never} */
+function parseDepositId(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isSafeInteger(value) && value >= 1 ? value : undefined;
+  if (typeof value === "string" && /^[1-9][0-9]{0,15}$/u.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+/** @throws {never} */
 export function feeRoute(owner: string, repo: string, number: string): FeeRoute | undefined {
   if (!ownerPattern.test(owner) || !repoPattern.test(repo) || repo === "." || repo === ".." || !numberPattern.test(number)) return undefined;
   return { owner, repo, number: Number(number) };
@@ -113,7 +138,7 @@ export function feeRepository(route: FeeRoute, boot: RegistryBoot): FeeRepositor
   const named = `${route.owner}/${route.repo}`.toLowerCase();
   const project: RegistryProject | undefined = findHistoricalProjectByRepositoryId(boot, named);
   const repositories = Array.isArray(project?.repositories) ? project.repositories.map(recordOf) : [];
-  const index = repositories.findIndex((repository) => [repository?.id, ...(Array.isArray(repository?.aliases) ? repository.aliases : [])].some((name) => typeof name === "string" && name.toLowerCase() === named));
+  const index = repositories.findIndex((repository) => [repository?.id, ...(Array.isArray(repository?.aliases) ? (repository.aliases as ReadonlyArray<unknown>) : [])].some((name) => typeof name === "string" && name.toLowerCase() === named));
   const repository = repositories[index];
   if (project === undefined || repository === undefined) return undefined;
   const repositoryId = index === 0 ? recordOf(project.authority)?.repositoryId : repository.githubId;
@@ -131,6 +156,11 @@ export function pullRequestSubject(repositoryId: string, pullNumber: number): Fe
 export function reportSubject(caseId: string): FeeSubject | undefined {
   const item = reportDepositItem(caseId);
   return item === undefined ? undefined : { kind: "ReportDeposit", caseId, item };
+}
+
+/** @throws {never} */
+export function standingSubject(githubId: string, item: string): FeeSubject | undefined {
+  return githubId !== "" && /^0x[0-9a-fA-F]{64}$/u.test(item) ? { kind: "StandingDeposit", githubId, item: item.toLowerCase() } : undefined;
 }
 
 /** @throws {never} */
@@ -176,10 +206,13 @@ function listedWay(entry: unknown, subject: FeeSubject, terms: FeeTerms, stableM
   const network = text(way?.network);
   const token = text(way?.token);
   const amount = text(way?.amount);
-  const minimumAccepted = subject.kind === "ReportDeposit" ? amount : text(way?.minimumAccepted);
+  const singleSlop = subject.kind === "ReportDeposit" || subject.kind === "StandingDeposit";
+  const minimumAccepted = singleSlop ? amount : text(way?.minimumAccepted);
+  const fallbackChainId = terms.networks.find((item) => item.network === network)?.chainId ?? -1;
+  const chainId = typeof way?.chainId === "number" ? way.chainId : subject.kind === "StandingDeposit" ? fallbackChainId : -1;
   const shown = publishedWay(terms, {
     network,
-    chainId: typeof way?.chainId === "number" ? way.chainId : -1,
+    chainId,
     contract: text(way?.contract),
     token,
     symbol: text(way?.symbol),
@@ -207,24 +240,53 @@ function listedWay(entry: unknown, subject: FeeSubject, terms: FeeTerms, stableM
 }
 
 /** @throws {never} */
+function solanaRuleWay(solana: SolanaFeeWay): RuleWay {
+  return {
+    network: solana.network,
+    token: solana.token.toLowerCase(),
+    kind: "StableWay",
+    published: true,
+    withinUint128: amountOf(solana.amount) <= uint128Max,
+    amount: toAmount(amountOf(solana.amount)),
+    minimum: toAmount(amountOf(solana.minimumAccepted)),
+    wholeSlop: false,
+    publishedSlopPair: false,
+  };
+}
+
+/** @throws {never} */
 function paymentOf(value: unknown, terms: FeeTerms): FeePayment | undefined {
   const paid = recordOf(value);
   const network = text(paid?.network);
   const token = text(paid?.token);
   const facts = tokenOf(terms, network, token);
-  const depositId = paid?.depositId;
+  const depositId = parseDepositId(paid?.depositId);
   const amount = text(paid?.amount);
   const transaction = text(paid?.transaction);
-  if (paid === undefined || facts === undefined || typeof depositId !== "number" || !Number.isSafeInteger(depositId) || depositId < 1 || typeof paid.finalized !== "boolean"
-    || !instant(paid.at) || !amountPattern.test(amount) || !hashPattern.test(transaction)) return undefined;
+  const solana = isSolanaFeeNetwork(network);
+  const validTx = solana ? isSolanaTransactionOrAddress(transaction) : hashPattern.test(transaction);
+  if (paid === undefined || facts === undefined || depositId === undefined || typeof paid.finalized !== "boolean"
+    || !instant(paid.at) || !amountPattern.test(amount) || !validTx) return undefined;
   return { at: text(paid.at), network, depositId, token, symbol: facts.symbol, decimals: facts.decimals, amount, transaction, finalized: paid.finalized, kind: facts.kind };
 }
 
 /** @throws {never} */
-function ownRecord(body: Record<string, unknown> | undefined, subject: FeeSubject): boolean {
-  if (body === undefined || typeof body.item !== "string" || body.item.toLowerCase() !== subject.item || !Array.isArray(body.due) || !instant(body.askedAt)
-    || !optional(body.outcomeAt, instant) || !optional(body.resolveTransaction, (entry) => typeof entry === "string" && hashPattern.test(entry))
+function validResolveTx(entry: unknown, paid: FeePayment | null | undefined): boolean {
+  if (typeof entry !== "string") return false;
+  return paid !== null && paid !== undefined && isSolanaFeeNetwork(paid.network)
+    ? isSolanaSignature(entry)
+    : hashPattern.test(entry);
+}
+
+/** @throws {never} */
+function ownRecord(body: Record<string, unknown> | undefined, subject: FeeSubject, payment: FeePayment | null | undefined): boolean {
+  if (body === undefined || typeof body.item !== "string" || body.item.toLowerCase() !== subject.item || !Array.isArray(body.due)
+    || !optional(body.outcomeAt, instant) || !optional(body.resolveTransaction, (entry) => validResolveTx(entry, payment))
     || !optional(body.outcome, (entry) => typeof entry === "string" && Object.hasOwn(outcomes, entry))) return false;
+  if (subject.kind === "StandingDeposit") {
+    return optional(body.askedAt, instant);
+  }
+  if (!instant(body.askedAt)) return false;
   return subject.kind === "PullRequestFee"
     ? body.schema === "slop-submission-fee-item-v1" && String(body.repositoryId) === subject.repositoryId && body.pullNumber === subject.pullNumber
     : body.schema === "slop-report-deposit-v1" && body.caseId === subject.caseId;
@@ -233,32 +295,50 @@ function ownRecord(body: Record<string, unknown> | undefined, subject: FeeSubjec
 /** @throws {never} */
 export function checkedRecord(value: unknown, subject: FeeSubject, terms: FeeTerms, rates: FeeRates | undefined): CheckedRecord {
   const body = recordOf(value);
-  const own = ownRecord(body, subject);
-  const stableMinor = subject.kind === "PullRequestFee" ? text(body?.stableMinor) : "";
-  const listed = (own && Array.isArray(body?.due) ? body.due : []).map((entry) => listedWay(entry, subject, terms, stableMinor, rates));
   const payment = body?.paid === null || body?.paid === undefined ? null : paymentOf(body.paid, terms);
+  let own = ownRecord(body, subject, payment);
+  const stableMinor = subject.kind === "PullRequestFee" ? text(body?.stableMinor) : "";
+  const rawDue = own && Array.isArray(body?.due) ? body.due : [];
+  const isSolanaEntry = (entry: unknown) => isSolanaFeeNetwork(text(recordOf(entry)?.network));
+  const solanaEntries = subject.kind === "PullRequestFee" ? rawDue.filter(isSolanaEntry) : [];
+  let solana: SolanaFeeWay | null = null;
+  if (solanaEntries.length > 1) {
+    own = false;
+  } else if (solanaEntries.length === 1) {
+    const checked = checkSolanaWay(terms, solanaEntries[0], stableMinor);
+    if (checked === "invalid") own = false;
+    else solana = checked;
+  }
+  const evmEntries = subject.kind === "PullRequestFee" ? rawDue.filter((entry) => !isSolanaEntry(entry)) : rawDue;
+  const listed = evmEntries.map((entry) => listedWay(entry, subject, terms, stableMinor, rates));
   const outcome = typeof body?.outcome === "string" && Object.hasOwn(outcomes, body.outcome) ? (body.outcome as RecordOutcome) : null;
   const ratesRead = rates !== undefined;
-  const ruleSubject: Subject = subject.kind;
+  const ruleSubject: Subject = subject.kind === "PullRequestFee" ? "PullRequestFee" : "ReportDeposit";
+  const ways: RuleWay[] = [
+    ...listed.map((entry) => entry.rule),
+    ...(solana !== null ? [solanaRuleWay(solana)] : []),
+  ];
   const record: FeeRecord = {
     subject: ruleSubject,
     ownRecord: own,
-    stableInLimits: subject.kind === "ReportDeposit" || validStableFee(stableMinor),
+    stableInLimits: subject.kind !== "PullRequestFee" || validStableFee(stableMinor),
     stableMinor: toAmount(amountOf(stableMinor)),
-    ways: listed.map((entry) => entry.rule),
+    ways,
     paid: body?.paid !== null && body?.paid !== undefined,
     paidPublished: payment !== undefined && payment !== null,
     paidNetwork: payment?.network ?? "",
     paidKind: payment?.kind === "slop" ? "SlopWay" : "StableWay",
     outcome: outcome === null ? "NoOutcome" : outcomes[outcome],
   };
-  const offered = listed.flatMap((entry) => (entry.shown !== undefined && (ratesRead || entry.shown.kind === "stable" || subject.kind === "ReportDeposit") ? [entry.shown] : []));
+  const offered = listed.flatMap((entry) => (entry.shown !== undefined && (ratesRead || entry.shown.kind === "stable" || subject.kind !== "PullRequestFee") ? [entry.shown] : []));
   return {
     record,
     ratesRead,
     shown: {
       item: subject.item,
+      stableMinor,
       due: offered,
+      solana,
       slopWithheld: subject.kind === "PullRequestFee" && listed.some((entry) => entry.shown?.kind === "slop") && !ratesRead,
       paid: payment ?? null,
       outcome,
@@ -271,4 +351,12 @@ export function checkedRecord(value: unknown, subject: FeeSubject, terms: FeeTer
 export function stillDue(fresh: ShownRecord, reviewed: FeeWay): boolean {
   const current = fresh.due.find((entry) => wayKey(entry) === wayKey(reviewed));
   return current !== undefined && current.amount === reviewed.amount;
+}
+
+/** @throws {never} */
+export function stillDueSolana(fresh: ShownRecord, reviewed: SolanaFeeWay): boolean {
+  return fresh.solana !== null
+    && fresh.solana.network === reviewed.network
+    && fresh.solana.token === reviewed.token
+    && fresh.solana.amount === reviewed.amount;
 }

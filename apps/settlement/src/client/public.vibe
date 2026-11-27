@@ -89,6 +89,8 @@ export schema AccountWallet {
 
 export schema DeliveryState = "needs_wallet" | "ready" | "submitted" | "held" | "paid"
 
+export schema EvmPayoutBindingStatus = "pending" | "finalized" | "unavailable"
+
 export schema AccountPayment {
   readonly id: string
   readonly vault: string
@@ -103,6 +105,7 @@ export schema AccountPayment {
   readonly transactionId: string | null
   readonly submittedTransactionId: string | null
   readonly deliveryState: DeliveryState
+  readonly bindingStatus?: EvmPayoutBindingStatus
   readonly netBase: string
 }
 
@@ -188,6 +191,7 @@ function row(entry: { readonly status: number; readonly error: string; readonly 
 }
 
 const session = getPaymentsMe
+const privateNoStore = { "cache-control": "private, no-store" } as const
 
 export const paymentsMe = route({
   method: "GET",
@@ -198,20 +202,21 @@ export const paymentsMe = route({
   answer: PaymentsAccount,
   rejected: "rejected",
   cache: "private",
+  refusalHeaders: privateNoStore,
   unauthenticated: row(session.notSignedIn),
   sessionExpired: row(session.sessionExpired),
   actorMismatch: row(session.actorChangedYourAccountChangedReload),
 })
 
-export const receivedTotals = route({ method: "GET", path: "/api/v1/payments/received", access: "public", limitKib: 1, request: undefined, answer: ReceivedTotals, rejected: "rejected", cache: { browserSeconds: 60, edgeSeconds: 60, staleSeconds: 600 } })
+export const receivedTotals = route({ method: "GET", path: "/api/v1/payments/received", access: "public", limitKib: 1, request: undefined, answer: ReceivedTotals, rejected: "rejected", cache: { browserSeconds: 60, edgeSeconds: 60, staleSeconds: 600 }, refusalHeaders: privateNoStore })
 
-export const vaultPayments = route({ method: "GET", path: "/api/v1/payments/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+export const vaultPayments = route({ method: "GET", path: "/api/v1/payments/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
 
-export const projectVaultPayments = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+export const projectVaultPayments = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
 
-export const projectDirectTransfers = route({ method: "GET", path: "/api/v1/payments/projects/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private" })
+export const projectDirectTransfers = route({ method: "GET", path: "/api/v1/payments/projects/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
 
-export const actorDirectTransfers = route({ method: "GET", path: "/api/v1/payments/actors/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private" })
+export const actorDirectTransfers = route({ method: "GET", path: "/api/v1/payments/actors/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
 
 export const poolFunding = route({ method: "GET", path: "/api/v1/pool-funding", access: "public", limitKib: 1, request: undefined, answer: PoolFunding, rejected: "rejected", cache: { browserSeconds: 60, edgeSeconds: 60 } })
 

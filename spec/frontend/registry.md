@@ -62,7 +62,11 @@ current registry: Manage project and the security program with its report
 form. Every other page may show the last good registry. A page is blocked,
 with "Projects are unavailable", the reason and Try again, when its policy is
 not independent and the registry failed, or when it needs the current registry
-and has only a stale one ("This page needs current project data."). An
+and has only a stale one ("This page needs current project data."). On Home,
+only the project-discovery section depends on the registry: during a registry
+outage, the generic agent setup hero (`InstallPanel` and the Contributor /
+Maintainer journey switch) stays accessible above the "Projects are
+unavailable" section (`f042a6d2c`, `#3056`). An
 unblocked page that uses the registry shows the banner "Projects stale ·
 <sync time>" with an icon button "Try again" when the registry is stale
 (development `src/App.tsx` at `67fd54fd4`).

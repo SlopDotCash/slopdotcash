@@ -48,7 +48,7 @@ type Json = Readonly<Record<string, unknown>>
 const noPromotion: AcceptedPromotion = { headTree: 0, mergeTree: 0, mergeParents: [], sourceHead: 0 }
 const noIdentical: IdenticalChange = { kind: "NoIdenticalChange", earlierSources: 0, ownerAt: -1, ownerRetiring: false, diffVerified: false, ownRecordPool: false,
   ownerPositive: false, ownerPositiveAtBaseline: false, sameHead: false, singleOwnCommit: false, carriedMatches: false, ownerPoolKept: false, originalAuthorPair: false,
-  carrierTipPinned: false }
+  carrierTipPinned: false, sameRecipientShares: false }
 const ordinaryCategory = "merged-pull-request"
 const maximumRetainedCommit = 1024 * 1024
 
@@ -109,6 +109,7 @@ effect function ordinaryRows(rows: Iterable<Row>, projectId: string, sourceIds: 
 function identicalKind(proof: IdenticalAcceptedChange): IdenticalKind {
   if (proof.carriedAcceptance === true) return "CarriedAcceptance"
   if (proof.emptySquash === true) return "EmptySquash"
+  if (proof.emptyMerge === true) return "EmptyMerge"
   if (proof.survivingCarrier === true) return "SurvivingCarrier"
   return proof.earlierMergeSha === proof.mergeSha ? "SharedMerge" : "DistinctSquash"
 }
@@ -117,9 +118,14 @@ const identicalKeySets: Readonly<Record<IdenticalKind, string>> = {
   NoIdenticalChange: "",
   CarriedAcceptance: "carriedAcceptance,diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
   EmptySquash: "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha",
+  EmptyMerge: "diffSha256,earlierMergeSha,earlierSourceId,emptyMerge,mergeSha",
   SurvivingCarrier: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier",
   SharedMerge: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
   DistinctSquash: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
+}
+
+function positiveShares(rows: ReadonlyArray<Row>) {
+  return rows.flatMap(({ award }) => award.amount > 0 ? [[award.actor.id, award.amount] as const] : []).sort(([left], [right]) => left.localeCompare(right, "en"))
 }
 
 effect function identicalRecord(input: RetirementInput, source: CorrectionSource, earlier: ReadonlyMap<string, CorrectionSource>) {
@@ -139,21 +145,26 @@ effect function identicalRecord(input: RetirementInput, source: CorrectionSource
   const positiveAtBaseline = positive.some(({ award }) => (input.latestBaseline.get(award.key)?.award.amount ?? 0) > 0)
   try require(identicalKeys(proof) === identicalKeySets[kind] && digestPattern.test(proof.diffSha256) && shaPattern.test(proof.earlierMergeSha) &&
     shaPattern.test(proof.mergeSha) && earlier.size === 1 && owner !== undefined && (proof.survivingCarrier !== true || !sharedMerge) &&
-    (kind === "CarriedAcceptance" ? !sharedMerge && carriedMatches : sharedMerge ? proof.emptySquash !== true && owner?.headSha === source.headSha : singleOwnCommit) &&
+    (kind === "CarriedAcceptance" ? !sharedMerge && carriedMatches : kind === "EmptyMerge" ? !sharedMerge :
+      sharedMerge ? proof.emptySquash !== true && owner?.headSha === source.headSha : singleOwnCommit) &&
     owner?.occurredAt !== null && source.occurredAt !== null && (owner?.occurredAt ?? "") < source.occurredAt && !input.retiringSources.has(owner?.sourceId ?? "") &&
     retirement.unchangedPromotion === undefined && retirement.earlierAcceptanceProof === undefined && retirement.acceptedPromotion === undefined &&
     retirement.acceptedSquashes === undefined && retirement.coverage.length === 0 && diffVerified &&
     (kind === "SurvivingCarrier" || kind === "DistinctSquash" ? positive.length > 0 : positiveAtBaseline),
     "Identical accepted change lacks a verified earlier ordinary pool")
   let ownerPoolKept = true
-  if (kind === "CarriedAcceptance") {
+  if (kind === "CarriedAcceptance" || kind === "EmptyMerge") {
     const before = try ordinaryRows(baselineRows, packet.projectId, [owner?.sourceId ?? ""])
     ownerPoolKept = before.length === ownerRows.length && ownerRows.every((row) => {
       const prior = input.latestBaseline.get(row.award.key)
-      return prior !== undefined && (prior.id === row.id || (row.previous === prior.id && row.decision?.reason === verifiedHistoricalAllocationDecision && same(row.award, prior.award)))
+      return prior !== undefined && (prior.id === row.id || (kind === "CarriedAcceptance" && row.previous === prior.id &&
+        row.decision?.reason === verifiedHistoricalAllocationDecision && same(row.award, prior.award)))
     })
-    try require(ownerPoolKept, "Carried merge changes the retained earlier ordinary pool")
+    if (kind === "CarriedAcceptance") try require(ownerPoolKept, "Carried merge changes the retained earlier ordinary pool")
   }
+  const sameRecipientShares = kind === "EmptyMerge" && same(positiveShares(input.pool), positiveShares(positive)) &&
+    positive.length === positiveShares(ownerRows).length
+  if (kind === "EmptyMerge") try require(ownerPoolKept && sameRecipientShares, "Empty merge must preserve the earlier pool with identical recipient shares")
   const ownPool = try ownRecordPool(input.pool)
   let originalAuthorPair = false
   if (kind === "SurvivingCarrier") {
@@ -190,6 +201,7 @@ effect function identicalRecord(input: RetirementInput, source: CorrectionSource
     ownerPoolKept,
     originalAuthorPair,
     carrierTipPinned: kind === "SurvivingCarrier" && diffVerified,
+    sameRecipientShares,
   } satisfies IdenticalChange
 }
 

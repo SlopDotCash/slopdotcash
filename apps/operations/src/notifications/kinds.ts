@@ -10,7 +10,7 @@ export function isStoredKind(stored: string): boolean {
     || stored === "project_reinstated" || stored === "reinstatement_denied" || stored === "reinstatement_review"
     || stored === "payout_exception" || stored === "security_case" || stored === "project_ready"
     || stored === "project_scan_failed" || stored === "project_installation_lost" || stored === "security_report_received"
-    || stored === "slopbot_appeal_review" || stored === "slopbot_scam_review";
+    || stored === "slopbot_appeal_review" || stored === "slopbot_scam_review" || stored === "trace_licensing_available";
 }
 
 //@ pure
@@ -36,7 +36,8 @@ export function storedKind(kind: Kind): string {
   if (kind === "ProjectInstallationLost") return "project_installation_lost";
   if (kind === "SecurityReportReceived") return "security_report_received";
   if (kind === "SlopbotAppealReview") return "slopbot_appeal_review";
-  return "slopbot_scam_review";
+  if (kind === "SlopbotScamReview") return "slopbot_scam_review";
+  return "trace_licensing_available";
 }
 
 //@ pure
@@ -63,15 +64,6 @@ export function kindOfStored(stored: string): Kind {
   if (stored === "project_installation_lost") return "ProjectInstallationLost";
   if (stored === "security_report_received") return "SecurityReportReceived";
   if (stored === "slopbot_appeal_review") return "SlopbotAppealReview";
-  return "SlopbotScamReview";
-}
-
-//@ pure
-export function securityTemplateVersion(kind: Kind): string {
-  //@ ensures \result === "" || \result === "security-inbox-v1" || \result === "security-receipt-v1"
-  //@ ensures (\result === "security-inbox-v1") === (kind === "SecurityCase")
-  //@ ensures (\result === "security-receipt-v1") === (kind === "SecurityReportReceived")
-  if (kind === "SecurityCase") return "security-inbox-v1";
-  if (kind === "SecurityReportReceived") return "security-receipt-v1";
-  return "";
+  if (stored === "slopbot_scam_review") return "SlopbotScamReview";
+  return "TraceLicensingAvailable";
 }

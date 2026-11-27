@@ -2,7 +2,7 @@ name: Windows installer contract
 
 on:
   pull_request:
-    branches: [vibestack, development, main]
+    branches: [develop, development, main]
     paths:
       - ".github/workflows/windows-installer.yml"
       - ".github/actions/setup/action.yml"
@@ -36,6 +36,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.13"
+      - name: Install the skill validator dependency
+        shell: pwsh
+        run: |
+          $python = Join-Path $env:pythonLocation 'python.exe'
+          & $python -m pip install PyYAML==6.0.3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "SLOP_PYTHON=$python" >> $env:GITHUB_ENV
       - uses: ./.github/actions/setup
         with:
           job: windows-installer

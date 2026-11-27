@@ -1010,4 +1010,15 @@ pure val weight_accrue = 10
 pure val weight_registerVault = 8
 pure val weight_observeBalance = 10
 pure val weight_abandonIntent = 30
+pure val eval_witness_sometimesClaimFinalized = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("registerVault", { vault: 7, deployment: 70, token: 1 }, R::ReleaseWorkflow),
+  ("accrue", { vault: 7, recipient: 1, accrued: 1000000000, height: 5, finalized: true, roleFree: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("claim", 1, { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
 ```

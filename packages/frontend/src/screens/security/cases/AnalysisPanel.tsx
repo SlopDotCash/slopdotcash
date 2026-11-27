@@ -2,7 +2,7 @@
 import { Alert, Spinner, Status } from "@repo/ui";
 import { Sparkles } from "lucide-react";
 import { badge, lossLabels } from "./labels.ts";
-import { Fact, InfoTip, RetryButton, type RetryProps } from "./parts.tsx";
+import { CaseFact, InfoTip, RetryButton, type RetryProps } from "./parts.tsx";
 
 /** The automatic private analysis, for the owner and triagers only: a proposal the maintainer decides on. */
 export function AnalysisPanel({ record, busy, error, onRetry }: RetryProps) {
@@ -22,10 +22,10 @@ export function AnalysisPanel({ record, busy, error, onRetry }: RetryProps) {
         <>
           <p>{analysis.summary}</p>
           <dl className="flex flex-col gap-2">
-            <Fact term="Proposed severity">{analysis.proposedSeverity ?? "—"}</Fact>
-            <Fact term="Loss of funds">{loss ? <Status presentation={badge(loss[0], loss[1])} /> : (analysis.potentialLoss ?? "—")}</Fact>
-            <Fact term="Possible duplicates">{analysis.duplicateCaseIds.length === 0 ? "None found" : analysis.duplicateCaseIds.join(", ")}</Fact>
-            <Fact term="Remediation">{analysis.remediation ?? "—"}</Fact>
+            <CaseFact term="Proposed severity">{analysis.proposedSeverity ?? "—"}</CaseFact>
+            <CaseFact term="Loss of funds">{loss ? <Status presentation={badge(loss[0], loss[1])} /> : (analysis.potentialLoss ?? "—")}</CaseFact>
+            <CaseFact term="Possible duplicates">{analysis.duplicateCaseIds.length === 0 ? "None found" : analysis.duplicateCaseIds.join(", ")}</CaseFact>
+            <CaseFact term="Remediation">{analysis.remediation ?? "—"}</CaseFact>
           </dl>
           <p className="flex items-center gap-2">
             <Status presentation={badge("AI")} /> <InfoTip text="AI proposal; you decide" />

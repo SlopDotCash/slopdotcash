@@ -1,6 +1,6 @@
 # Slop specification migration
 
-The `vibestack` branch starts a new Git history from the Slop Vibestack template.
+The `develop` branch (originally created as `vibestack`) starts a new Git history from the Slop Vibestack template.
 The initial commit carries that template, the pinned Slop requirements, formal
 models and migration evidence. Git requires a commit before a branch can be
 pushed. The old application remains on its existing branches.
@@ -45,7 +45,7 @@ These local patches differ from that commit:
 | Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps signer custody, frozen-source exclusions, package exports and UI-driver rules. Upstream's comment and effect rules allow only the inventoried existing counts; new violations fail |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
 | Native setup | `.github/actions/setup/action.yml`, `.github/workflows/ci.yml` | Keep the reviewed validator image; install libcurl headers and the SHA-pinned Agave program builder without shadowing that validator |
-| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
+| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `develop`, `development` and `main`, and the nightly fuzz run targets the default branch (`develop`); the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
 `AGENTS.md` includes the Slop specification migration section, which names
 `lucide-react` as the single icon library and keeps pull-request narratives
@@ -102,31 +102,33 @@ database migration, route, signer, deployment or transaction.
 
 ## Frontend parity
 
-Each `development` route at `24885ae9e` (`src/App.tsx`), its vibestack spec
-and its page in `packages/frontend` (`src/app/registered.tsx`). "Post-pin"
-marks a later `development` PRD or interface change that the retained PRD
-snapshot does not carry; it waits for the requirements repin.
+Each route on `develop` (`packages/frontend/src/app/registered.tsx` and
+`packages/frontend/src/app/extraRoutes.tsx`), its `main-old` counterpart
+(`bd8ab0f67`), its Vibestack spec and its page in `packages/frontend`.
 
-| Address | `development` screen | Spec (`spec/`) | `packages/frontend` | Gap |
+| Address | Legacy screen | Spec (`spec/`) | `packages/frontend` | Gap |
 | --- | --- | --- | --- | --- |
-| `/` | `HomePage` in `App.tsx`, `SecurityOffer` | `app`, `frontend/presentation`, `poolListing`, `views` | `screens/home` | Post-pin: home Points leaderboard removed (`f75c049aa`), non-Points rewards listed (`b1b08de50`) |
-| `/how-it-works` | `PublicPages`, `PointsRules` | `frontend/projections`, `vaultLocks`, `points/scoringPolicy`, `slopbot/categories` | `screens/public` | Post-pin FAQ answers (`3bb6ba9d8`, `e4d5fe3a0`) |
+| `/` | `HomePage` in `App.tsx`, `SecurityOffer` | `app`, `frontend/presentation`, `poolListing`, `views` | `screens/home` | None (home Points leaderboard removed, non-Points rewards listed) |
+| `/how-it-works` | `PublicPages`, `PointsRules` | `frontend/projections`, `vaultLocks`, `points/scoringPolicy`, `slopbot/categories` | `screens/public` | None |
 | `/sponsors` | `SponsorsPage` | `frontend/poolListing`, `projections`, `views` | `screens/public` | None |
 | `/cycles`, `/cycles/:project/:cycle` | `CyclePages`, `ProjectLeaderboard`, `VaultPaymentHistory` | `frontend/views`, `projections`, `rankedSnapshot`, `paymentHistory`, `snapshotCache` | `screens/cycles` | None |
-| `/points` | `PointsPage` in `Points.tsx` | `frontend/projections`, `rankedSnapshot`, `requests` | `screens/points` | Post-pin: titled "Contributors", Points hidden (`99b25b769`); `routes` keeps "Leaderboard" |
-| `/account`, `/wallet`, `/points?x` | `AccountPage`, `InboxEmail`, `ReferralCode` | `frontend/presentation`, `walletConsent`, `referralSettings`, `backend/email`, `xConnection` | `screens/account`, `referrals` | None |
-| `/login` | `LoginPage` in `Points.tsx` | `backend/accounts`, `frontend/composition` | `screens/account` | Post-pin: sign-in bound to its browser (`805b26053`) |
-| `/earnings` | `Earnings`, `PayoutRows`, `PayoutConsent`, `ContributorAllocation`, `ReferralClaims` | `frontend/projections`, `walletConsent`, `referralSettings`, `settlement/publicRecords` | `screens/payouts` | Allocation row specified in `frontend/projections`; no page row yet |
+| `/points` | `PointsPage` in `Points.tsx` | `frontend/projections`, `rankedSnapshot`, `requests`, `routes` | `screens/points` | None (titled "Contributors", Points hidden) |
+| `/account`, `/wallet`, `/points?x` | `AccountPage`, `InboxEmail`, `ReferralCode`, `TraceLicensing` | `frontend/presentation`, `walletConsent`, `referralSettings`, `backend/email`, `xConnection` | `screens/account`, `referrals` | None |
+| `/login` | `LoginPage` in `Points.tsx` | `backend/accounts`, `frontend/composition` | `screens/account` | None (browser-bound sign-in ported) |
+| `/earnings` | `Earnings`, `PayoutRows`, `PayoutConsent`, `ContributorAllocation`, `ReferralClaims` | `frontend/projections`, `walletConsent`, `referralSettings`, `settlement/publicRecords` | `screens/payouts` | None (`ContributorAllocationRow` rendered on `/earnings`) |
 | `/inbox` | `Inbox`, `InboxEmailAction`, `IncompleteAssessments`, `PointsDisputes`, `PrivateReportSummary` | `frontend/navigation`, `emailAction`, `reportDetails`, `operations/notifications`, `slopbot/assessmentInbox`, `points/disputes` | `screens/inbox` | None |
 | `/admin` | `Admin`, `AdminProjectEnforcement`, `AdminVetting`, `GeneratedSkillPreview` | `frontend/navigation`, `backend/projects`, `security/enforcement`, `admission`, `fees/feeReport` | `screens/admin` | None |
 | `/projects/new` | `ProjectProposalPage`, `ProjectSetupStatus`, `PendingProjectApplications`, field components | `frontend/presentation`, `projectDrafts`, `backend/projects`, `closureConsent`, `referralCodes` | `screens/setup` | None |
 | `/vetting-evidence` | `VettingEvidence` | `frontend/navigation`, `security/evidence`, `privacy` | `screens/admin` | None |
-| `/security` | `SecurityBounty`, `DirectBountyPayment`, `SolanaBountyPayment`, `SolanaBountyRecovery`, `BountySubmittedPayments` | `security/cases`, `privacy`, `frontend/directBountyPrompt`, `solanaBountyPrompt`, `walletAttempt` | `screens/security` | Post-pin: owner marks a rejected report as spam (`a381f7591`) |
-| `/projects/:project` | `ProjectPage`, `ProjectWork`, `EscrowFunding`, `PublicVaultFunding`, `OwnerAwards`, `OwnerCommitment`, `OwnerReserveRelease`; bounty-only `ProjectBountyFunding` | `frontend/projections`, `poolListing`, `views`, `projectLinks`, `rankedSnapshot`, `ownerMonthly`, `paymentHistory`, `vaultLocks` | `screens/projects`, `screens/funding` | Post-pin: wanted issues first (`13d3f5144`). `ProjectRiskFlag` is unmounted since `ec3526fe6`; `flows/projects/flags.vibe` has no page |
-| `/projects/:project/manage` | `ProjectUpdatePage`, `OwnerVaultSetup`, `VaultActions`, `VaultMonthLock`, `AutomaticMonthlyPayment` | `frontend/projectDrafts`, `readyLabelForm`, `ownerVault`, `provisionalVault`, `batchedDeposit`, `monthLock`, `ownerMonthly` | `screens/setup/update`, `screens/funding/vault` | Post-pin: integration-branch publication (`e2fe2b22f`), submission fee setting (`8008b4617`) |
-| `/projects/:project/security` | `SecurityBounty`, `PrivateReportForm`, `ReportProofFields`, `ProjectSecuritySettings`, `SecurityProgramEditor`, `OwnerBountyVault` | `security/program`, `terms`, `intake`, `frontend/drafts`, `reportDetails`, `ownerMonthly` | `screens/security` | Post-pin: proof-of-concept file (`548dcaaf7`) |
-| `/contributors/:login` | `ProfilePage`, `Profiles` | `frontend/views`, `rankedSnapshot`, `points/profiles`, `penalties` | `screens/profiles` | Post-pin: Points hidden (`99b25b769`), verifiable evidence (`bf73d46fa`) |
-| `/fee/:owner/:repo/:number`, `/fee/report/:case` | `SubmissionFeePage`, `SubmissionFeePay`, `ReportDepositPage` | None: `app` has no route kind | None | Owner decision on submission deposits |
+| `/security` | `SecurityBounty`, `DirectBountyPayment`, `SolanaBountyPayment`, `SolanaBountyRecovery`, `BountySubmittedPayments` | `security/cases`, `privacy`, `frontend/directBountyPrompt`, `solanaBountyPrompt`, `walletAttempt` | `screens/security` | None (owner spam mark ported) |
+| `/projects/:project` | `ProjectPage`, `ProjectWork`, `EscrowFunding`, `PublicVaultFunding`, `OwnerAwards`, `OwnerCommitment`, `OwnerReserveRelease`; bounty-only `ProjectBountyFunding` | `frontend/projections`, `poolListing`, `views`, `projectLinks`, `rankedSnapshot`, `ownerMonthly`, `paymentHistory`, `vaultLocks` | `screens/projects`, `screens/funding` | None (wanted issues first ported; `ProjectRiskFlag` stays unmounted as on `main-old`) |
+| `/projects/:project/manage` | `ProjectUpdatePage`, `OwnerVaultSetup`, `VaultActions`, `VaultMonthLock`, `AutomaticMonthlyPayment` | `frontend/projectDrafts`, `readyLabelForm`, `ownerVault`, `provisionalVault`, `batchedDeposit`, `monthLock`, `ownerMonthly` | `screens/setup/update`, `screens/funding/vault` | None (integration branch and submission fee settings ported) |
+| `/projects/:project/security` | `SecurityBounty`, `PrivateReportForm`, `ReportProofFields`, `ProjectSecuritySettings`, `SecurityProgramEditor`, `OwnerBountyVault` | `security/program`, `terms`, `intake`, `frontend/drafts`, `reportDetails`, `ownerMonthly` | `screens/security` | None (proof-of-concept file upload ported) |
+| `/contributors/:login` | `ProfilePage`, `Profiles` | `frontend/views`, `rankedSnapshot`, `points/profiles`, `penalties` | `screens/profiles` | None (Points hidden, verifiable evidence ported) |
+| `/fee/:owner/:repo/:number`, `/fee/report/:case` | `SubmissionFeePage`, `SubmissionFeePay`, `ReportDepositPage` | `app`, `frontend/feePages`, `backend/submissionFeeTerms` | `screens/fee` | None |
+| `/deposit` | `StandingDepositPage` | `fees/submissionFeeStandingDeposits` | `screens/fee`, `app/extraRoutes` | None |
+| `/requested` | `RequestedReposPage` | `frontend/requestedRepos`, `backend/repoRequests` | `screens/requested` | None |
+| `/record`, `/receipts`, `/referrals`, `/buyback`, `/october-allocation`, `/sponsored-pools`, `/privacy` | `RecordPage`, `ReceiptsPage`, `RecordTermsPage` | `frontend/routes`, `operations/recordPublication` | `screens/public`, `app/extraRoutes` | None |
 | Any other | `NotFound` | `app`, `frontend/routes` | `app` | None |
 
 Shared pieces map to `spec/ui/`: `Operations` copy controls to `copy`,

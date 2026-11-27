@@ -36,7 +36,7 @@ schema CapturedRepository { readonly id: string; readonly countsFrom?: string }
 schema CapturedProject { readonly repositories: ReadonlyArray<CapturedRepository> }
 schema CapturedRegistry { readonly schemaVersion: number; readonly projects: ReadonlyArray<CapturedProject> }
 
-const usage = "journal build <registry.json> <public data directory> <registry snapshot.json> [--online] [--bootstrap] [--environment production|staging] | journal import <public data directory> <registry.json> --current-origin https://slop.cash"
+const usage = "journal build <registry.json> <public data directory> <registry snapshot.json> [--online] [--bootstrap] [--environment production|staging] [--fresh-snapshot <sha256>] | journal import <public data directory> <registry.json> --current-origin https://slop.cash"
 const historyPath = "data/points/history.json"
 const reviewHistoryPath = "data/accepted-review-history.json"
 const cyclesDirectory = "cycles"
@@ -52,6 +52,7 @@ interface BuildArguments {
   readonly online: boolean
   readonly bootstrap: boolean
   readonly environment: Environment
+  readonly freshSnapshot?: string
 }
 
 function refused(message: string) {
@@ -133,6 +134,7 @@ effect function buildArguments(args: ReadonlyArray<string>) {
   let online = false
   let bootstrap = false
   let environment: Environment = "Production"
+  let freshSnapshot: string | undefined = undefined
   for (let position = 0; position < flags.length; position++) {
     const flag = flags[position]
     if (flag === "--online") online = true
@@ -140,9 +142,14 @@ effect function buildArguments(args: ReadonlyArray<string>) {
     else if (flag === "--environment") {
       environment = try environmentOf(flags[position + 1])
       position += 1
+    } else if (flag === "--fresh-snapshot" && freshSnapshot === undefined) {
+      freshSnapshot = flags[position + 1]
+      if (freshSnapshot === undefined || !/^[a-f0-9]{64}$/u.test(freshSnapshot)) throw refused(`Usage: ${usage}`)
+      position += 1
     } else throw refused(`Usage: ${usage}`)
   }
-  return { registry, directory, snapshot, online, bootstrap, environment } satisfies BuildArguments
+  if (freshSnapshot !== undefined && !online) throw refused("Fresh collection evidence requires online journal protection")
+  return { registry, directory, snapshot, online, bootstrap, environment, ...(freshSnapshot === undefined ? {} : { freshSnapshot }) } satisfies BuildArguments
 }
 
 effect function writeBuildFile(name: string, text: string) {
@@ -182,12 +189,12 @@ effect function build(args: ReadonlyArray<string>) {
   const registry = try readRegistry(parsed.registry)
   const repositories = repositoriesOf(registry, try countsFromOf(parsed.snapshot))
   const origin = origins[parsed.environment]
-  const snapshots = try readSnapshots(try snapshotTexts(parsed.directory), registry)
+  const snapshots = try readSnapshots(try snapshotTexts(parsed.directory), registry, parsed.freshSnapshot)
   let holding: Holding | null = null
-  if (published !== null) {
-    holding = { known: new Set(published.revisions.map((revision) => revision.id)), protection: try resolveProtection(try committedMonths(), try protectionEnvironment(), origin), groups: reviewedMergeGroups(snapshots, repositories) }
+  if (published !== null || parsed.freshSnapshot !== undefined) {
+    holding = { known: new Set(store.revisions.map((revision) => revision.id)), protection: try resolveProtection(try committedMonths(), try protectionEnvironment(), origin), groups: reviewedMergeGroups(snapshots, repositories) }
   }
-  try applySnapshots(store, repositories, snapshots, recordedAt)
+  try applySnapshots(store, repositories, snapshots, recordedAt, parsed.freshSnapshot)
   const heldAfterSnapshots = try heldIn(store, holding)
   const vaults = parsed.online ? try loadVaultPayouts(store.revisions.map((row) => row.award.actor), origin) : []
   const recognizedAt = try isoNow()

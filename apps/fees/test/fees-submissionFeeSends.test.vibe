@@ -9,6 +9,16 @@ import { askItem, dueOutcome } from "@repo/slopbot/fee/items"
 import { feeNetworks, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
 import { submissionDepositsAbi } from "../src/submissionFee/abi.ts"
 import { type DepositRun, type NetworkFailure, type NetworkResult, type SubmissionFeeWorkerEnv, depositPass } from "../src/submissionFee/run.vibe"
+import {
+  SOLANA_SUBMISSION_FEE_MINT,
+  SOLANA_SUBMISSION_FEE_NETWORK,
+  SOLANA_SUBMISSION_FEE_PROGRAM_ID,
+  SOLANA_SUBMISSION_FEE_START_SLOT,
+  SOLANA_SUBMISSION_FEE_SWITCHED_ON,
+  associatedUsdcAccount,
+} from "../src/submissionFee/solanaProgram.ts"
+import { SOLANA_EXPIRED, SOLANA_LANDED_FAILED, type SolanaRunResult, parseSolanaSubmissionFeeConfig } from "../src/submissionFee/solanaWorker.vibe"
+import { type FakeSolanaLedger, buildSettlementTransaction, createFakeSolanaLedger, depositAccountOf, nextSolanaBlockhash, solanaAddressFromHex, solanaFeeRpc } from "./support/solanaFeeFake.ts"
 import { type FeePorts, type FeeWorld, contract, network, payer, startedFeeWorld, usdg, withFeePorts } from "./support/submissionFee.vibe"
 
 const wallet = feeWallet.toLowerCase() as Hex
@@ -43,8 +53,10 @@ interface Contract {
 
 interface SendsWorld extends FeeWorld {
   readonly chain: Contract
+  readonly solana: FakeSolanaLedger
   readonly robinhoodUrl: string
   readonly baseUrl: string
+  readonly solanaUrl: string
 }
 
 service World: SendsWorld {}
@@ -112,10 +124,17 @@ function contractRpc(chain: Contract): Handler {
 
 const down: Handler = async () => new Response("down", { status: 500 })
 
+const solanaResolverSeed = "11".repeat(32)
+const solanaResolverAddr = solanaAddressFromHex(solanaResolverSeed)
+const solanaOwnerAddr = solanaAddressFromHex("44".repeat(32))
+const solanaPayerX = solanaAddressFromHex("22".repeat(32))
+const solanaPayerY = solanaAddressFromHex("33".repeat(32))
+
 const Started = Layer.effect(World, effect {
   const chain: Contract = { latest: firstBlock, nonce: 0, estimate: 100_000n, broken: false, sendFails: false, refuses: new Set(), silent: new Set(), deposits: new Map(), sent: [], mined: new Map() }
-  const { urls: [robinhoodUrl = "", baseUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee-sends", start, [contractRpc(chain), down])
-  return { ...base, chain, robinhoodUrl, baseUrl }
+  const solana = createFakeSolanaLedger(solanaOwnerAddr, solanaResolverAddr)
+  const { urls: [robinhoodUrl = "", baseUrl = "", solanaUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee-sends", start, [contractRpc(chain), down, solanaFeeRpc(solana)])
+  return { ...base, chain, solana, robinhoodUrl, baseUrl, solanaUrl }
 })
 
 effect function provided<A, E>(program: A!E!FeePorts) {
@@ -134,7 +153,7 @@ effect function environment(mode: string, keyed = true) {
   } satisfies SubmissionFeeWorkerEnv
 }
 
-function entryOf(run: DepositRun, name: string): NetworkResult | NetworkFailure | undefined {
+function entryOf(run: DepositRun, name: string): NetworkResult | SolanaRunResult | NetworkFailure | undefined {
   return run.status === "ran" ? run.networks.find((entry) => entry.network === name) : undefined
 }
 
@@ -370,6 +389,140 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       off: [{ status: "off" }, 0],
       dry: ["recorded", "unchanged", [["dry_run", "recorded", [{ id: 34, refund: true }], null]], 0],
       keyless: ["SubmissionFeeConfigInvalid", "live mode needs SUBMISSION_FEE_RESOLVER_KEY"],
+    }))
+  })
+
+  it.effect('Solana publishes its mainnet program id and is switched on, isolates Solana config errors from EVM, journals sends, falls back to single sends after on-chain failure, parks failed singles and settles closed deposits from finalized chain proofs (spec/fees/submissionFeeSends.md, "A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last"; spec/fees/submissionFeeSends.md, "A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers")', () => effect {
+    const world = try World
+    const { solana } = world
+    const ataX = associatedUsdcAccount(solanaPayerX, SOLANA_SUBMISSION_FEE_MINT) ?? ""
+    const ataY = associatedUsdcAccount(solanaPayerY, SOLANA_SUBMISSION_FEE_MINT) ?? ""
+    solana.tokenAccounts.set(ataX, { mint: SOLANA_SUBMISSION_FEE_MINT, owner: solanaPayerX, amount: 0n, state: 1 })
+    solana.tokenAccounts.set(ataY, { mint: SOLANA_SUBMISSION_FEE_MINT, owner: solanaPayerY, amount: 0n, state: 1 })
+    const offConfig = try provided(parseSolanaSubmissionFeeConfig({ SUBMISSION_FEE_SOLANA_MODE: "off", RPC_URL_SUBMISSION_FEE_SOLANA: "bad" }))
+    const isolatedRun = try provided(depositPass({
+      ...(try environment("dry_run", false)),
+      SUBMISSION_FEE_SOLANA_MODE: "live",
+      RPC_URL_SUBMISSION_FEE_SOLANA: "not-https",
+    }, feeNetworks))
+    const unsetRun = try provided(depositPass({
+      SUBMISSION_FEE_MODE: "off",
+      SUBMISSION_FEE_SOLANA_MODE: "live",
+    }, feeNetworks, { programId: null, startSlot: null }))
+    try ask(101, 101)
+    try ask(102, 102)
+    try ask(103, 103)
+    const depositedAt = Math.floor(start / 1000)
+    const depX = { id: 1, payer: solanaPayerX, nonce: 1n, item: item(101), amount: 2_000_000n, depositedAt, open: true }
+    const depY = { id: 2, payer: solanaPayerY, nonce: 2n, item: item(102), amount: 2_000_000n, depositedAt, open: true }
+    const depZ = { id: 3, payer: solanaPayerY, nonce: 3n, item: item(103), amount: 2_000_000n, depositedAt, open: true }
+    solana.deposits.set(1, depX)
+    solana.deposits.set(2, depY)
+    solana.deposits.set(3, depZ)
+    const solanaEnv = (mode: "dry_run" | "live"): SubmissionFeeWorkerEnv => ({
+      SUBMISSION_FEE_MODE: "off",
+      SUBMISSION_FEE_SOLANA_MODE: mode,
+      RPC_URL_SUBMISSION_FEE_SOLANA: world.solanaUrl,
+      SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX: "20000",
+      SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY: "2000000",
+      ...mode === "live" ? { SUBMISSION_FEE_SOLANA_RESOLVER_SEED: solanaResolverSeed } : {},
+    })
+    const dryFirst = try provided(depositPass(solanaEnv("dry_run"), feeNetworks))
+    try decide(101, "refund_due")
+    try decide(102, "refund_due")
+    const dryPlan = try provided(depositPass(solanaEnv("dry_run"), feeNetworks))
+    const dryAgain = try provided(depositPass(solanaEnv("dry_run"), feeNetworks))
+    const solanaSends = () => provided(rows(SendSeen, sql`SELECT deposits, mode, state, reason, raw_tx FROM submission_fee_solana_sends ORDER BY rowid`))
+    const dryRows = try solanaSends()
+    solana.sendFails = true
+    const lost = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    const unknownRow = (try solanaSends()).at(-1)
+    solana.sendFails = false
+    const resent = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    const expiredSig = solana.sent[solana.sent.length - 1]?.sig ?? ""
+    solana.blockHeight = solana.lastValidBlockHeight + 1
+    solana.slot += 5
+    nextSolanaBlockhash(solana, 8)
+    const afterExpiry = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    const batchSig = solana.sent[solana.sent.length - 1]?.sig ?? ""
+    solana.statuses.set(batchSig, { slot: solana.slot + 1, confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } })
+    nextSolanaBlockhash(solana, 9)
+    const afterBatchFail = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    const singleXSig = solana.sent[solana.sent.length - 1]?.sig ?? ""
+    const singleXRow = (try solanaSends()).at(-1)
+    solana.statuses.set(singleXSig, { slot: solana.slot + 2, confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] } })
+    nextSolanaBlockhash(solana, 10)
+    const afterSingleFail = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    const singleYSig = solana.sent[solana.sent.length - 1]?.sig ?? ""
+    const singleYRow = (try solanaSends()).at(-1)
+    depY.open = false
+    solana.slot += 10
+    solana.statuses.set(singleYSig, { slot: solana.slot, confirmationStatus: "finalized", err: null })
+    solana.transactions.set(singleYSig, buildSettlementTransaction({ ledger: solana, deposit: depY, kind: "refunded", slot: solana.slot, blockTime: depositedAt + 100 }))
+    const afterYFinal = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    depZ.open = false
+    solana.slot += 10
+    const reclaimSig = "5".repeat(87)
+    solana.signaturesByAddress.set(depositAccountOf(solana, depZ), [{ signature: reclaimSig, slot: solana.slot - 1, err: null, blockTime: depositedAt + 200 }])
+    solana.transactions.set(reclaimSig, buildSettlementTransaction({ ledger: solana, deposit: depZ, kind: "reclaimed", slot: solana.slot - 1, blockTime: depositedAt + 200 }))
+    const afterReclaim = try provided(depositPass(solanaEnv("live"), feeNetworks))
+    schema DepositStateRow { readonly deposit_id: number; readonly state: string; readonly deposit_account: string | null }
+    schema ScanRow { readonly compared_slot: number }
+    schema SearchDoneRow { readonly deposit_id: number; readonly done: number }
+    const depositStates = try provided(rows(DepositStateRow, sql`SELECT deposit_id, state, deposit_account FROM submission_fee_deposits WHERE network = ${SOLANA_SUBMISSION_FEE_NETWORK} ORDER BY deposit_id`))
+    const solanaParked = try provided(rows(ParkedSeen, sql`SELECT deposit_id, reason, released_at IS NOT NULL AS released FROM submission_fee_parked WHERE network = ${SOLANA_SUBMISSION_FEE_NETWORK} ORDER BY deposit_id`))
+    const scanSlot = try provided(rows(ScanRow, sql`SELECT compared_slot FROM submission_fee_solana_scans WHERE network = ${SOLANA_SUBMISSION_FEE_NETWORK}`))
+    const searchDone = try provided(rows(SearchDoneRow, sql`SELECT deposit_id, done_at IS NOT NULL AS done FROM submission_fee_solana_settlements WHERE network = ${SOLANA_SUBMISSION_FEE_NETWORK} ORDER BY deposit_id`))
+    const allSolanaSends = try solanaSends()
+    const solRes = (run: DepositRun) => entryOf(run, SOLANA_SUBMISSION_FEE_NETWORK) as SolanaRunResult
+    try Effect.try(() => assert.deepStrictEqual({
+      published: [SOLANA_SUBMISSION_FEE_PROGRAM_ID, SOLANA_SUBMISSION_FEE_START_SLOT, SOLANA_SUBMISSION_FEE_SWITCHED_ON, offConfig],
+      isolated: [
+        isolatedRun.status,
+        (entryOf(isolatedRun, network) as NetworkResult | undefined)?.status,
+        (entryOf(isolatedRun, SOLANA_SUBMISSION_FEE_NETWORK) as NetworkFailure | undefined)?.reason.startsWith("config.solana/"),
+      ],
+      unset: unsetRun.status === "ran" ? unsetRun.unset : [],
+      dry: [solRes(dryFirst).recorded, solRes(dryFirst).paid, solRes(dryPlan).send, solRes(dryAgain).send, dryRows.length, dryRows[0]?.state],
+      lostAndExpired: [
+        solRes(lost).send,
+        unknownRow?.state,
+        solRes(resent).send,
+        expiredSig.length > 0,
+        allSolanaSends.some((row) => row.state === "failed" && row.reason === SOLANA_EXPIRED),
+        solRes(afterExpiry).send,
+      ],
+      failedBatchToSingles: [
+        solRes(afterBatchFail).send,
+        JSON.parse(singleXRow?.deposits ?? "[]"),
+        solRes(afterSingleFail).parked,
+        solRes(afterSingleFail).send,
+        JSON.parse(singleYRow?.deposits ?? "[]"),
+        allSolanaSends.filter((row) => row.reason === SOLANA_LANDED_FAILED).length,
+      ],
+      settled: [
+        solRes(afterYFinal).resolved,
+        solRes(afterReclaim).resolved,
+        depositStates.map((r) => [r.deposit_id, r.state, r.deposit_account !== null]),
+        solanaParked,
+        (scanSlot[0]?.compared_slot ?? 0) > 0,
+        searchDone,
+      ],
+    }, {
+      published: ["4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7", 474211652, true, { mode: "off", ledger: null }],
+      isolated: ["ran", "ran", true],
+      unset: [SOLANA_SUBMISSION_FEE_NETWORK],
+      dry: [3, 3, "recorded", "unchanged", 1, "recorded"],
+      lostAndExpired: ["in_flight", "unknown", "in_flight", true, true, "sent"],
+      failedBatchToSingles: ["sent", [{ id: 1, refund: true }], 1, "sent", [{ id: 2, refund: true }], 2],
+      settled: [
+        1,
+        1,
+        [[1, "refund_due", true], [2, "refunded", true], [3, "reclaimed", true]],
+        [{ deposit_id: 1, reason: "reverted_alone", released: 0 }],
+        true,
+        [{ deposit_id: 3, done: 1 }],
+      ],
     }))
   })
 })

@@ -847,4 +847,21 @@ pure val fromPeriodValues = Set(202612, 202701)
 pure val countValues = Set(1, 2)
 pure val weight_pledgeMonths = 20
 pure val weight_expirePledge = 15
+pure val eval_witness_sometimesEvmStrandedLeaf = (
+  ("initializeFactory", "registrar", "fees", "attester", 0, "upgrader", 1, 1, true, "owner"),
+  ("createWithMonthlyCommitment", "slop", "usdc", 100, true, true, "owner"),
+  ("deposit", 100, 0, true, "owner"),
+  ("tick", 1796342400, "owner"),
+  ("commitAward", 1, 1, 4, "owner"),
+  ("reserveMonthly", 202611, { digest: "d", root: "r", wholeGross: 54, remainingGross: 54, count: 2,
+    leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }) }, 1, "attester", "owner"))
+pure val eval_witness_sometimesEvmStrandedLeafLocked = (
+  ("initializeFactory", "registrar", "fees", "attester", 0, "upgrader", 1, 1, true, "owner"),
+  ("createWithMonthlyCommitment", "slop", "usdc", 100, true, true, "owner"),
+  ("deposit", 100, 0, true, "owner"),
+  ("tick", 1796342400, "owner"),
+  ("commitAward", 1, 1, 4, "owner"),
+  ("reserveMonthly", 202611, { digest: "d", root: "r", wholeGross: 54, remainingGross: 54, count: 2,
+    leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }) }, 1, "attester", "owner"),
+  ("commitMonthlyLeaf", 202611, { actor: 2, gross: 4, source: 11 }, "owner"))
 ```

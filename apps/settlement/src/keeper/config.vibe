@@ -214,12 +214,24 @@ export function identityOf(config: KeeperConfig): string {
   return JSON.stringify([config.apiOrigin, config.network, config.signer])
 }
 
+const OldKeeperIdentity = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String]))
+
+export function matchesKeeperIdentity(stored: unknown, config: KeeperConfig): boolean {
+  if (stored === identityOf(config)) return true
+  if (config.family !== "evm") return false
+  const observed = Schema.decodeUnknownOption(OldKeeperIdentity)(stored)
+  if (Option.isNone(observed)) return false
+  const [origin, network, signer] = observed.value
+  return origin === config.apiOrigin && network === config.network &&
+    /^0x[0-9a-fA-F]{40}$/u.test(signer) && signer.toLowerCase() === config.signer
+}
+
 export const CONFIGURED_REGISTRY = 1
 export const OTHER_REGISTRY = 2
 
 export function journalRegistry(stored: unknown, config: KeeperConfig | undefined): number {
   if (stored === undefined) return 0
-  return config !== undefined && stored === identityOf(config) ? CONFIGURED_REGISTRY : OTHER_REGISTRY
+  return config !== undefined && matchesKeeperIdentity(stored, config) ? CONFIGURED_REGISTRY : OTHER_REGISTRY
 }
 
 export function modelConfiguration(mode: KeeperMode, config: KeeperConfig | undefined, gasLimit: number): Configuration {

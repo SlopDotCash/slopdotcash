@@ -23,7 +23,7 @@ const workerConditions = ["workerd", "worker", "import", "default"];
 const nodeConditions = ["node", "import", "default"];
 const workerExternal = [/^cloudflare:/];
 const nodeCompatExternal = [/^cloudflare:/, /^node:/];
-const nodeExternal = [/^node:/, /^miniflare(?:\/|$)/u, /^wrangler(?:\/|$)/u, ...builtinModules];
+const nodeExternal = [/^node:/, /^miniflare(?:\/|$)/u, /^wrangler(?:\/|$)/u, /^vite(?:\/|$)/u, ...builtinModules];
 
 function single(entry: string): UserConfig {
   return {

@@ -10,9 +10,9 @@ import { edgeCache } from "@repo/platform/cache"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { Caller, answered, json, outbound, sameOriginWrite } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, later, pages, unmatchedApi } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
@@ -142,7 +142,63 @@ const payments = area({
   provides: Layer.mergeAll(DirectRoutesLive, DirectPaymentsLive),
 })
 
-const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, unmatchedApi], "closed")
+const projectContractHeaders = { "x-slop-project-api-contract": "project-registry-v1" } as const
+const privateNoStoreHeaders = { "cache-control": "private, no-store" } as const
+const securityRefusalHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" } as const
+const traceContractHeaders = { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } as const
+
+function securityPath(path: string) {
+  return path.startsWith("/api/v1/security-cases")
+    || path.startsWith("/api/v1/security-programs")
+    || path.startsWith("/api/v1/security-submissions")
+    || path.startsWith("/api/v1/operator/vetting-evidence")
+    || path.startsWith("/api/v1/vetting/evidence")
+}
+
+effect function unmatchedPagesApiResponse() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const path = URL.parse(request.originalUrl)?.pathname ?? ""
+  const write = request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS"
+  if (path === "/api/v1/pool-funding") return json({ error: "method_not_allowed" }, 405, { "cache-control": "public, max-age=60, s-maxage=60" })
+  if (projectRoute(request.originalUrl) && write && !(try sameOriginWrite())) return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403, projectContractHeaders)
+  if (securityPath(path)) {
+    if (write && !(try sameOriginWrite())) return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403, securityRefusalHeaders)
+    if (path.startsWith("/api/v1/security-submissions/")) return json({ error: "not_found", message: "Submission not found" }, 404, securityRefusalHeaders)
+    const parts = path.split("/").filter((part) => part !== "")
+    if ((path.startsWith("/api/v1/operator/vetting-evidence/") || path.startsWith("/api/v1/vetting/evidence/")) && parts.length === 6) {
+      return json({ error: "not_found", message: "Evidence route not found" }, 404, securityRefusalHeaders)
+    }
+    return json({ error: "not_found" }, 404, securityRefusalHeaders)
+  }
+  if (path.startsWith("/api/v1/payments/")) {
+    if (write && !(try sameOriginWrite())) return json({ error: "origin_forbidden" }, 403, privateNoStoreHeaders)
+    const signed = (try Caller).current() catch () => undefined
+    if (signed === undefined) return json({ error: "not_signed_in" }, 401, privateNoStoreHeaders)
+  }
+  if (path.startsWith("/api/v1/points/x/")) {
+    if (write && !(try sameOriginWrite())) return json({ error: "origin_forbidden" }, 403)
+    const signed = (try Caller).current() catch () => undefined
+    if (signed === undefined) return json({ error: "not_signed_in" }, 401, { "content-type": "application/json" })
+  }
+  if (path.startsWith("/api/v1/points/") && path !== "/api/v1/points/join") {
+    if (write && !(try sameOriginWrite())) return json({ error: "origin_forbidden" }, 403)
+    const signed = (try Caller).current() catch () => undefined
+    if (signed === undefined) return json({ error: "not_signed_in" }, 401)
+  }
+  if ((path.startsWith("/api/v1/project-flags/") || path.startsWith("/api/v1/admin/vetting")) && write && !(try sameOriginWrite())) {
+    return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403)
+  }
+  return json({ error: "not_found" }, 404, traceContractHeaders)
+}
+
+const unmatchedPagesApi = area({
+  name: "unmatchedPagesApi",
+  api: [],
+  routes: HttpRouter.add("*", "/api/v1/*", answered(unmatchedPagesApiResponse())),
+  provides: Layer.empty,
+})
+
+const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, unmatchedPagesApi], "closed")
 
 const site = pages({ areas: composition.areas, services, assets: "DOCUMENTS" })
 

@@ -18,7 +18,7 @@ import { refreshQueue } from "./refresh.vibe"
 import { type RecordedResult, isScanResult, parseResult, resultProblems, resultProven } from "./result.ts"
 import { retainedEvidence } from "./retention.vibe"
 import { lookup, reusable } from "./reuse.vibe"
-import { type Assessment, adminView, assessment, pendingAssessments, projectAssessments, summaryOf } from "./store.vibe"
+import { type Assessment, adminView, assessment, pendingAssessments, projectAssessments, sameScannedRepository, summaryOf } from "./store.vibe"
 
 export service VettingSandbox { readonly binding: Fetcher }
 
@@ -83,7 +83,7 @@ effect function stored(result: RecordedResult) {
   if (found.projectId !== result.projectId || found.revision !== result.revision || found.manifestSha256 !== result.manifestSha256) throw refused(resultRows.revisionMismatch)
   if (found.state !== "pending") throw refused(resultRows.alreadyRecorded)
   if ((try (try Registry).project(found.projectId)) === undefined) throw refused(resultRows.notFoundProjectNotFound)
-  if (result.assessed.repository.toLowerCase() !== found.repositoryId.toLowerCase()) throw refused(resultRows.revisionMismatchTheResultScannedAnother)
+  if (!sameScannedRepository(result, found)) throw refused(resultRows.revisionMismatchTheResultScannedAnother)
   if (result.assessed.commitSha !== found.commitSha || result.assessed.templateSha256 !== found.templateSha256) {
     throw refused(resultRows.commitMismatch, `The result must scan commit ${found.commitSha} with skill template ${found.templateSha256}, which the queue assigned`)
   }

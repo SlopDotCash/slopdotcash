@@ -424,3 +424,151 @@ pure val observedValues = Set(readyObservation,
 pure val secondsValues = Set(600, 3600, 1209600)
 pure val weight_refresh = 5
 ```
+
+## Story: Merge verified ready pull requests through this repository's workflow
+
+> As the operator of Slop's own repository, I want a manually dispatched
+> repository workflow to merge open `slopbot:ready` pull requests into the
+> registered integration branch only after re-verifying every condition at the
+> exact head commit, so that Slopbot never gains merge authority.
+
+### The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`
+
+PRD section 5 (operator decision of 25 November 2026) adds a pilot on
+`SlopDotCash/slopdotcash` (repository ID `1319812413`) run by
+`.github/workflows/ready-auto-merge.yml` with the workflow's own token
+(`contents: write`, `pull-requests: write`) and never Slopbot's App token.
+The workflow acts only while `SLOPBOT_AUTO_MERGE` equals `on` (absent or any
+other value reads and merges nothing unless `--dry-run` is passed, which
+never writes). A base branch is permitted only when it is in the pilot
+repository, is not `main` or the repository's default branch,
+and `.github/slop-project.json` on that base branch names this repository
+and that branch as `integrationBranch`. Every candidate is verified from
+fresh GitHub reads before merging: open, not a draft, still carrying
+`slopbot:ready`, permitted base, the newest `labeled` or `unlabeled` event
+for `slopbot:ready` is a `labeled` event by `slopdotcash[bot]` (ID
+`340374191`, type `Bot`), some non-pending review of the exact head commit
+was submitted at or before that label event and no `head_ref_force_pushed`
+event occurred at or after it, at least one non-author `User` with `admin`
+or `write` permission has an `APPROVED` latest decision at the exact head
+commit and no such account has an open `CHANGES_REQUESTED` decision, GitHub
+reports `mergeable: true` and `mergeable_state: "clean"`, the changed file
+list is non-empty and complete and touches nothing at or under `.github/`
+(including renamed previous paths, case-insensitively), and a second pull
+request read just before the merge confirms the same head commit, same base
+branch and pull-level mergeability. Each run merges at most 5 pull requests,
+lowest number first, pinning the merge commit to the verified head SHA and
+posting one comment naming the approvers without mentions.
+
+```quint
+pure val pilotRepository = "SlopDotCash/slopdotcash"
+pure val pilotRepositoryId = 1319812413
+pure val slopbotBotId = 340374191
+pure val slopbotBotLogin = "slopdotcash[bot]"
+pure val maxAutoMergesPerRun = 5
+pure val autoMergeListPageLimit = 5
+pure val autoMergeEventPageLimit = 10
+pure val autoMergeReviewPageLimit = 10
+pure val autoMergeFilePageLimit = 30
+type AutoMergeLabelSource = LabelNone | LabelBySlopbot | LabelByOther
+type AutoMergeReason = AutoMergeReady | AutoMergeSwitchOff | AutoMergeLimitReached | AutoMergeNotOpen
+  | AutoMergeIsDraft | AutoMergeMissingLabel | AutoMergeWrongRepo | AutoMergeDisallowedBase
+  | AutoMergeUnregisteredBase | AutoMergeNotMergeable | AutoMergeNotClean | AutoMergeNotBotLabel
+  | AutoMergeForcePushed | AutoMergeStaleLabel | AutoMergeChangeRequested | AutoMergeNoWriterApproval
+  | AutoMergeNoFiles | AutoMergeIncompleteFiles | AutoMergeTouchesGithub | AutoMergeHeadOrBaseMoved
+type AutoMergeCandidate = {
+  switchOn: bool, dryRun: bool, mergesSoFar: int,
+  prOpen: bool, prDraft: bool, prLabelled: bool,
+  sameRepo: bool, baseRef: str, defaultBranch: str, registeredIntegrationBranch: bool,
+  prMergeable: bool, prClean: bool,
+  labelSource: AutoMergeLabelSource, forcePushedAfterLabel: bool, headReviewedBeforeLabel: bool,
+  writerChangeRequested: bool, writerApprovalCount: int,
+  fileCount: int, filesComplete: bool, touchesGithub: bool,
+  recheckSameHeadAndBase: bool, recheckOpen: bool, recheckDraft: bool, recheckLabelled: bool,
+  recheckMergeable: bool, recheckClean: bool
+}
+pure def autoMergeSwitchActive(switchOn: bool, dryRun: bool): bool = switchOn or dryRun
+pure def autoMergePermittedBase(sameRepo: bool, baseRef: str, defaultBranch: str, registeredIntegrationBranch: bool): bool =
+  sameRepo and baseRef != "main" and baseRef != defaultBranch and registeredIntegrationBranch
+pure def autoMergePullOk(prOpen: bool, prDraft: bool, prLabelled: bool, sameRepo: bool, baseRef: str,
+  defaultBranch: str, registeredIntegrationBranch: bool, prMergeable: bool, prClean: bool): bool =
+  prOpen and not(prDraft) and prLabelled and autoMergePermittedBase(sameRepo, baseRef, defaultBranch, registeredIntegrationBranch)
+    and prMergeable and prClean
+pure def autoMergeReason(candidate: AutoMergeCandidate): AutoMergeReason =
+  if (not(autoMergeSwitchActive(candidate.switchOn, candidate.dryRun))) AutoMergeSwitchOff
+  else if (candidate.mergesSoFar >= maxAutoMergesPerRun) AutoMergeLimitReached
+  else if (not(candidate.prOpen)) AutoMergeNotOpen
+  else if (candidate.prDraft) AutoMergeIsDraft
+  else if (not(candidate.prLabelled)) AutoMergeMissingLabel
+  else if (not(candidate.sameRepo)) AutoMergeWrongRepo
+  else if (candidate.baseRef == "main" or candidate.baseRef == candidate.defaultBranch) AutoMergeDisallowedBase
+  else if (not(candidate.prMergeable)) AutoMergeNotMergeable
+  else if (not(candidate.prClean)) AutoMergeNotClean
+  else if (not(candidate.registeredIntegrationBranch)) AutoMergeUnregisteredBase
+  else if (candidate.labelSource != LabelBySlopbot) AutoMergeNotBotLabel
+  else if (candidate.forcePushedAfterLabel) AutoMergeForcePushed
+  else if (candidate.writerChangeRequested) AutoMergeChangeRequested
+  else if (candidate.writerApprovalCount < 1) AutoMergeNoWriterApproval
+  else if (not(candidate.headReviewedBeforeLabel)) AutoMergeStaleLabel
+  else if (candidate.fileCount < 1) AutoMergeNoFiles
+  else if (not(candidate.filesComplete)) AutoMergeIncompleteFiles
+  else if (candidate.touchesGithub) AutoMergeTouchesGithub
+  else if (not(candidate.recheckSameHeadAndBase)) AutoMergeHeadOrBaseMoved
+  else if (not(candidate.recheckOpen)) AutoMergeNotOpen
+  else if (candidate.recheckDraft) AutoMergeIsDraft
+  else if (not(candidate.recheckLabelled)) AutoMergeMissingLabel
+  else if (not(candidate.recheckMergeable)) AutoMergeNotMergeable
+  else if (not(candidate.recheckClean)) AutoMergeNotClean
+  else AutoMergeReady
+pure def autoMergeAllowed(candidate: AutoMergeCandidate): bool =
+  autoMergeReason(candidate) == AutoMergeReady
+pure def autoMergeWillWrite(candidate: AutoMergeCandidate): bool =
+  autoMergeAllowed(candidate) and not(candidate.dryRun)
+pure def lawAutoMergeSwitchOffNeverWrites(candidate: AutoMergeCandidate): bool =
+  not(candidate.switchOn) implies not(autoMergeWillWrite(candidate))
+pure def lawAutoMergeNeverTargetsMainOrDefault(candidate: AutoMergeCandidate): bool =
+  (candidate.baseRef == "main" or candidate.baseRef == candidate.defaultBranch
+    or not(candidate.registeredIntegrationBranch) or not(candidate.sameRepo))
+    implies not(autoMergeAllowed(candidate))
+pure def lawAutoMergeRequiresSlopbotFreshLabel(candidate: AutoMergeCandidate): bool =
+  (candidate.labelSource != LabelBySlopbot or candidate.forcePushedAfterLabel or not(candidate.headReviewedBeforeLabel))
+    implies not(autoMergeAllowed(candidate))
+pure def lawAutoMergeRequiresWriteApprovalAndNoChangeRequest(candidate: AutoMergeCandidate): bool =
+  (candidate.writerApprovalCount < 1 or candidate.writerChangeRequested) implies not(autoMergeAllowed(candidate))
+pure def lawAutoMergeRequiresCleanAndNoGithubPaths(candidate: AutoMergeCandidate): bool =
+  (not(candidate.prMergeable) or not(candidate.prClean) or candidate.touchesGithub or candidate.fileCount < 1 or not(candidate.filesComplete))
+    implies not(autoMergeAllowed(candidate))
+pure def lawAutoMergeRecheckPinsHeadBaseAndRunCap(candidate: AutoMergeCandidate): bool =
+  (not(candidate.recheckSameHeadAndBase) or not(candidate.recheckOpen) or candidate.recheckDraft
+    or not(candidate.recheckLabelled) or not(candidate.recheckMergeable) or not(candidate.recheckClean)
+    or candidate.mergesSoFar >= maxAutoMergesPerRun)
+    implies not(autoMergeAllowed(candidate))
+pure val validAutoMergeCandidate: AutoMergeCandidate = {
+  switchOn: true, dryRun: false, mergesSoFar: 0,
+  prOpen: true, prDraft: false, prLabelled: true,
+  sameRepo: true, baseRef: "develop", defaultBranch: "main", registeredIntegrationBranch: true,
+  prMergeable: true, prClean: true,
+  labelSource: LabelBySlopbot, forcePushedAfterLabel: false, headReviewedBeforeLabel: true,
+  writerChangeRequested: false, writerApprovalCount: 1,
+  fileCount: 1, filesComplete: true, touchesGithub: false,
+  recheckSameHeadAndBase: true, recheckOpen: true, recheckDraft: false, recheckLabelled: true,
+  recheckMergeable: true, recheckClean: true
+}
+pure val candidateValues = Set(
+  validAutoMergeCandidate,
+  { ...validAutoMergeCandidate, switchOn: false },
+  { ...validAutoMergeCandidate, switchOn: false, dryRun: true },
+  { ...validAutoMergeCandidate, mergesSoFar: 5 },
+  { ...validAutoMergeCandidate, baseRef: "main" },
+  { ...validAutoMergeCandidate, baseRef: "trunk", defaultBranch: "trunk" },
+  { ...validAutoMergeCandidate, baseRef: "feature", registeredIntegrationBranch: false },
+  { ...validAutoMergeCandidate, labelSource: LabelByOther },
+  { ...validAutoMergeCandidate, forcePushedAfterLabel: true },
+  { ...validAutoMergeCandidate, headReviewedBeforeLabel: false },
+  { ...validAutoMergeCandidate, writerChangeRequested: true },
+  { ...validAutoMergeCandidate, writerApprovalCount: 0 },
+  { ...validAutoMergeCandidate, prClean: false },
+  { ...validAutoMergeCandidate, touchesGithub: true },
+  { ...validAutoMergeCandidate, recheckSameHeadAndBase: false }
+)
+```

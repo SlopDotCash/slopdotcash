@@ -125,7 +125,13 @@ export interface ReviewValue {
   readonly outcome: string
 }
 
-export interface MergedPull {
+export interface AcceptanceMarkers {
+  readonly emptyAcceptanceMarker?: boolean
+  readonly acceptedOrdinaryCommitOid?: string
+  readonly acceptedLineCountsDiffer?: true
+}
+
+export interface MergedPull extends AcceptanceMarkers {
   readonly id: string
   readonly number: number
   readonly repository: string
@@ -143,8 +149,6 @@ export interface MergedPull {
   readonly externalPrize: boolean
   readonly traceUpload: boolean
   readonly automatedReviews: ReadonlyArray<AutomatedReview>
-  readonly emptyAcceptanceMarker?: boolean
-  readonly acceptedOrdinaryCommitOid?: string
   readonly valueActorIds?: ReadonlyArray<string>
 }
 
@@ -337,6 +341,27 @@ export interface ReviewExclusion {
   readonly reviewer?: Actor
 }
 
+export interface OmittedReviewCredit {
+  readonly id: string
+  readonly reviewId: string
+  readonly pullRequestId: string
+  readonly pullRequestNumber: number
+  readonly repository: string
+  readonly reviewer: Actor
+  readonly scoreThirds: number
+  readonly submittedAt: string
+  readonly acceptedAt?: string
+  readonly url: string
+  readonly scoreDecisionSourceId: string
+  readonly scoreDecisionAt?: string
+  readonly reason: string
+}
+
+export interface JointUnitPublication {
+  readonly coveredPullRequestIds: ReadonlySet<string>
+  readonly complete: boolean
+}
+
 export type HoldReason = "attribution-hold" | "synchronization-only" | "incomplete-lines" | "attribution-conflict" | "unbalanced-allocation" | "unverified-group"
 
 export interface HeldSource {
@@ -379,6 +404,8 @@ export interface Scoring {
   readonly leaders: ReadonlyArray<LeaderEntry>
   readonly ledger: ReadonlyArray<ScoreEvent>
   readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
+  readonly omittedReviewCredits: ReadonlyArray<OmittedReviewCredit>
+  readonly jointUnitPublication: ReadonlyMap<string, ReadonlyArray<JointUnitPublication>>
   readonly held: ReadonlyArray<HeldSource>
   readonly implementationHeld: ReadonlySet<string>
   readonly standaloneReview: ReadonlySet<string>

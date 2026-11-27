@@ -88,16 +88,3 @@ export function ClaimForm({ runtime, owner, projects, onCreated }: ClaimFormProp
   };
   return <ClaimFormView projects={projects} projectId={projectId} advisory={advisory} busy={busy} error={error} onProject={setSelectedProjectId} onAdvisory={setAdvisory} onSubmit={submit} />;
 }
-
-/** `#security-link`: where a reporter links a report filed on GitHub. */
-export function LinkReportSection(props: ClaimFormProps) {
-  return (
-    <section id="security-link" aria-labelledby="security-link-heading" className="flex flex-col gap-4">
-      <h2 id="security-link-heading" className="text-xl font-semibold text-foreground">
-        Link a report you submitted on GitHub
-      </h2>
-      <p className="text-muted-foreground">A maintainer verifies the link.</p>
-      <ClaimForm {...props} />
-    </section>
-  );
-}

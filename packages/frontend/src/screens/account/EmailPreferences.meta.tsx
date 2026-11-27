@@ -38,7 +38,7 @@ export const meta: ComponentMeta<EmailPreferencesProps> = {
     // spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"
     Unavailable: async () => {
       onToggle.mockClear();
-      await userEvent.click(screen.getByRole("switch", { name: "Activity" }));
+      await expect(screen.getByRole("switch", { name: "Activity" })).toBeDisabled();
       await expect(onToggle).not.toHaveBeenCalled();
     },
     // spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"

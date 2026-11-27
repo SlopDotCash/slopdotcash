@@ -247,6 +247,8 @@ export const theShareStartsNextMonthAndTheDepositAndBranchAreLive = vectors<read
     [["reportDeposit", false], "LiveNow"],
     [["integrationBranch", false], "LiveNow"],
     [["submissionFee", false], "LiveNow"],
+    [["website", false], "LiveNow"],
+    [["x", false], "LiveNow"],
     [["approvedScope", false], "NeedsRescan"],
   ],
   ([field, cleared]) => effectOf(field, cleared),

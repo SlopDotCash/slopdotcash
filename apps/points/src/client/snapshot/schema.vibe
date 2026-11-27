@@ -236,6 +236,22 @@ export schema ReviewExclusion {
   readonly reviewer?: GitHubActor
 }
 
+export schema OmittedReviewCredit {
+  readonly id: string
+  readonly reviewId: string
+  readonly pullRequestId: string
+  readonly pullRequestNumber: number
+  readonly repository: string
+  readonly reviewer: GitHubActor
+  readonly scoreThirds: number
+  readonly submittedAt: string
+  readonly acceptedAt?: string
+  readonly url: string
+  readonly scoreDecisionSourceId: string
+  readonly scoreDecisionAt?: string
+  readonly reason: string
+}
+
 export schema WorkItemClaim { readonly status: string; readonly source: string; readonly kind: string | null; readonly actors: ReadonlyArray<GitHubActor>; readonly claimedAt: string | null }
 export schema WorkItemSelection { readonly status: string; readonly reasons: ReadonlyArray<string> }
 export schema WorkItemEvidence { readonly status: string; readonly points: number; readonly maxPoints: number; readonly categories: ReadonlyArray<string> }
@@ -346,6 +362,7 @@ export schema ValueCoverage {
 
 export schema ReviewedWorkUnit { readonly recordDigest: string; readonly workUnitId: string; readonly groupId: string }
 export schema ReviewedImplementationSource { readonly repository: string; readonly pullRequestId: string; readonly units: ReadonlyArray<ReviewedWorkUnit> }
+export schema ValueAssessmentSupersession { readonly predecessorDigest: string; readonly successorDigest: string }
 
 export schema PaymentReviewBasis {
   readonly policy: string
@@ -381,7 +398,9 @@ export schema LeaderboardSnapshot {
   readonly valuePolicyEffectiveAt?: string
   readonly valueAssessmentCoverage?: ReadonlyArray<ValueCoverage>
   readonly reviewedImplementationUnits?: ReadonlyArray<ReviewedImplementationSource>
+  readonly valueAssessmentSupersessions?: ReadonlyArray<ValueAssessmentSupersession>
   readonly reviewExclusions?: ReadonlyArray<ReviewExclusion>
+  readonly omittedReviewCredits?: ReadonlyArray<OmittedReviewCredit>
   readonly penalties?: ReadonlyArray<PublishedPenalty>
   readonly penaltyHistory?: ReadonlyArray<PenaltyHistoryRecord>
   readonly paymentReviewBasis?: PaymentReviewBasis

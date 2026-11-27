@@ -2,27 +2,29 @@
 import { switchedOn as submissionFeeSwitchedOn } from "@repo/backend/client"
 import { reportDepositPath, submissionFeePath } from "@repo/fees/client"
 import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client"
-import { type ChainResult, type FreshRead, type Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
+import { type ChainResult, type Event, type FreshRead, type NotAnEvent, type PayFlow, type Rejected, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { STANDING_DEPOSIT_API, STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_NETWORK } from "../../flows/account/standingDeposit.vibe"
 import { networkLabel } from "../../kernels/assetText.ts"
-import { fetchBounded } from "../../platform/bounded.vibe"
+import { fetchBounded, fetchBoundedBytes } from "../../platform/bounded.vibe"
 import { bootedRegistry, registryUnavailable } from "../../reads/registry.vibe"
 import type { WalletChoice } from "../../wallets/core/discovery.vibe"
 import { type EvmConnection, connectEvm } from "../../wallets/core/evm.vibe"
 import type { SlotStorage } from "../../wallets/core/slots.ts"
 import { type FeeCheck, type FeeReview, checkFeeBatch, checkFeeDeposit, depositMessages, reviewFeeDeposit, sendFeeBatch, sendFeeDeposit, switchFeeChain } from "../../wallets/fee/deposit.vibe"
-import { type Deposited, type FeeTerms, type FeeWay, type SavedDeposit, type SavedStep, depositedOf, feeDepositKey, keepDeposited, planText, publishedTerms, savedDepositOf, termsOf, wayKey } from "../../wallets/fee/feeCalls.ts"
+import { type Deposited, type FeeTerms, type FeeWay, type SavedDeposit, type SavedStep, type SolanaFeeWay, depositedOf, feeDepositKey, keepDeposited, planText, publishedTerms, savedDepositOf, termsOf, wayKey } from "../../wallets/fee/feeCalls.ts"
 import { compareAndWrite, readText } from "../../wallets/owner/flowSlots.ts"
 import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage } from "../../wallets/owner/slotKeeper.vibe"
-import { type FeeRepository, type FeeSubject, type ShownRecord, checkedRecord, feeRatesOf, feeRepository, feeRoute, listsSlop, pullRequestSubject, reportCase, reportSubject, stillDue } from "./record.ts"
+import { type FeeRepository, type FeeSubject, type ShownRecord, checkedRecord, feeRatesOf, feeRepository, feeRoute, listsSlop, pullRequestSubject, reportCase, reportSubject, standingSubject, stillDue, stillDueSolana } from "./record.ts"
 
-export type { Deposited, FeeRepository, FeeReview, FeeWay, ShownRecord }
+export type { Deposited, FeeRepository, FeeReview, FeeWay, ShownRecord, SolanaFeeWay }
 
 export type PayAddress =
   | { readonly kind: "pullRequest"; readonly owner: string; readonly repo: string; readonly number: string }
   | { readonly kind: "report"; readonly caseId: string }
+  | { readonly kind: "standingDeposit"; readonly githubId: string; readonly item: string }
 
-export type Noun = "pull request" | "report"
+export type Noun = "pull request" | "report" | "standing deposit"
 
 export interface FeeSetupShape {
   readonly submissionFee: boolean
@@ -33,6 +35,15 @@ export interface FeeSetupShape {
 export service FeeSetup: FeeSetupShape {}
 
 export const publishedSetup = Layer.succeed(FeeSetup, { submissionFee: submissionFeeSwitchedOn, reportDeposit: REPORT_DEPOSIT_SWITCHED_ON, terms: publishedTerms })
+
+export const standingTerms: FeeTerms = {
+  ...publishedTerms,
+  networks: publishedTerms.networks.map((network) =>
+    network.network === STANDING_DEPOSIT_NETWORK ? { ...network, contract: STANDING_DEPOSIT_CONTRACT } : network,
+  ),
+}
+
+export const standingSetup = Layer.succeed(FeeSetup, { submissionFee: true, reportDeposit: true, terms: standingTerms })
 
 export interface Reviewed {
   readonly way: FeeWay
@@ -71,6 +82,14 @@ const words = {
     kept: "a kept deposit",
     alreadyPaid: "The deposit for this report is already recorded. Nothing was sent.",
     changed: "The deposit due for this report changed. Nothing was sent. Review the payment again.",
+  },
+  "standing deposit": {
+    unavailable: "The standing deposit is unavailable.",
+    refused: "The standing deposit record could not be checked against Slop's published addresses. Do not pay from this page.",
+    recorded: "Slop records your standing deposit",
+    kept: "a kept deposit",
+    alreadyPaid: "Your standing deposit is already recorded. Nothing was sent.",
+    changed: "The deposit due changed. Nothing was sent. Review the payment again.",
   },
 } as const
 
@@ -120,11 +139,19 @@ type Read =
   | { readonly kind: "checked"; readonly checked: ReturnType<typeof checkedRecord> }
   | { readonly kind: "failed" }
 
+export interface PayFlowMachine {
+  readonly changes: Stream.Stream<PayFlow>
+  get(): PayFlow!!
+  send(event: Event, by: number, isCurrent?: (state: PayFlow) => boolean): PayFlow!Rejected
+  receive(input: unknown, by: number): PayFlow!(NotAnEvent | Rejected)
+}
+
 export interface FeePay {
   readonly noun: Noun
   readonly address: PayAddress
   readonly repository: FeeRepository | undefined
-  readonly machine: Machine.Shape
+  readonly terms: FeeTerms
+  readonly machine: PayFlowMachine
   readonly changes: Stream.Stream<FeeShown>
   open(): PayFlow!!HttpClient.HttpClient
   shown(): FeeShown!!
@@ -133,6 +160,7 @@ export interface FeePay {
   connect(id: number): PayFlow!PayRefused!WalletChoice
   review(): PayFlow!PayRefused!WalletChoice
   pay(): string!PayRefused!Needs
+  confirmSolanaDue(way: SolanaFeeWay): void!PayRefused!HttpClient.HttpClient
   check(candidate: string): PayFlow!!Needs
   tabHidden(hidden: boolean): PayFlow!!
   clearUnreadable(): boolean!!
@@ -141,13 +169,21 @@ export interface FeePay {
   follow(): void!!Needs
 }
 
-effect function fetched(path: string, limitBytes: number, label: string) {
+effect function fetched(path: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>> = {}) {
   provide FetchHttpClient.RequestInit = uncached {
-    const body: unknown = fetchBounded(path, limitBytes, label) catch effect (error) => {
+    if (Object.keys(headers).length === 0) {
+      const body: unknown = fetchBounded(path, limitBytes, label) catch effect (error) => {
+        if (error._tag === "Refused" && error.status === 404) return absent
+        throw error
+      }
+      return body
+    }
+    const bytes = fetchBoundedBytes(path, limitBytes, label, { accept: "application/json", ...headers }) catch effect (error) => {
       if (error._tag === "Refused" && error.status === 404) return absent
       throw error
     }
-    return body
+    if (!(bytes instanceof Uint8Array)) return absent
+    return try Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown)
   }
 }
 
@@ -161,12 +197,17 @@ function subjectOf(address: PayAddress, repository: FeeRepository | undefined): 
     const caseId = reportCase(address.caseId)
     return caseId === undefined ? undefined : reportSubject(caseId)
   }
+  if (address.kind === "standingDeposit") {
+    return standingSubject(address.githubId, address.item)
+  }
   const route = feeRoute(address.owner, address.repo, address.number)
   return route === undefined || repository === undefined ? undefined : pullRequestSubject(repository.repositoryId, route.number)
 }
 
 function pathOf(subject: FeeSubject): string {
-  return subject.kind === "PullRequestFee" ? `${submissionFeePath}/items/${subject.repositoryId}/${subject.pullNumber}` : reportDepositPath(subject.caseId)
+  if (subject.kind === "PullRequestFee") return `${submissionFeePath}/items/${subject.repositoryId}/${subject.pullNumber}`
+  if (subject.kind === "StandingDeposit") return STANDING_DEPOSIT_API
+  return reportDepositPath(subject.caseId)
 }
 
 function startOf(attempt: Attempt | undefined, deposited: Deposited | undefined, nowMs: number): PayFlow {
@@ -190,18 +231,27 @@ function receivedNotice(setup: FeeSetupShape, said: typeof words[Noun], way: Fee
 
 function openingOf(address: PayAddress, addressed: boolean, repository: FeeRepository | undefined, registryFailed: boolean, setup: FeeSetupShape) {
   return {
-    subject: address.kind === "report" ? "ReportDeposit" : "PullRequestFee",
+    subject: address.kind === "pullRequest" ? "PullRequestFee" : "ReportDeposit",
     addressed,
-    registered: address.kind === "report" || repository !== undefined || registryFailed,
-    switchedOn: address.kind === "report" ? setup.reportDeposit : setup.submissionFee,
+    registered: address.kind !== "pullRequest" || repository !== undefined || registryFailed,
+    switchedOn: address.kind === "pullRequest" ? setup.submissionFee : setup.reportDeposit,
   } as const
 }
 
 effect function readFeeRecord(subject: FeeSubject | undefined, terms: FeeTerms) {
   if (subject === undefined) return { kind: "failed" } satisfies Read
-  const body: unknown = fetched(pathOf(subject), subject.kind === "PullRequestFee" ? itemLimitBytes : reportLimitBytes, subject.kind === "PullRequestFee" ? "submission fee record" : "report deposit record") catch () => undefined
+  const headers: Readonly<Record<string, string>> = subject.kind === "StandingDeposit" ? { "x-slop-expected-github-id": subject.githubId } : {}
+  const limit = subject.kind === "ReportDeposit" ? reportLimitBytes : itemLimitBytes
+  const label = subject.kind === "PullRequestFee" ? "submission fee record" : subject.kind === "StandingDeposit" ? "standing deposit" : "report deposit record"
+  const body: unknown = fetched(pathOf(subject), limit, label, headers) catch () => undefined
   if (body === undefined) return { kind: "failed" } satisfies Read
   if (body === absent) return { kind: "missing" } satisfies Read
+  if (subject.kind === "StandingDeposit") {
+    const record = typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Readonly<Record<string, unknown>>) : undefined
+    if (record?.schema !== "slop-standing-deposit-v1" || record.deployed !== true) return { kind: "missing" } satisfies Read
+    if (record.deposit === null || record.deposit === undefined) return { kind: "missing" } satisfies Read
+    return { kind: "checked", checked: checkedRecord(record.deposit, subject, terms, undefined) } satisfies Read
+  }
   const rates = listsSlop(body) ? try readRates() : undefined
   return { kind: "checked", checked: checkedRecord(body, subject, terms, rates) } satisfies Read
 }
@@ -220,7 +270,7 @@ effect function attemptFeeCheck(connection: EvmConnection, saved: SavedDeposit, 
   return { check: try feeChainCheck(connection, saved, attempt, item, keeper, onSaved), failure: "" } satisfies Attempted
 }
 
-effect function followFeeDesk(machine: Machine.Shape, onAutoCheck: () => PayFlow!!Needs, onObserveNow: () => void!!, onReload: () => PayFlow!!HttpClient.HttpClient) {
+effect function followFeeDesk(machine: PayFlowMachine, onAutoCheck: () => PayFlow!!Needs, onObserveNow: () => void!!, onReload: () => PayFlow!!HttpClient.HttpClient) {
   const autoChecks = effect {
     while (true) {
       const before = try machine.get()
@@ -247,13 +297,13 @@ export effect function openPayPage(address: PayAddress, storage: SlotStorage | u
 export effect function feeDesk(address: PayAddress, storage: SlotStorage | undefined) {
   const setup = try FeeSetup
   const crypto = try Experimental.Crypto.Crypto
-  const noun: Noun = address.kind === "report" ? "report" : "pull request"
+  const noun: Noun = address.kind === "report" ? "report" : address.kind === "standingDeposit" ? "standing deposit" : "pull request"
   const said = words[noun]
   const route = address.kind === "pullRequest" ? feeRoute(address.owner, address.repo, address.number) : undefined
   const boot = route === undefined ? undefined : try bootedRegistry()
   const repository = route === undefined || boot === undefined ? undefined : feeRepository(route, boot)
   const subject = subjectOf(address, repository)
-  const addressed = address.kind === "report" ? reportCase(address.caseId) !== undefined : route !== undefined
+  const addressed = address.kind === "report" ? reportCase(address.caseId) !== undefined : address.kind === "standingDeposit" ? subject !== undefined : route !== undefined
   const registryFailed = boot?.error !== undefined && repository === undefined
   const item = subject?.item ?? ""
   const kept = subject === undefined ? undefined : storage
@@ -277,7 +327,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
 
   const machine = try machineOver(load, keep)
 
-  effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+  effect function sent(event: Parameters<PayFlowMachine["send"]>[0], by: number) {
     return try keptOrChanged(Effect.ignore(machine.send(event, by)))
   }
 
@@ -305,7 +355,11 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       const { record, ratesRead, shown: fresh } = read.checked
       if (canObserveRecord(state, record, ratesRead, reader)) try sent({ type: "observeRecord", record, ratesRead }, reader)
       const after = try machine.get()
-      try update((current) => after.page === "Failed" ? { ...current, record: undefined, message: said.refused, refreshFailed: false } : { ...current, record: fresh, message: "", refreshFailed: false })
+      try update((current) =>
+        after.page === "Failed"
+          ? { ...current, record: undefined, message: said.refused, refreshFailed: false }
+          : { ...current, record: after.switchedOn ? fresh : { ...fresh, due: [], solana: null }, message: "", refreshFailed: false },
+      )
     } else {
       if (canReadFails(state, reader)) try sent({ type: "readFails" }, reader)
       const after = try machine.get()
@@ -430,10 +484,20 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     return try machine.get()
   }
 
+  effect function confirmSolanaDue(way: SolanaFeeWay) {
+    const read = try readFeeRecord(subject, setup.terms)
+    const fresh = read.kind === "checked" && recordValid(read.checked.record, read.checked.ratesRead) ? read.checked.shown : undefined
+    if (read.kind === "failed") throw new PayRefused({ message: said.unavailable })
+    if (fresh !== undefined && fresh.paid === null && stillDueSolana(fresh, way)) return
+    try reload()
+    throw new PayRefused({ message: fresh !== undefined && fresh.paid !== null ? said.alreadyPaid : said.changed })
+  }
+
   return {
     noun,
     address,
     repository,
+    terms: setup.terms,
     machine,
     changes: SubscriptionRef.changes(view),
     open,
@@ -468,6 +532,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       try confirmFresh(reviewed.way)
       return try submit(connection, reviewed)
     },
+    confirmSolanaDue,
     check: effect (candidate: string) => {
       const trimmed = candidate.trim()
       if (trimmed !== "" && canEnterHash(try machine.get(), trimmed, payer)) try sent({ type: "enterHash", candidate: trimmed }, payer)

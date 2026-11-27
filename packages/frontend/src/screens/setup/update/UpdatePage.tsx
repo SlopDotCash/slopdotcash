@@ -260,6 +260,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           </Button>
           <RemoveProject
             name={manifest.name}
+            revision={managed.revision}
             disabled={publishing}
             remove={remove}
             reason={

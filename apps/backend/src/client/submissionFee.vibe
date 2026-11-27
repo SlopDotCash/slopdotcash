@@ -22,7 +22,7 @@ export interface SlopRatesInForce {
 
 export interface FeeOption {
   readonly network: string
-  readonly chainId: number
+  readonly chainId: number | null
   readonly contract: string
   readonly token: string
   readonly symbol: string
@@ -30,6 +30,31 @@ export interface FeeOption {
   readonly amount: string
   readonly minimumAccepted: string
   readonly keptTo: string
+}
+
+export interface SolanaSubmissionFeeTerms {
+  readonly network: string
+  readonly programId: string | null
+  readonly token: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly keptTo: string
+  readonly switchedOn: boolean
+}
+
+export interface SubmissionFeeOptionOverrides {
+  readonly solanaOn?: boolean
+  readonly solanaProgramId?: string | null
+}
+
+export const solanaSubmissionFeeTerms: SolanaSubmissionFeeTerms = {
+  network: "solana-mainnet",
+  programId: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+  token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  symbol: "USDC",
+  decimals: stableDecimals,
+  keptTo: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+  switchedOn: true,
 }
 
 export interface SubmissionFeeSetting {
@@ -150,7 +175,12 @@ export function submissionFeeTokenKind(network: string, token: string): FeeToken
   return kind === "StableToken" ? "stable" : kind === "SlopToken" ? "slop" : null
 }
 
-export function submissionFeeOptions(stableMinor: string, rates: ReadonlyArray<SlopRate>, at: string): ReadonlyArray<FeeOption> {
+export function submissionFeeOptions(
+  stableMinor: string,
+  rates: ReadonlyArray<SlopRate>,
+  at: string,
+  overrides: SubmissionFeeOptionOverrides = {},
+): ReadonlyArray<FeeOption> {
   if (baseUnits(stableMinor) === undefined) return []
   const due = slopFeeDueAt(stableMinor, rates, at)
   const current = slopRatesAt(rates, at)?.current ?? null
@@ -165,6 +195,21 @@ export function submissionFeeOptions(stableMinor: string, rates: ReadonlyArray<S
         options.push({ ...base, token: token.address, symbol: token.symbol, decimals: token.decimals, amount: slopNow, minimumAccepted: due, keptTo: keptToFor(terms.network, token.kind) })
     }
   }
+  const solanaOn = overrides.solanaOn ?? solanaSubmissionFeeTerms.switchedOn
+  const solanaProgramId = overrides.solanaProgramId === undefined ? solanaSubmissionFeeTerms.programId : overrides.solanaProgramId
+  if (solanaOn && typeof solanaProgramId === "string" && solanaProgramId !== "") {
+    options.push({
+      network: solanaSubmissionFeeTerms.network,
+      chainId: null,
+      contract: solanaProgramId,
+      token: solanaSubmissionFeeTerms.token,
+      symbol: solanaSubmissionFeeTerms.symbol,
+      decimals: solanaSubmissionFeeTerms.decimals,
+      amount: stableMinor,
+      minimumAccepted: stableMinor,
+      keptTo: solanaSubmissionFeeTerms.keptTo,
+    })
+  }
   return options
 }
 
@@ -174,12 +219,13 @@ function settingRecord(value: unknown) {
 
 export function submissionFeeSettingOf(value: unknown): SubmissionFeeSetting | null {
   const record = settingRecord(value)
-  const keys = record === undefined ? "" : Object.keys(record).sort().join(",")
+  const keys = record === undefined ? "" : Object.keys(record).filter((key) => key !== "standingDeposits").sort().join(",")
+  const standingValid = record?.standingDeposits === undefined || typeof record.standingDeposits === "boolean"
   const given = record?.amountMinor
   const wellFormed = typeof given === "string" && settingMinor.test(given) && Number.isSafeInteger(Number(given))
   const amount = feeSettingAmount({
     present: value !== undefined,
-    exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean",
+    exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean" && standingValid,
     enabled: record?.enabled === true,
     amountGiven: given !== undefined && given !== null,
     amountWellFormed: wellFormed,

@@ -1,4 +1,4 @@
-// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row's due outcome or a refund"
+// spec/fees/submissionFeeStandingDeposits.md, "A standing deposit pays its row only as burned SLOP on the standing ledger"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { burnAddress, tokenKind } from "../../gen/backend__submissionFeeTerms.ts";
 

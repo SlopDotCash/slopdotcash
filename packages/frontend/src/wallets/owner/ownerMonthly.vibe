@@ -196,6 +196,7 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
     if (canSaveReply(now, saving.lifetime, saving.saving, result, server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result }, server)
     else if (canSaveReply(now, saving.lifetime, saving.saving, "SaveFailed", server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result: "SaveFailed" }, server)
     if (!("failure" in answer)) {
+      if (now.lifetime !== saving.lifetime) return { view: undefined, state: now, message: "" }
       const read = try observed(saving.lifetime, answer)
       return { view: read.view, state: read.state }
     }
@@ -212,7 +213,10 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
     const now = try machine.get()
     if (canFinalizeReply(now, state.lifetime, accepted, server)) try sent({ type: "finalizeReply", lifetime: state.lifetime, accepted }, server)
     else if (canFinalizeReply(now, state.lifetime, false, server)) try sent({ type: "finalizeReply", lifetime: state.lifetime, accepted: false }, server)
-    if (!("failure" in answer)) return try observed(state.lifetime, answer)
+    if (!("failure" in answer)) {
+      if (now.lifetime !== state.lifetime) return { view: undefined, state: now, message: "" }
+      return try observed(state.lifetime, answer)
+    }
     return { view: undefined, state: try machine.get(), message: answer.failure.message }
   }
 

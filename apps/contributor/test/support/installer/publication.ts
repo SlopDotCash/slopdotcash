@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bundle, migrate, startWorker } from "@repo/platform/testing";
+import { bundle, database, migrate, startWorker } from "@repo/platform/testing";
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths";
 import { type Role, templatePaths } from "../../../src/render/fields.ts";
 import { acceptedRevisions, decodeTemplateIndex, guideRendererPaths, rendererSourcePaths, sha256Hex, sourceRepository, templateFilePath, templateGroup, templateSha256 } from "../../../src/render/templateIndex.ts";
@@ -71,7 +71,7 @@ export async function servePublication(plan: SitePlan): Promise<PublishedSite> {
   const mf = startWorker({ script, d1: { SLOP_DB: "slop-private" }, assets });
   const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined);
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
-  const db = await mf.getD1Database("SLOP_DB");
+  const db = await database(mf, "SLOP_DB");
   const digest = sha256Hex(new TextEncoder().encode(plan.manifestText));
   const at = "2026-11-01T00:00:00.000Z";
   await db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(plan.projectId, plan.revision, plan.manifestText, digest, `Revision ${plan.revision}`, "41", "member-41", at).run();

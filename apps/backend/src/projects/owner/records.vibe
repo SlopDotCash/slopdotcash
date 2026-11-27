@@ -82,12 +82,6 @@ export effect function listedManifests() {
   return manifests
 }
 
-schema Creator { github_id: string; login: string }
-
-export effect function projectCreator(projectId: string) {
-  return try first(Creator, sql`SELECT coalesce(a.applicant_github_id, r.actor_github_id) AS github_id, coalesce(a.applicant_github_login, r.actor_github_login) AS login FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE p.id = ${projectId} AND coalesce(a.applicant_github_id, r.actor_github_id) IS NOT NULL`)
-}
-
 schema SignedIn { github_id: string }
 
 export effect function hasSignedIn(githubId: string) {

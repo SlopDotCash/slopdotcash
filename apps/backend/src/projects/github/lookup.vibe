@@ -297,19 +297,6 @@ export interface PublicFacts {
   readonly defaultBranch: string | undefined
 }
 
-export effect function factsById(repositoryId: string) {
-  const repository = try restJson(`/repositories/${encodeURIComponent(repositoryId)}`)
-  if (repository === undefined || String(repository.id) !== repositoryId || typeof repository.full_name !== "string") return undefined
-  return {
-    id: repositoryId,
-    fullName: repository.full_name,
-    public: repository.private === false,
-    archived: repository.archived !== false,
-    fork: repository.fork !== false,
-    defaultBranch: validIntegrationBranch(repository.default_branch) ? repository.default_branch : undefined,
-  } satisfies PublicFacts
-}
-
 export effect function factsByPath(path: string) {
   if (!validRepositoryPath(path)) return undefined
   const repository = try restJson(`/repos/${path}`)

@@ -128,7 +128,14 @@ it.live('A merged pull request with paged files collects complete evidence, and 
 
 it.live('Outgoing references resolve only through their link destination and public identity (spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")', () => effect {
   const world = try seeded()
-  const [earlier] = try relatedOf(world, [2])
+  try Effect.try(() => {
+    world.fake.world.addPull({ repo: repository, number: 6, author: "ada", title: "Restore market selection", createdAt: "2026-11-09T10:00:00Z" })
+    world.fake.world.addReview(repository, world.referencesPull, {
+      author: "ada", state: "COMMENTED", body: "Back/forward. #6 remounts only when the market kind changes.",
+      submittedAt: "2026-11-11T10:00:00Z",
+    })
+  })
+  const references = try relatedOf(world, [2, 6])
   provide githubOver(world) {
     const found = try collectReferenceEvidence(repository, world.referencesPull)
     try same({
@@ -137,10 +144,10 @@ it.live('Outgoing references resolve only through their link destination and pub
       limitations: found.limitations,
       queries: requested(world, graphqlRequests),
     }, {
-      references: [earlier],
+      references,
       unavailable: [{ repository, repositoryNodeId: world.repositoryNodeId, number: 23 }],
       limitations: ["Outgoing reference is unavailable or private"],
-      queries: 5,
+      queries: 6,
     })
   }
 })

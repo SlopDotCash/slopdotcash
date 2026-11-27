@@ -1,6 +1,6 @@
 // spec/slopbot/publicFeeds.md, "Feeds serve only registered history repositories with strictly validated cursors, 100 items per page and no-store"; spec/slopbot/publicFeeds.md, "Each feed keeps its published schema id: slop-penalties:v1, slop-penalty-history:v1, slop-value-history:v1, slop-work-unit-history:v1"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"
 import { type D1, first, sql } from "@repo/platform/d1"
-import { handleRaw, json } from "@repo/platform/http"
+import { handleRaw } from "@repo/platform/http"
 import { RegistryManifests } from "@repo/ports/backend"
 import { PenaltyRow } from "@repo/ports/slopbot"
 import type { FeedAnswer, FeedQuery, FeedRoute, HistoryFlag } from "../../gen/slopbot__publicFeeds.ts"
@@ -61,12 +61,16 @@ function historyFlagOf(value: string | null): HistoryFlag {
   return value === "1" ? "FlagOne" : "FlagOther"
 }
 
+function plainJson(body: unknown, status = 200, headers: Readonly<Record<string, string>> = {}) {
+  return HttpServerResponse.jsonUnsafe(body, { status, headers, contentType: "application/json" })
+}
+
 export function refusalHeaders(headers: Readonly<Record<string, string>>) {
   return Object.fromEntries(Object.entries(headers).filter(([name]) => name !== "content-type"))
 }
 
 function refused(row: RefusalRow) {
-  return json({ error: row.error }, row.status, refusalHeaders(row.headers))
+  return plainJson({ error: row.error }, row.status, refusalHeaders(row.headers))
 }
 
 function refusalFor(decided: FeedAnswer, refusals: FeedRefusals) {
@@ -126,7 +130,7 @@ effect function served<T>(query: FeedQuery, refusals: FeedRefusals, lookup: (T |
   if (found === undefined || decided.httpStatus !== 200) return refusalFor(decided, refusals)
   const body = read(found, decided.schemaId) catch () => null
   if (body === null) return refusalFor(feedAnswer(registered, true), refusals)
-  return json(body)
+  return plainJson(body, 200, { "cache-control": "no-store", "x-content-type-options": "nosniff" })
 }
 
 effect function penaltyFeed(query: URLSearchParams) {
@@ -170,7 +174,7 @@ effect function historyFeed(route: FeedRoute, query: URLSearchParams) {
 }
 
 export const feedRoutes = Layer.mergeAll(
-  handleRaw(health, () => effect { return json({ service: "slopbot", ok: true }) }),
+  handleRaw(health, () => effect { return plainJson({ service: "slopbot", ok: true }) }),
   handleRaw(penalties, (input) => penaltyFeed(input.query)),
   handleRaw(valueAssessments, (input) => historyFeed("ValueHistoryFeed", input.query)),
   handleRaw(workUnitAssessments, (input) => historyFeed("WorkUnitHistoryFeed", input.query)),

@@ -2,12 +2,12 @@
 import { isoAt } from "@repo/platform/clock"
 import { type Address, EvmRpc, type Hex, type Receipt, type Transaction, evmRpc, recoverDigest } from "@repo/platform/chain/evm"
 import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
-import { ConfigInvalid, jsonVar } from "@repo/platform/config"
+import { type ConfigInvalid, jsonVar } from "@repo/platform/config"
 import type { Network } from "../../gen/fees__runtime.ts"
 import { reviewedFactory } from "../chain/evm/factories.ts"
 import { executionGasCost, nativeFeeTotal } from "../kernels/budget.ts"
 import { EVM_NATIVE_ASSET, NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
-import { BalancesDiffer, ProofUnavailable, assertNativeProofAvailable, assertTokenProofAvailable, verifyNativeBalanceChanges, verifyTokenBalanceChanges } from "./evmBalances.vibe"
+import { ProofUnavailable, assertNativeProofAvailable, assertTokenProofAvailable, verifyNativeBalanceChanges, verifyTokenBalanceChanges } from "./evmBalances.vibe"
 import { planEvmRecovery } from "./recoveryPlan.ts"
 
 module evmWords {
@@ -50,7 +50,7 @@ module evmWords {
 }
 import { addressWord, authorizationDigest, big, decimal, hexQuantity, word } from evmWords
 
-export { BalancesDiffer, ProofUnavailable }
+export { ProofUnavailable }
 
 export error LegUnverified { reason: string }
 export error RetirementUnverified { reason: string }

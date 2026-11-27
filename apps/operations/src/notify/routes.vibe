@@ -1,6 +1,9 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
 import { answered, handleRaw, json, jsonBody } from "@repo/platform/http"
-import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
 import {
   notifyPostV1ActivityNotificationsDispatch,
@@ -42,13 +45,10 @@ const activityDispatchPath: Internal = { path: "/v1/activity-notifications/dispa
 const activityReconcilePath: Internal = { path: "/v1/activity-notifications/reconcile", limitKib: 8 }
 const emailCapabilitiesPath: Internal = { path: "/v1/email/capabilities", limitKib: 2 }
 const emailVerificationPath: Internal = { path: "/v1/email/verification", limitKib: 2 }
+const emailUnsubscribePath: Internal = { path: "/v1/email/unsubscribe", limitKib: 2 }
 const projectApplicationsPath: Internal = { path: projectApplicationNoticePath, limitKib: 8 }
 const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
 const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
-
-const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
-
-export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
 interface Row {
   readonly status: number
@@ -136,6 +136,22 @@ effect function verified() {
   return answer({ status: (try sendVerification(body, pilot, settings.from)) ? 204 : 409, headers: plain })
 }
 
+const unsubscribeTokenPattern = /^[a-f0-9]{64}\.[a-f0-9]{64}$/u
+
+schema IssuedUnsubscribe { destination_version: string }
+
+effect function unsubscribed() {
+  const body = try jsonBody(emailUnsubscribePath.limitKib)
+  const token = body.token
+  if (Object.keys(body).join() !== "token" || typeof token !== "string") return answer(verification.status400)
+  if (!unsubscribeTokenPattern.test(token)) return answer({ status: 409, headers: plain })
+  const issued = try first(IssuedUnsubscribe, sql`SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash = ${try sha256Hex(token)}`)
+  if (issued === undefined) return answer({ status: 409, headers: plain })
+  const version = issued.destination_version
+  const result = try (try D1).run(sql`UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, updated_at = ${try isoNow()} WHERE destination_version = ${version} AND EXISTS (SELECT 1 FROM notification_email_destinations d WHERE d.github_id = notification_email_preferences.github_id AND d.destination_version = ${version})`)
+  return answer({ status: result > 0 ? 204 : 409, headers: plain })
+}
+
 effect function capabilities() {
   return plainJson({ enrollmentAvailable: enrollmentOpen((try NotifySettings).activity) })
 }
@@ -185,6 +201,7 @@ export const notifyRoutes = Layer.mergeAll(
   }),
   served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
   served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
+  served(emailUnsubscribePath, verification.status500, verification.otherMethods.status405, () => unsubscribed()),
   served(projectApplicationsPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("application")),
   served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
   served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),

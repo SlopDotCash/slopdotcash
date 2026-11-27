@@ -19,12 +19,20 @@ export interface JointReview {
   readonly unitActors: ReadonlyMap<string, ReadonlySet<string> | null>
 }
 
+export interface JointUnitCredit {
+  readonly digest: string
+  readonly coveredPullRequestIds: ReadonlySet<string>
+  readonly complete: boolean
+  readonly eventIds: ReadonlyArray<string>
+}
+
 export interface Merges {
   readonly events: ReadonlyArray<ScoreEvent>
   readonly held: ReadonlyArray<HeldSource>
   readonly creditActors: ReadonlyMap<string, ReadonlySet<string>>
   readonly assessed: ReadonlySet<string>
   readonly joint: ReadonlyMap<string, JointReview>
+  readonly jointUnitCredits: ReadonlyArray<JointUnitCredit>
   readonly implementationHeld: ReadonlySet<string>
   readonly standaloneReview: ReadonlySet<string>
 }
@@ -348,10 +356,16 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
   const { decision } = plan
   const events: ScoreEvent[] = []
   const assessed: string[] = []
+  const unitCredits: JointUnitCredit[] = []
   const merged = new Set(input.pulls.map((pull) => pull.id))
   const closed = new Set(input.closed.map((pull) => pull.id))
   for (const unit of decision.units) {
-    if (unit.claims.length === 0 || unit.carriers.some(ratified)) continue
+    if (unit.claims.length === 0) continue
+    const coveredPullRequestIds = new Set(unit.claims.map((claim) => claim.sourceId))
+    if (unit.carriers.some(ratified)) {
+      unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: false, eventIds: [] })
+      continue
+    }
     const sources: Accepted[] = []
     for (const id of new Set(unit.sources)) {
       const source = plan.accepted.get(id)
@@ -362,8 +376,14 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
     const first = sources[0]
     const completion = sources.at(-1)
     if (first === undefined || completion === undefined) throw new FactsRefused({ reason: "Joint implementation has no occurrence time", sourceId: unit.workUnitId })
-    if (sources.some((source) => source.pull.externalPrize)) continue
-    if (completion.millis < input.windowFrom || completion.millis >= input.windowTo || completion.millis < valuePolicyAt) continue
+    if (sources.some((source) => source.pull.externalPrize)) {
+      unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: false, eventIds: [] })
+      continue
+    }
+    if (completion.millis < input.windowFrom || completion.millis >= input.windowTo || completion.millis < valuePolicyAt) {
+      unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: false, eventIds: [] })
+      continue
+    }
     if (!(completion.indirect ? closed.has(completion.pull.id) : merged.has(completion.pull.id))) throw new FactsRefused({ reason: "Joint completion source is absent from the accepted outcome census", sourceId: completion.pull.id })
     if (unit.tier === null) throw new FactsRefused({ reason: "Joint implementation has no value tier", sourceId: unit.workUnitId })
     const outcome = try scoredSource({
@@ -381,19 +401,28 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
     const primary = (original ?? first.pull).author
     const weights = plan.lines.get(unit.workUnitId)?.weights
     if (weights === undefined || weights === null) return { kind: "held" as const, reason: "incomplete-lines" as const }
-    if (weights.recipients.length === 0) continue
+    if (weights.recipients.length === 0) {
+      unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: false, eventIds: [] })
+      continue
+    }
     const allocation = allocated(outcome.scored.points, weights)
     if (allocation.kind === "held") return allocation
-    if (allocation.kind === "none") continue
+    if (allocation.kind === "none") {
+      unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: false, eventIds: [] })
+      continue
+    }
     const credited = creditOrder(allocation.shares, actors.of(primary))
+    const unitEventIds: string[] = []
     for (const share of credited) {
       const found = actors.actor(share.actor)
       if (found === undefined) continue
       const actor = input.valueActors === undefined ? found : input.valueActors.get(found.id)
       if (actor === undefined || actor.kind === "Bot") throw new FactsRefused({ reason: "Joint implementation actor lacks a verified GitHub identity", sourceId: unit.workUnitId })
       if (share.points === 0) continue
+      const id = `${completion.pull.id}:joint:${unit.workUnitId}:merged:${actor.id}`
+      unitEventIds.push(id)
       events.push({
-        id: `${completion.pull.id}:joint:${unit.workUnitId}:merged:${actor.id}`,
+        id,
         actor,
         category: "merged-pull-request",
         points: share.points / 10 / 3,
@@ -408,8 +437,9 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
         reason: `Provisional joint value assessment (${unit.tier})${completion.indirect ? " of work accepted through indirect integration" : ""}: ${unit.rationale}${shareSuffix(credited.length, allocation.zeroLines, "scoped implementation actors")}`,
       })
     }
+    unitCredits.push({ digest: decision.digest, coveredPullRequestIds, complete: true, eventIds: unitEventIds })
   }
-  return { kind: "events" as const, events, assessed }
+  return { kind: "events" as const, events, assessed, unitCredits }
 }
 
 effect function unitLinesOf(decision: JointDecision, byId: ReadonlyMap<string, Source>, actors: ActorIndex) {
@@ -571,7 +601,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       jointAssessed: decision !== undefined,
       commits: [],
       emptyMarker: pull.emptyAcceptanceMarker === true,
-      unresolved: history.unresolvedImplementationSources.has(pull.id),
+      unresolved: history.unresolvedImplementationSources.has(pull.id) || (decision === undefined && pull.acceptedLineCountsDiffer === true),
       digestScored: acceptanceKey !== "" && scoredDigests.includes(acceptanceKey),
       earlierOverlap: (pull.commits ?? []).some((commit) => {
         const earlier = earlierOwners.get(commitKey(pull, commit.oid))
@@ -648,6 +678,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     scoredDigests = scoredDigestsAfter(scoredDigests, acceptanceKey, scoredShare)
   }
 
+  const jointUnitCredits: JointUnitCredit[] = []
   for (const plan of live) {
     if (heldDecisions.has(plan.decision)) continue
     const prepared = plan.decision.units.filter((unit) => unit.claims.length > 0 && !unit.carriers.some(ratified))
@@ -661,7 +692,8 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       continue
     }
     events.push(...outcome.events)
+    jointUnitCredits.push(...outcome.unitCredits)
     for (const key of outcome.assessed) assessed.add(key)
   }
-  return { events, held, creditActors, assessed, joint, implementationHeld, standaloneReview } satisfies Merges
+  return { events, held, creditActors, assessed, joint, jointUnitCredits, implementationHeld, standaloneReview } satisfies Merges
 }

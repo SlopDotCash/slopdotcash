@@ -1,4 +1,3 @@
-/// <reference path="./cloudflare.d.ts" />
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Cause, type Effect, Exit, type Layer, ManagedRuntime } from "effect";

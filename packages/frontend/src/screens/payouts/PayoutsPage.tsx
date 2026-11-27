@@ -183,6 +183,7 @@ export function PayoutsPage({ runtime }: PageProps) {
   const feed = useFeed(runtime, `payouts:${actor}`, followPayouts);
   const read = feed.value?.read;
   const account = feed.value?.account;
+  const currentAccount = feed.settled && !feed.failed && read?.kind === "ready" ? read.account : undefined;
   return (
     <PayoutsView
       loading={!feed.settled}
@@ -191,7 +192,7 @@ export function PayoutsPage({ runtime }: PageProps) {
       problem={read?.kind === "failed" ? read.message : feed.failed ? payoutMessages.privateUnavailable : undefined}
       account={account}
       onRetry={feed.restart}
-      consent={account ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} /> : undefined}
+      consent={currentAccount ? (payment) => <PayoutConsent runtime={runtime} account={currentAccount} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} onRefresh={feed.restart} /> : undefined}
       allocation={account ? <AllocationSection runtime={runtime} account={account} /> : undefined}
       referrals={actor !== "" ? <ReferralClaims runtime={runtime} githubId={actor} /> : undefined}
     />

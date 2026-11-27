@@ -1,5 +1,5 @@
 // spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
-import { ConfigInvalid, idList, secret } from "@repo/platform/config"
+import { idList, secret } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
 import { verifyWebhook } from "@repo/platform/github/webhook"
 import { bytesBody } from "@repo/platform/http"
@@ -42,8 +42,7 @@ export interface WebhookVars {
 export function webhookSettings(vars: WebhookVars) {
   return Layer.effect(WebhookSettings, effect {
     const webhookSecret = try secret("SLOPBOT_WEBHOOK_SECRET", vars.SLOPBOT_WEBHOOK_SECRET)
-    const [appUserId] = try idList("SLOPBOT_APP_USER_ID", vars.SLOPBOT_APP_USER_ID)
-    if (appUserId === undefined) throw new ConfigInvalid({ name: "SLOPBOT_APP_USER_ID", issue: "missing" })
+    const [appUserId = ""] = try idList("SLOPBOT_APP_USER_ID", vars.SLOPBOT_APP_USER_ID)
     return { secret: webhookSecret, appUserId, evidenceSwitch: vars.SLOPBOT_EVIDENCE_CLOSURE_ENABLED ?? "" }
   })
 }

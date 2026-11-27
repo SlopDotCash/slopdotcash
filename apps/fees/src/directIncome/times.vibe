@@ -1,6 +1,5 @@
 // spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"
 import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
-import { SolanaRpc, isSignature } from "@repo/platform/chain/solana"
 import type { TimedReceipt } from "../../gen/fees__directBountyIncome.effect.vibe"
 import type { Transfer } from "../../gen/settlement__directBounty.ts"
 
@@ -23,18 +22,6 @@ export effect function evmReceiptTime(transfer: Transfer) {
     const block = try evm.blockByNumber(receipt.blockNumber)
     if (block === undefined || block.hash !== receipt.blockHash) return unauthenticated(transfer)
     return observed(transfer, block.timestamp)
-  }
-  return read catch () => unauthenticated(transfer)
-}
-
-export effect function solanaReceiptTime(transfer: Transfer) {
-  const solana = try SolanaRpc
-  const signature = transfer.transaction
-  if (!isSignature(signature)) return unauthenticated(transfer)
-  const read = effect {
-    const found = try solana.transaction(signature, "finalized")
-    if (found === undefined || found.meta.err || found.slot !== transfer.height || found.blockTime === undefined) return unauthenticated(transfer)
-    return observed(transfer, found.blockTime)
   }
   return read catch () => unauthenticated(transfer)
 }

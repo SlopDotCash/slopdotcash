@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
 import { slopFeeBase, submissionFeeItem } from "@repo/backend/client";
 import { sha256Hex, webCrypto } from "@repo/platform/crypto";
 import { reportDepositItem } from "@repo/security/client";
@@ -20,7 +21,7 @@ import { FeeSetup, type FeePay, type PayAddress, openPayPage } from "../src/scre
 import { formatMonth } from "../src/screens/projects/summary.ts";
 import { WalletChoice, walletChoiceServices } from "../src/wallets/core/discovery.vibe";
 import { sessionSlots } from "../src/wallets/core/slots.ts";
-import { depositedKey, feeDepositKey, publishedTerms } from "../src/wallets/fee/feeCalls.ts";
+import { depositedKey, feeDepositKey, publishedSolanaTerms, publishedSolanaWay, publishedTerms } from "../src/wallets/fee/feeCalls.ts";
 import type { LeaderboardTransport, PublishedActor, Target } from "./support/ui/protocol.ts";
 import { accessible, at, named, shown, signIn, site } from "./support/ui/browser.ts";
 
@@ -164,8 +165,10 @@ afterEach(async () => {
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
-describe('Open every product route at its existing address (spec/frontend/navigation.md, "Story: Open every product route at its existing address"; spec/app/index.md, "Story: Open a page by its address")', () => {
-  it('each public address opens its one page with one main and one named heading (spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/app/index.md, "Every opening shows a page"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', async () => {
+// spec/frontend/navigation.md, "Story: Open every product route at its existing address"; spec/app/index.md, "Story: Open a page by its address"
+describe("Open every product route at its existing address", () => {
+  // spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/app/index.md, "Every opening shows a page"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
+  it("each public address opens its one page with one main", async () => {
     const pages: ReadonlyArray<readonly [string, string]> = [
       ["/how-it-works", "How Slop works"],
       ["/sponsors", "Fund a project"],
@@ -182,7 +185,8 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     await accessible();
   });
 
-  it('a signed-out private destination keeps its address and shows sign-in in place without a private read (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account")', async () => {
+  // spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"
+  it("a signed-out private destination keeps its address", async () => {
     const privatePages: ReadonlyArray<readonly [string, string, string | undefined]> = [
       ["/account", "Settings", undefined],
       ["/inbox", "Inbox", undefined],
@@ -200,10 +204,13 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     expect(privateReads).toEqual([]);
   });
 
-  it('an old address opens the page that replaced it and keeps its query and fragment (spec/app/index.md, "An old address opens the page that replaced it"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication")', async () => {
+  // spec/app/index.md, "An old address opens the page that replaced it"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"
+  it("an old address opens the page that replaced it and", async () => {
     await site.allow("^404 GET /api/v1/projects/nobody$", "^404 GET /api/v1/projects/nobody/");
-    await opened("/wallet", "Settings");
-    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/wallet") });
+    expect((await site.open("/wallet")).status).toBe(200);
+    await at("/account#wallets");
+    await shown(heading("Settings")).toMatchObject({ visible: true });
+    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/account#wallets") });
 
     await site.open("/verification");
     await at("/how-it-works");
@@ -214,16 +221,17 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     await shown(projects).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/funding?x=1#monthly-awards");
-    await at("/projects/nobody/funding?x=1#monthly-awards");
+    await at("/projects/nobody?x=1#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/awards");
-    await at("/projects/nobody/awards");
+    await at("/projects/nobody#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
     expect((await site.layout()).mains).toBe(1);
   });
 
-  it('a fragment link aligns its section to the top, a wheel hands the page back to the reader, and a fragment opened while the page renders is aligned once it appears (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")', async () => {
+  // spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
+  it("a fragment link aligns its section to the top, a", async () => {
     await openPayments();
 
     const aligned = await scrollSettled();
@@ -240,12 +248,14 @@ describe('Open every product route at its existing address (spec/frontend/naviga
   });
 
   for (const late of [false, true])
-    it(`Back and Forward restore the fragment reading position after ${late ? "a destination that renders late" : "immediate navigation"} (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")`, async () => {
+    // spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
+    it("Back and Forward restore the fragment reading", async () => {
       const sessionRead = "/api/v1/project-session";
       const sessionReads = async () => (await site.sent()).filter((sent) => sent.method === "GET" && sent.path === sessionRead).length;
       const near = (position: number) => async () => Math.abs((await site.scrollY()) - position);
       await site.allow("^failed GET /\\S+ net::ERR_ABORTED$");
       await openPayments();
+      await scrollSettled();
 
       const fromBottom = async () => Math.abs((await site.scrollY()) - (await site.scrollEnd()));
       while ((await fromBottom()) >= 2) {
@@ -286,7 +296,8 @@ describe('Open every product route at its existing address (spec/frontend/naviga
       await accessible();
     });
 
-  it('an address that names no route kind, or does not decode, is the not-found page (spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown")', async () => {
+  // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
+  it("an address that names no route kind, or does not", async () => {
     await site.allow("^404 GET /nope$");
     expect((await site.open("/nope")).status).toBe(404);
     await shown(heading("Page not found")).toMatchObject({ visible: true });
@@ -299,8 +310,10 @@ describe('Open every product route at its existing address (spec/frontend/naviga
   });
 });
 
-describe('Start contribution or private reporting when discovery is unavailable (spec/frontend/presentation.md, "Story: Start contribution or private reporting when discovery is unavailable"; spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => {
-  it('while the registry read is stalled Home keeps its heading and agent setup and shows no projects while it loads, then says there are none (spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+// spec/frontend/presentation.md, "Story: Start contribution or private reporting when discovery is unavailable"; spec/frontend/requests.md, "Story: Read current data without losing the last good result"
+describe("Start contribution or private reporting when", () => {
+  // spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
+  it("while the registry read is stalled Home keeps its", async () => {
     await site.hold("GET", "/api/v1/projects");
     expect((await site.open("/")).status).toBe(200);
     await shown(contributorHeading).toMatchObject({ visible: true });
@@ -315,8 +328,10 @@ describe('Start contribution or private reporting when discovery is unavailable 
   });
 });
 
-describe('Pick a project from the Featured and Community sections (spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections")', () => {
-  it('every listed project is one card in its own tier section, Featured before Community, each Community card in registry order, a configured month reads Configured and Not vaulted without a promise label, and a pool with no amount this month is left out (spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "An owner\'s honor-system promise shows this month\'s amount as promised, never as vault-backed")', async () => {
+// spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections"
+describe("Pick a project from the Featured and Community", () => {
+  // spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
+  it("every listed project is one card in its own tier", async () => {
     for (const project of [...listed, unpaid]) await list(project);
     expect((await site.open("/")).status).toBe(200);
     const featured = named("region", "Featured", { within: projects });
@@ -342,8 +357,10 @@ describe('Pick a project from the Featured and Community sections (spec/frontend
   });
 });
 
-describe('Pick a project from the Featured and Community sections, ten Community rows to a page (spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections")', () => {
-  it('Community shows ten rows to a page in registry order, the next page shows the rest, a description longer than 500 characters is cut at 500, and Home has no leaderboard (spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page")', async () => {
+// spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections"
+describe("Pick a project from the Featured and Community 2", () => {
+  // spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"
+  it("Community shows ten rows to a page in registry", async () => {
     const long = `${"Reproducible builds for every release ".repeat(14)}and more.`;
     const first = pool("j4-a01", 1420, "100000000", "$100", { description: long });
     const many: ReadonlyArray<Listed> = [first, ...Array.from({ length: 11 }, (_, index) => pool(`j4-a${String(index + 2).padStart(2, "0")}`, 1421 + index, "100000000", "$100"))];
@@ -369,43 +386,64 @@ describe('Pick a project from the Featured and Community sections, ten Community
   });
 });
 
-describe('Choose the contributor or maintainer journey on Home (spec/frontend/presentation.md, "Story: Choose the contributor or maintainer journey on Home"; spec/ui/copy.md, "Story: Copy a value and know whether it worked")', () => {
-  it('the switch sets the heading, the prompt and the address together, and a copy answer does not carry across journeys (spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent\'s skill address together"; spec/ui/copy.md, "Copying starts from ready and reports the browser\'s answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt")', async () => {
+// spec/frontend/presentation.md, "Story: Choose the contributor or maintainer journey on Home"; spec/ui/copy.md, "Story: Copy a value and know whether it worked"
+describe("Choose the contributor or maintainer journey on Home", () => {
+  // spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
+  it("the switch sets the heading, the prompt and the", async () => {
+    const contributorPrompt = "Read https://slop.cash/contribute/SKILL.md and follow it.";
+    const maintainerPrompt = "Read https://slop.cash/maintain/SKILL.md and follow it.";
     expect((await site.open("/")).status).toBe(200);
     await shown(named("button", "Contributor")).toMatchObject({ visible: true });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: contributorPrompt });
+    await shown(named("link", "Claude Code")).toMatchObject({ visible: true, href: `claude://code/new?q=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Codex")).toMatchObject({ visible: true, href: `codex://new?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Cursor")).toMatchObject({ visible: true, href: `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(encodeURIComponent(contributorPrompt))}` });
+    await shown(named("link", "Antigravity")).toMatchObject({ visible: true, href: `antigravity://open?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "OpenClaw")).toMatchObject({ visible: true, href: `openclaw://agent?message=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ visible: true, href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}` });
+    await shown(named("link", "GitHub Copilot")).toMatchObject({ visible: true, href: `ghapp://session/new?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Grok Bot")).toMatchObject({ visible: true, href: `grokbot://app/v1/prompt?text=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Meta Muse")).toMatchObject({ visible: true, href: "https://agent.meta.ai/chat" });
+    await shown(named("link", "OpenCode")).toMatchObject({ visible: true, href: "opencode://" });
+    await shown(named("link", "Meta AI (Muse Spark)")).toMatchObject({ count: 0 });
+    await shown(named("link", "ChatGPT")).toMatchObject({ count: 0 });
 
+    const copyButton = named("button", "Copy agent prompt", { exact: false });
     expect(await copyOutcome()).toBe("Ready");
-    await site.click(named("button", "Copy agent prompt"));
+    await site.click(copyButton);
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     const answered = await copyOutcome();
     if (answered === "Copied") await expect.poll(copyOutcome, { timeout: journeyMs }).toBe("Ready");
     else {
       expect(answered).toBe("CopyFailed");
-      await site.click(named("button", "Copy agent prompt"));
+      await site.click(copyButton);
       await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     }
 
-    await site.click(named("button", "Copy agent prompt"));
+    await site.click(copyButton);
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     await site.click(named("button", "Maintainer"));
     await at("/?audience=maintainer");
     await shown(maintainerHeading).toMatchObject({ visible: true });
     await shown(contributorHeading).toMatchObject({ count: 0 });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/maintain/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: maintainerPrompt });
+    await shown(named("link", "Claude Code")).toMatchObject({ href: `claude://code/new?q=${encodeURIComponent(maintainerPrompt)}` });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/maintain/SKILL.md")}` });
     expect(await copyOutcome()).toBe("Ready");
 
     await site.click(named("button", "Contributor"));
     await at("/");
     await shown(contributorHeading).toMatchObject({ visible: true });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: contributorPrompt });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}` });
 
     await site.open("/?audience=maintainer#projects");
     await shown(maintainerHeading).toMatchObject({ visible: true });
     await shown(projects).toMatchObject({ visible: true });
   });
 
-  it('the campaign keeps one whole accessible heading with reduced motion and on a narrow screen (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', async () => {
+  // spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
+  it("the campaign keeps one whole accessible heading with", async () => {
     expect((await site.open("/")).status).toBe(200);
     await site.view(1280, 900, true);
     await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
@@ -414,7 +452,8 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await accessible();
   });
 
-  it('with motion the campaign deletes its action and types the next one without changing its accessible name or height, and reduced motion puts the whole heading back (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion")', async () => {
+  // spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"
+  it("with motion the campaign deletes its action and", async () => {
     await site.view(1280, 900, false);
     expect((await site.open("/")).status).toBe(200);
     const visible = async () => (await textOf(contributorHeading)).replace(/\s+/gu, " ");
@@ -441,8 +480,10 @@ const directory = Array.from({ length: 26 }, (_, index) => {
   return { actorId: `U_cdir${number}`, githubId: String(4_200_001 + index), login: `cdir-${number}` };
 });
 
-describe('Find a contributor in the public directory (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/ui/pagination.md, "Story: Move through pages without leaving the list")', () => {
-  it('Contributors lists the public members matching ?q in login order, 24 to a page, with no Points figures or ranking, and keeps the Points rules behind Rules (spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication")', async () => {
+// spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/ui/pagination.md, "Story: Move through pages without leaving the list"
+describe("Find a contributor in the public directory", () => {
+  // spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"
+  it("Contributors lists the public members matching ?q in", async () => {
     for (const member of directory) await site.sql("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,'2026-11-01T00:00:00.000Z',1)", member.actorId, member.githubId, member.login);
     const people = named("region", "People");
     const person = (login: string) => named("link", login, { within: people });
@@ -479,12 +520,13 @@ describe('Find a contributor in the public directory (spec/backend/accounts.md, 
   });
 });
 
-function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>) {
+function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>, skillSourcePath?: string) {
   const manifest = manifestOf({ id: projectId, tier: "community", repositoryId: 0 });
   return {
     ...manifest,
     authority: { ...manifest.authority, repositoryNodeId: repositories[0]?.nodeId ?? "" },
     repositories: repositories.map(({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId }) => ({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId })),
+    skill: { ...manifest.skill, ...(skillSourcePath === undefined ? {} : { sourcePath: skillSourcePath }) },
   };
 }
 
@@ -494,9 +536,10 @@ const pullRequestLinks = [["Merged", "is:merged", "merged"], ["Open", "is:open",
 
 async function publishPoints(leaderboard: LeaderboardTransport = "whole") {
   const published = await site.published(leaderboard);
-  const { registered } = published.registry;
+  const { registered, projects: registeredProjects } = published.registry;
   const projectIds = [...new Set(registered.map((repository) => repository.projectId))];
-  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id))) });
+  const skillPaths = new Map(registeredProjects.map((project) => [project.id, project.skillSourcePath]));
+  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id), skillPaths.get(id))) });
   const [leader] = published.leaders;
   const [primary] = registered;
   if (leader === undefined || primary === undefined) throw new Error("the published Points fixture has no leader or repository");
@@ -528,8 +571,10 @@ async function profileOf(leader: PublishedActor) {
   await shown(heading(leader.login)).toMatchObject({ visible: true });
 }
 
-describe('Read a contributor\'s profile over the published Points record (spec/frontend/views.md, "Story: Read a contributor\'s profile"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal")', () => {
-  it('a contributor\'s address shows who they are and their pull requests from the published snapshot, census and journal without a Points figure, a contributor only the census names keeps the same record at 320 px with 200% text, and a login no record names is not found (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+// spec/frontend/views.md, "Story: Read a contributor's profile"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
+describe("Read a contributor's profile over the published", () => {
+  // spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"
+  it("a contributor's address shows who they are and their", async () => {
     const { leader } = await publishPoints();
     await profileOf(leader);
     await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true, href: `https://github.com/${leader.login}` });
@@ -560,14 +605,15 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
     await site.restore();
   });
 
-  it('a Points journal that cannot load keeps the confirmed contributor and offers Retry points without a stale notice, and Retry reads the journal once more and clears the notice (spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times")', async () => {
+  // spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"
+  it("a Points journal that cannot load keeps the", async () => {
     const { leader } = await publishPoints();
     await site.allow(`^503 GET ${pointsIndexPath}$`, "^console Failed to load resource: the server responded with a status of 503");
     await site.fail("GET", pointsIndexPath, 503, "Points temporarily unavailable");
     await profileOf(leader);
     const retry = named("button", "Retry points", { within: slopPoints });
     await shown(retry).toMatchObject({ visible: true });
-    await shown({ text: "Could not load", within: slopPoints }).toMatchObject({ visible: true });
+    await shown({ text: "Unavailable", within: slopPoints }).toMatchObject({ visible: true });
     await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
     await shown({ text: "Data last updated", within: slopPoints }).toMatchObject({ count: 0 });
     expect(await readsOf((path) => shardPathPattern.test(path))).toBe(0);
@@ -583,7 +629,8 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
   });
 
   for (const corrupted of [false, true])
-    it(`a profile reads a leaderboard published in parts ${corrupted ? "and refuses the generation when a part does not match its digest, showing no record until Retry reads matching parts" : "as one generation"} (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted")`, async () => {
+    // spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
+    it("a profile reads a leaderboard published in parts", async () => {
       const { leader, parts } = await publishPoints("parts");
       const [first] = parts;
       expect(first).toBeDefined();
@@ -608,7 +655,8 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
       await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
     });
 
-  it('a contributor renamed since an archived cycle keeps that cycle on the current profile, which opens the cycle and shows the same record again on Back (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+  // spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"
+  it("a contributor renamed since an archived cycle keeps", async () => {
     const { leader, primary } = await publishPoints();
     const [paid] = paidCycle.contributors;
     expect(paid).toBeDefined();
@@ -651,8 +699,10 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
 const configuredPool = pool("j4-pool-set", 1440, "500000000", "$500");
 const promisedPool = pool("j4-pool-promise", 1441, "250000000", "$250", { reward: { honorSystem: true } });
 
-describe('Show a monthly amount only while the vault holds it (spec/frontend/projections.md, "Story: Show a monthly amount only while the vault holds it")', () => {
-  it('Home and /sponsors tag a configured pool Configured and an owner\'s honor-system promise Promised, each beside Not vaulted, and only the promised project\'s page keeps the month as a promise (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/projections.md, "An owner\'s honor-system promise shows this month\'s amount as promised, never as vault-backed")', async () => {
+// spec/frontend/projections.md, "Story: Show a monthly amount only while the vault holds it"
+describe("Show a monthly amount only while the vault holds it", () => {
+  // spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
+  it("Home and /sponsors tag a configured pool Configured", async () => {
     for (const project of [configuredPool, promisedPool]) await list(project);
     expect((await site.open("/")).status).toBe(200);
     const community = named("region", "Community", { within: projects });
@@ -681,7 +731,8 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
     await shown({ text: promiseNoticeText, exact: true }).toMatchObject({ count: 0 });
   });
 
-  it('a pool whose registered vault held this month\'s amount at the month start and still holds it is tagged Vaulted on Home and in the vault on /sponsors, never Not vaulted (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', async () => {
+  // spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
+  it("a pool whose registered vault held this month's", async () => {
     const funded = pool("j4-pool-vaulted", 1444, "50000000", "$50", { reward: { chain: "base" } });
     await list(funded);
     const deployed = await site.vault({ projectId: funded.id });
@@ -704,6 +755,9 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
 
     await opened("/sponsors", "Fund a project");
     await shown({ text: "$50 monthly · in the vault" }).toMatchObject({ visible: true });
+
+    expect((await site.open(`/projects/${funded.id}`)).status).toBe(200);
+    await shown({ text: "Chain: Base", exact: false }).toMatchObject({ visible: true });
   });
 });
 
@@ -731,8 +785,10 @@ async function observed(project: Listed, openOutside: number, wanted: ReadonlyAr
   );
 }
 
-describe('Pause new contributors while the review queue is full (spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"; spec/frontend/views.md, "Story: Read a project\'s rewards and activity at a glance")', () => {
-  it('a project at its intake cap is left out of Home and /sponsors and its page says why and lists its wanted issue, while one below its cap is listed as before (spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before")', async () => {
+// spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"; spec/frontend/views.md, "Story: Read a project's rewards and activity at a glance"
+describe("Pause new contributors while the review queue is full", () => {
+  // spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"
+  it("a project at its intake cap is left out of Home and", async () => {
     for (const project of [capped, belowCap]) await list(project);
     await observed(capped, 2, [wantedIssue]);
     await observed(belowCap, 2, null);
@@ -749,12 +805,14 @@ describe('Pause new contributors while the review queue is full (spec/backend/in
     expect((await site.open(`/projects/${capped.id}`)).status).toBe(200);
     await shown({ text: pausedNotice, exact: true }).toMatchObject({ visible: true });
     const work = named("region", "Suggested work");
-    await shown(named("link", `Wanted. Issue #${wantedIssue.number}: ${wantedIssue.title}`, { within: work })).toMatchObject({ visible: true, href: wantedIssue.url });
+    await shown(named("link", wantedIssue.title, { exact: false, within: work })).toMatchObject({ visible: true, href: wantedIssue.url });
   });
 });
 
-describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up")', () => {
-  it('hides an over-limit project on Home and /sponsors even with no intake cap (spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why")', async () => {
+// spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up"
+describe("Backlog rule on Home and /sponsors", () => {
+  // spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
+  it("hides an over-limit project on Home and /sponsors", async () => {
     for (const project of [backlog, activeNoCap]) await list(project);
     await site.clock("2026-12-02T00:00:00.000Z");
     await observed(backlog, 0, null, 50, "2026-12-02T00:00:00.000Z");
@@ -775,8 +833,10 @@ describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Stor
 });
 
 
-describe('Keep browsing on the last published registry when the live read fails (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails")', () => {
-  it('/sponsors whose live registry read times out with no published copy keeps the header and footer and offers Try again, which opens the page once the read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+// spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails"
+describe("Keep browsing on the last published registry when", () => {
+  // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
+  it("/sponsors whose live registry read times out with no", async () => {
     await site.allow("^failed GET /api/v1/projects ");
     await site.hold("GET", "/api/v1/projects");
     expect((await site.open("/sponsors")).status).toBe(200);
@@ -795,7 +855,8 @@ describe('Keep browsing on the last published registry when the live read fails 
     await at("/sponsors");
   });
 
-  it('a failed live registry read lists the last published projects under a stale label with their sync time, a project page keeps the label, the manage page asks for current data, an account page shows no label, and Try again clears it once the live read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+  // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
+  it("a failed live registry read lists the last published", async () => {
     const cached = pool("j4-cached", 1445, "75000000", "$75");
     await list(cached);
     const syncedAt = "2026-10-16T12:00:00.000Z";
@@ -806,7 +867,7 @@ describe('Keep browsing on the last published registry when the live read fails 
     await site.serve("/data/project-registry.json", 200, { schemaVersion: "1", syncedAt, projects: [manifestOf(cached)] });
 
     expect((await site.open("/")).status).toBe(200);
-    await shown(notice).toMatchObject({ visible: true, text: expect.stringContaining(`Projects stale · ${formatDateTime(syncedAt)}`) });
+    await shown(notice).toMatchObject({ visible: true, text: expect.stringContaining(`Projects stale · ${formatDateTime(syncedAt)}`) as unknown });
     await shown(named("button", "Try again", { within: notice })).toMatchObject({ visible: true });
     await shown(listedCard).toMatchObject({ count: 1, visible: true, href: `/projects/${cached.id}` });
     await shown(heading("Projects are unavailable")).toMatchObject({ count: 0 });
@@ -835,8 +896,10 @@ describe('Keep browsing on the last published registry when the live read fails 
   });
 });
 
-describe('Every part reads the same published fee terms (spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
-  it('How it works answers whether maintainers are paid, whether opening a pull request costs a fee and whether a security report needs a deposit (spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days")', async () => {
+// spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded"
+describe("Every part reads the same published fee terms", () => {
+  // spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
+  it("How it works answers whether maintainers are paid", async () => {
     await opened("/how-it-works#faq", "How Slop works");
     const faq = named("region", "Questions");
     for (const question of ["Can maintainers be paid?", "Is there a fee to open a pull request?", "Is there a deposit to file a security report?"])
@@ -848,7 +911,7 @@ describe('Every part reads the same published fee terms (spec/backend/submission
       "starts with the next UTC month",
       "the whole amount stays with contributors",
       "Only on a project whose owner turned on the refundable submission fee",
-      "2 USDC on Base or 2 USDG on Robinhood Chain",
+      "2 USDC on Base or Solana, or 2 USDG on Robinhood Chain",
       "in SLOP on Robinhood Chain at half",
       "a merge sends it back, and so do 14 days without a maintainer decision",
       "closed without a merge for 7 days",
@@ -864,8 +927,10 @@ const recipient = { id: 2183, login: "octo-alloc" } as const;
 const allocation = named("region", "Contributor allocation");
 const allocationPath = "/contributor-allocation.json";
 
-describe('See my contributor allocation on Payouts (spec/frontend/projections.md, "Story: See my contributor allocation on Payouts")', () => {
-  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it, and from the deadline the same row is Unclaimed with no wallet link (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+// spec/frontend/projections.md, "Story: See my contributor allocation on Payouts"
+describe("See my contributor allocation on Payouts", () => {
+  // spec/frontend/projections.md, "Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it"
+  it("a timed-out read is Allocation unavailable with", async () => {
     await site.clock(new Date().toISOString());
     await site.user(recipient.id, recipient.login);
     await site.allow(`^failed GET ${allocationPath} `);
@@ -893,8 +958,10 @@ describe('See my contributor allocation on Payouts (spec/frontend/projections.md
   });
 });
 
-describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Story: Lock months from the owner\'s wallet")', () => {
-  it('How it works answers whether the owner can take this month\'s pool back (spec/frontend/projections.md, "Slop\'s pages refuse a withdrawal below the promised amount")', async () => {
+// spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"
+describe("Lock months from the owner's wallet", () => {
+  // spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"
+  it("How it works answers whether the owner can take this", async () => {
     await opened("/how-it-works", "How Slop works");
     await shown(named("heading", "Can the owner take this month's pool back?", { level: 3 })).toMatchObject({ visible: true });
     await shown({ text: "the vault contract refuses to withdraw it" }).toMatchObject({ visible: true });
@@ -988,7 +1055,7 @@ interface Mined {
   readonly logs: ReadonlyArray<{ address: string; topics: string[]; data: string }>;
 }
 
-function fakeChain(options: { atomic: boolean; unclear?: boolean }) {
+function fakeChain(options: { atomic: boolean; unclear?: boolean; batchError?: Error }) {
   let chain = 1n;
   let finalized = 0n;
   const allowances = new Map<string, bigint>();
@@ -1010,45 +1077,48 @@ function fakeChain(options: { atomic: boolean; unclear?: boolean }) {
     return entry;
   };
   const provider = {
-    async request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
-      seen.push(method);
-      const [first] = params as ReadonlyArray<Record<string, unknown>>;
-      if (method === "eth_requestAccounts" || method === "eth_accounts") return [account.address];
-      if (method === "eth_chainId") return quantity(chain);
-      if (method === "wallet_switchEthereumChain") {
-        chain = BigInt(String(first?.chainId));
-        return null;
-      }
-      if (method === "eth_getCode") return "0x6080";
-      if (method === "eth_call") {
-        const data = String(first?.data);
-        if (data.startsWith("0x70a08231")) return word(10n ** 30n);
-        if (data.startsWith("0xdd62ed3e")) return word(allowances.get(String(first?.to).toLowerCase()) ?? 0n);
-        return word(0n);
-      }
-      if (method === "eth_estimateGas") return "0x5208";
-      if (method === "wallet_getCapabilities") return options.atomic ? { [quantity(chain)]: { atomic: { status: "supported" } } } : {};
-      if (method === "eth_sendTransaction") {
-        savedAtPrompt.push(sessionStorage.getItem(watchedKey));
-        if (options.unclear === true) throw Object.assign(new Error("The wallet lost the request."), { code: -32603 });
-        return mine(first as unknown as { to: string; data: string }).hash;
-      }
-      if (method === "wallet_sendCalls") {
-        savedAtPrompt.push(sessionStorage.getItem(watchedKey));
-        const last = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls.map(mine).at(-1);
-        return { id: `batch-${last?.hash ?? ""}` };
-      }
-      if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
-      if (method === "eth_getTransactionReceipt") {
-        const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : { status: "0x1", transactionHash: entry.hash, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), logs: entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })) };
-      }
-      if (method === "eth_getTransactionByHash") {
-        const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: "0x0" };
-      }
-      if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
-      throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+    request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
+      return Promise.resolve().then(() => {
+        seen.push(method);
+        const [first] = params as ReadonlyArray<Record<string, unknown>>;
+        if (method === "eth_requestAccounts" || method === "eth_accounts") return [account.address];
+        if (method === "eth_chainId") return quantity(chain);
+        if (method === "wallet_switchEthereumChain") {
+          chain = BigInt(String(first?.chainId));
+          return null;
+        }
+        if (method === "eth_getCode") return "0x6080";
+        if (method === "eth_call") {
+          const data = String(first?.data);
+          if (data.startsWith("0x70a08231")) return word(10n ** 30n);
+          if (data.startsWith("0xdd62ed3e")) return word(allowances.get(String(first?.to).toLowerCase()) ?? 0n);
+          return word(0n);
+        }
+        if (method === "eth_estimateGas") return "0x5208";
+        if (method === "wallet_getCapabilities") return options.atomic ? { [quantity(chain)]: { atomic: { status: "supported" } } } : {};
+        if (method === "eth_sendTransaction") {
+          savedAtPrompt.push(sessionStorage.getItem(watchedKey));
+          if (options.unclear === true) throw Object.assign(new Error("The wallet lost the request."), { code: -32603 });
+          return mine(first as unknown as { to: string; data: string }).hash;
+        }
+        if (method === "wallet_sendCalls") {
+          savedAtPrompt.push(sessionStorage.getItem(watchedKey));
+          if (options.batchError !== undefined) throw options.batchError;
+          const last = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls.map(mine).at(-1);
+          return { id: `batch-${last?.hash ?? ""}` };
+        }
+        if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
+        if (method === "eth_getTransactionReceipt") {
+          const entry = mined.find((item) => item.hash === params[0]);
+          return entry === undefined ? null : { status: "0x1", transactionHash: entry.hash, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), logs: entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })) };
+        }
+        if (method === "eth_getTransactionByHash") {
+          const entry = mined.find((item) => item.hash === params[0]);
+          return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: "0x0" };
+        }
+        if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
+        throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+      });
     },
   };
   return {
@@ -1069,8 +1139,8 @@ function announce(uuid: string, provider: unknown) {
   window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info: { uuid, name: "Payer wallet", rdns: "test.payer", icon: "data:image/svg+xml,<svg/>" }, provider }) }));
 }
 
-function started(fetch: typeof globalThis.fetch, switches: { submissionFee: boolean; reportDeposit: boolean } = { submissionFee: true, reportDeposit: true }) {
-  const setup = Layer.succeed(FeeSetup, { ...switches, terms: publishedTerms });
+function started(fetch: typeof globalThis.fetch, switches: { submissionFee: boolean; reportDeposit: boolean } = { submissionFee: true, reportDeposit: true }, terms = publishedTerms) {
+  const setup = Layer.succeed(FeeSetup, { ...switches, terms });
   const runtime = ManagedRuntime.make(Layer.mergeAll(walletChoiceServices, webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch), setup));
   cleanups.push(() => void runtime.dispose());
   return runtime;
@@ -1084,17 +1154,35 @@ const walletId = Effect.gen(function* () {
 const shownPage = (pay: FeePay) => Effect.gen(function* () {
   const state = yield* pay.machine.get();
   const shown = yield* pay.shown();
-  return { page: state.page, dueWays: state.dueWays, due: shown.record?.due.map((way) => way.symbol) ?? [], withheld: shown.record?.slopWithheld ?? false, paid: shown.record?.paid?.depositId ?? 0, refused: shown.message !== "" };
+  return { page: state.page, dueWays: state.dueWays, due: shown.record?.due.map((way) => way.symbol) ?? [], solana: shown.record?.solana?.programId ?? null, withheld: shown.record?.slopWithheld ?? false, paid: shown.record?.paid?.depositId ?? 0, refused: shown.message !== "" };
 });
 
-describe('Pay a refundable deposit for a pull request or a private report from any wallet (spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown")', () => {
-  it("a switched-off build offers nothing and still shows a recorded deposit, an unlisted repository, a bad address and an unasked record each say so, and a record off the published terms or rate offers nothing while an unread rate withholds only SLOP", async () => {
-    const opened = async (address: PayAddress, held: Partial<Api>, switches?: { submissionFee: boolean; reportDeposit: boolean }) => {
-      const runtime = started(api(held).fetch, switches);
+// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"
+describe("Pay a refundable deposit for a pull request or a", () => {
+  it("a switched-off build offers nothing and still shows", async () => {
+    const opened = async (address: PayAddress, held: Partial<Api>, switches?: { submissionFee: boolean; reportDeposit: boolean }, terms = publishedTerms) => {
+      const runtime = started(api(held).fetch, switches, terms);
       return runtime.runPromise(Effect.flatMap(openPayPage(address, sessionSlots()), shownPage));
     };
+    const solanaEntry = (overrides: Record<string, unknown> = {}) => ({
+      network: publishedSolanaTerms.network,
+      chainId: null,
+      contract: publishedSolanaTerms.programId,
+      token: publishedSolanaTerms.token,
+      symbol: publishedSolanaTerms.symbol,
+      decimals: publishedSolanaTerms.decimals,
+      amount: stableMinor,
+      minimumAccepted: stableMinor,
+      keptTo: publishedSolanaTerms.keptTo,
+      ...overrides,
+    });
+    const solanaOffTerms = { ...publishedTerms, solana: { ...publishedSolanaTerms, switchedOn: false } };
     const dueBoth = pullRecord([stableWay(), slopWay(slopAmount)]);
+    const dueWithSolana = pullRecord([stableWay(), slopWay(slopAmount), solanaEntry()]);
     const result = {
+      solanaSwitchedOn: publishedSolanaTerms.switchedOn,
+      solanaPublishedProgram: publishedSolanaWay(publishedTerms, stableMinor)?.programId ?? null,
+      solanaOffWay: publishedSolanaWay(solanaOffTerms, stableMinor),
       switchedOff: await opened(pullAddress, { item: dueBoth }, { submissionFee: false, reportDeposit: false }),
       reportSwitchedOff: await opened(reportAddress, { report: reportRecord([slopWay(reportAmount)]) }, { submissionFee: false, reportDeposit: false }),
       recordedWhileOff: await opened(pullAddress, { item: pullRecord([], { paid: paid("base-mainnet", usdc.address, stableMinor, false), outcome: "refund_due" }) }, { submissionFee: false, reportDeposit: false }),
@@ -1104,6 +1192,9 @@ describe('Pay a refundable deposit for a pull request or a private report from a
       noFee: await opened(pullAddress, {}),
       noDeposit: await opened(reportAddress, {}),
       due: await opened(pullAddress, { item: dueBoth }),
+      dueWithSolana: await opened(pullAddress, { item: dueWithSolana }),
+      dueSolanaOff: await opened(pullAddress, { item: dueWithSolana }, undefined, solanaOffTerms),
+      otherSolanaProgram: await opened(pullAddress, { item: pullRecord([stableWay(), solanaEntry({ contract: "11111111111111111111111111111111" })]) }),
       otherContract: await opened(pullAddress, { item: pullRecord([stableWay({ contract: `0x${"1".repeat(40)}` })]) }),
       otherDestination: await opened(pullAddress, { item: pullRecord([stableWay({ keptTo: publishedTerms.burn })]) }),
       otherNetwork: await opened(pullAddress, { item: pullRecord([stableWay({ chainId: 1 })]) }),
@@ -1114,6 +1205,9 @@ describe('Pay a refundable deposit for a pull request or a private report from a
     };
     const nothing = { dueWays: 0, due: [] };
     expect(result).toMatchObject({
+      solanaSwitchedOn: true,
+      solanaPublishedProgram: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+      solanaOffWay: null,
       switchedOff: { page: "SwitchedOff", ...nothing },
       reportSwitchedOff: { page: "SwitchedOff", dueWays: 0 },
       recordedWhileOff: { page: "Recorded", dueWays: 0, paid: 1 },
@@ -1122,7 +1216,10 @@ describe('Pay a refundable deposit for a pull request or a private report from a
       unlisted: { page: "NotRegistered", ...nothing },
       noFee: { page: "NothingAsked", ...nothing },
       noDeposit: { page: "NothingAsked", ...nothing },
-      due: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], withheld: false },
+      due: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], solana: null, withheld: false },
+      dueWithSolana: { page: "Due", dueWays: 3, due: ["USDC", "SLOP"], solana: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7", withheld: false },
+      dueSolanaOff: { page: "Due", dueWays: 2, due: ["USDC", "SLOP"], solana: null, withheld: false },
+      otherSolanaProgram: { page: "Failed", ...nothing, refused: true },
       otherContract: { page: "Failed", ...nothing, refused: true },
       otherDestination: { page: "Failed", ...nothing, refused: true },
       otherNetwork: { page: "Failed", ...nothing, refused: true },
@@ -1134,7 +1231,8 @@ describe('Pay a refundable deposit for a pull request or a private report from a
   });
 });
 
-describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding")', () => {
+// spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"
+describe("Pay from a wallet and follow the deposit to final", () => {
   const separately = (address: PayAddress, held: Partial<Api>, item: string, recorded: (api: Api) => void) => async () => {
     const key = feeDepositKey(item);
     const chain = fakeChain({ atomic: false });
@@ -1182,15 +1280,15 @@ describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePa
     });
   };
 
-  it("a wallet on another chain switches, approves the exact amount, deposits exactly the published call into the fee contract and is followed to final for a pull request", separately(pullAddress, { item: pullRecord([stableWay()]) }, pullItem, (served) => {
+  it("a wallet on another chain switches, approves the", separately(pullAddress, { item: pullRecord([stableWay()]) }, pullItem, (served) => {
     served.item = pullRecord([], { paid: paid("base-mainnet", usdc.address, stableMinor, true) });
   }));
 
-  it("the same pay form pays a report's SLOP deposit on Robinhood Chain and follows it to final", separately(reportAddress, { report: reportRecord([slopWay(reportAmount)]) }, reportItem, (served) => {
+  it("the same pay form pays a report's SLOP deposit on", separately(reportAddress, { report: reportRecord([slopWay(reportAmount)]) }, reportItem, (served) => {
     served.report = reportRecord([], { paid: paid("robinhood-mainnet", slop.address, reportAmount, true) });
   }));
 
-  it("an unclear wallet answer is kept until the payer says nothing was sent, which clears the saved request, and the wallet can then be disconnected", async () => {
+  it("an unclear wallet answer is kept until the payer", async () => {
     const chain = fakeChain({ atomic: false, unclear: true });
     const key = feeDepositKey(pullItem);
     chain.watch(key);
@@ -1224,7 +1322,36 @@ describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePa
     });
   });
 
-  it("a batching wallet pays SLOP in one request, and a deposit of the tab already on chain stops a second payment", async () => {
+  it.each([
+    { reply: "direct capability refusal", error: Object.assign(new Error("Wallet capability unavailable"), { code: 5700 }), fallback: true, retained: false, retry: true },
+    { reply: "nested capability code", error: Object.assign(new Error("The reply was lost"), { code: -32603, cause: { code: 5700 } }), fallback: false, retained: true, retry: true },
+    { reply: "user decline", error: Object.assign(new Error("Declined"), { code: 4001 }), fallback: false, retained: false, retry: false },
+  ])("fee deposit batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, fallback, retained, retry }) => {
+    const key = feeDepositKey(pullItem);
+    const chain = fakeChain({ atomic: true, batchError: error });
+    chain.watch(key);
+    const { fetch } = api({ item: pullRecord([stableWay()]) });
+    const runtime = started(fetch);
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce(crypto.randomUUID(), chain.provider);
+      const pay = yield* openPayPage(pullAddress, sessionSlots());
+      yield* pay.connect(yield* walletId);
+      yield* pay.review();
+      const denied = yield* Effect.exit(pay.pay());
+      const phase = (yield* pay.machine.get()).phase;
+      const batched = (yield* pay.shown()).reviewed?.facts.batch;
+      const saved = sessionStorage.getItem(key);
+      const again = retry ? Exit.isSuccess(yield* Effect.exit(pay.pay())) : false;
+      const recovered = retained ? (yield* (yield* openPayPage(pullAddress, sessionSlots())).machine.get()).phase : undefined;
+      return { denied: Exit.isFailure(denied), phase, batched, saved, again, recovered, kept: sessionStorage.getItem(key) === saved };
+    }));
+    expect(chain.savedAtPrompt[0]).toEqual(expect.any(String));
+    expect(result).toEqual({ denied: true, phase: retained ? "Unclear" : "Reviewed", batched: !fallback, saved: retained ? chain.savedAtPrompt[0] : null, again: fallback, recovered: retained ? "Unclear" : undefined, kept: !fallback });
+    expect(chain.seen.filter((method) => method === "wallet_sendCalls" || method === "eth_sendTransaction")).toEqual(fallback ? ["wallet_sendCalls", "eth_sendTransaction"] : ["wallet_sendCalls"]);
+    expect(chain.mined.map((call) => decodeFunctionData({ abi: depositAbi, data: call.input as Hex }).functionName)).toEqual(fallback ? ["approve"] : []);
+  });
+
+  it("a batching wallet pays SLOP in one request, and a", async () => {
     const chain = fakeChain({ atomic: true });
     const key = feeDepositKey(pullItem);
     chain.watch(key);

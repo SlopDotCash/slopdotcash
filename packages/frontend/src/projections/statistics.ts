@@ -2,6 +2,7 @@
 import { isUnavailableModelIdentifier } from "@repo/contributor/client";
 import { type LeaderboardSnapshot, type ModelAttribution, pointsOf, type ScoreEvent } from "@repo/points/client";
 import { Schema } from "effect";
+// eslint-disable-next-line boundaries/no-unknown-dependencies -- frozen repository data snapshot bundled via Vite ?raw
 import whoBuildsText from "../../../../data/who-builds/2026-09-17/snapshot.json?raw";
 import { type MergeRow, mergeLine } from "../../gen/frontend__projections.ts";
 import { declarationCounts } from "../../gen/frontend__views.ts";
@@ -20,6 +21,8 @@ export interface MergeActivityRow {
 }
 
 const dayMs = 86_400_000;
+
+const unavailableModel = (value: string): boolean => isUnavailableModelIdentifier(value);
 
 /** @throws {never} */
 function instant(iso: string): number {
@@ -397,7 +400,7 @@ export function summarizeModelOutcomes(snapshot: Pick<LeaderboardSnapshot, "attr
   let declarationsWithoutExactModel = 0;
 
   for (const attribution of snapshot.attributions) {
-    if (isUnavailableModelIdentifier(attribution.model)) {
+    if (unavailableModel(attribution.model)) {
       declarationsWithoutExactModel += 1;
       continue;
     }

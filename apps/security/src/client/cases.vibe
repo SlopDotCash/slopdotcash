@@ -21,9 +21,11 @@ export schema Imported { state: "ok" | "unavailable"; received: number }
 
 export const caseRequestKib = 64
 
-export const listCases = route({ method: "GET", path: "/api/v1/security-cases", access: "session", limitKib: 1, request: undefined, answer: CaseList, rejected: "not_found", cache: "private" })
-export const readCase = route({ method: "GET", path: "/api/v1/security-cases/:id", access: "session", limitKib: 1, request: undefined, answer: CaseAnswer, rejected: "not_found", cache: "private" })
-export const claimCase = route({ method: "POST", path: "/api/v1/security-cases", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: Schema.Union([CaseAnswer, Imported]), rejected: "invalid_request", cache: "private", status: 201 })
-export const actOnCase = route({ method: "POST", path: "/api/v1/security-cases/:id/actions", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: CaseAnswer, rejected: "action_not_allowed", cache: "private" })
+const securityHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" } as const
+
+export const listCases = route({ method: "GET", path: "/api/v1/security-cases", access: "session", limitKib: 1, request: undefined, answer: CaseList, rejected: "not_found", cache: "private", refusalHeaders: securityHeaders })
+export const readCase = route({ method: "GET", path: "/api/v1/security-cases/:id", access: "session", limitKib: 1, request: undefined, answer: CaseAnswer, rejected: "not_found", cache: "private", refusalHeaders: securityHeaders })
+export const claimCase = route({ method: "POST", path: "/api/v1/security-cases", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: Schema.Union([CaseAnswer, Imported]), rejected: "invalid_request", cache: "private", status: 201, refusalHeaders: securityHeaders })
+export const actOnCase = route({ method: "POST", path: "/api/v1/security-cases/:id/actions", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: CaseAnswer, rejected: "action_not_allowed", cache: "private", refusalHeaders: securityHeaders })
 
 export const casesApi: ReadonlyArray<AnyRoute> = [listCases, readCase, claimCase, actOnCase]

@@ -1,2 +1,13 @@
 /* The classes of every component: an application's Tailwind entry imports this beside the theme. */
 @source "./src";
+
+html:has([data-confirmation-dialog][data-state="open"]) {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+[data-confirmation-dialog] {
+  max-block-size: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}

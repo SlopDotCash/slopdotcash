@@ -124,7 +124,7 @@ const attesterBindings: { readonly [E in Environment]: { readonly [network: stri
     "base-sepolia": [["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
     "ethereum-sepolia": [["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
     "robinhood-testnet": [["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
-    "solana-devnet": [["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
+    "solana-devnet": [["SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
   },
 }
 
@@ -367,7 +367,10 @@ export function publisher(options: PublisherOptions) {
         if ((try Ref.get(backupRetention)) !== true) throw refused("the backup Worker was not published with retention enabled in this run")
         return try servingTag(reviewed.file.name)
       }
-      if (service === "SubmissionFee") return try publishSubmissionFee(reviewed, ready.site, publication)
+      if (service === "SubmissionFee") {
+        const slopbot = onlyConfig(configsFor(ready.reviewed, "Slopbot", target.environment))
+        return try publishSubmissionFee(reviewed, ready.site, publication, { slopbot: typeof slopbot === "string" ? undefined : slopbot })
+      }
       const secrets = try releaseSecrets(workerUploads[target.environment][service] ?? [])
       if (service === "VettingBackup") {
         const overrides = { vars: { EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: ready.retention ? "enabled" : "off" }, withoutBindings: [] } satisfies Overrides
@@ -419,7 +422,8 @@ export function publisher(options: PublisherOptions) {
       const ready = try preparedFor(target)
       const reviewed = onlyConfig(configsFor(ready.reviewed, "SubmissionFee", target.environment))
       if (typeof reviewed === "string") throw refused(reviewed)
-      return try submissionFeeReviewOf(reviewed, ready.site)
+      const slopbot = onlyConfig(configsFor(ready.reviewed, "Slopbot", target.environment))
+      return try submissionFeeReviewOf(reviewed, ready.site, { slopbot: typeof slopbot === "string" ? undefined : slopbot })
     }
 
     effect function site(target: Target) {

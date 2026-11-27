@@ -41,11 +41,6 @@ schema Deployments { readonly deployments: ReadonlyArray<Deployment> }
 
 schema Versions { readonly items: ReadonlyArray<Labelled> }
 
-schema QueryResult {
-  readonly success: boolean
-  readonly results: ReadonlyArray<Raw>
-}
-
 export type WorkerVersion = Version
 export type RotationKind = "robinhood" | "solana"
 
@@ -69,16 +64,6 @@ export const unresolvedFeeWork = `SELECT
       AND NOT EXISTS (SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id = c.id)) AS openBridgeOrders,
   (SELECT COUNT(*) FROM fee_native_gas
     WHERE network = 'robinhood' AND state = 'signed' AND actual_wei IS NULL) AS openRobinhoodGas`
-
-export const unresolvedSolanaWork = `SELECT
-  (SELECT COUNT(*) FROM fee_conversions c WHERE c.network='solana' AND c.mode='live'
-    AND (c.state IN ('submitted','unknown') OR
-      (c.kind='bridge' AND c.state='finalized' AND NOT EXISTS(SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id=c.id)))) AS openSends,
-  (SELECT COUNT(*) FROM fee_native_gas WHERE network='solana'
-    AND (state='reserved' OR (state='signed' AND actual_wei IS NULL))) AS openGas,
-  (SELECT COUNT(*) FROM fee_converter_locks WHERE network='solana' AND expires_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now')) AS activeLocks`
-
-const journalColumns: { readonly [K in RotationKind]: ReadonlyArray<string> } = { robinhood: ["openSends", "openBridgeOrders", "openRobinhoodGas"], solana: ["openSends", "openGas", "activeLocks"] }
 
 function refused(message: string) {
   return new RotationRefused({ message })
@@ -198,29 +183,4 @@ export effect function requireSameWorker(before: Version, after: Version, sha: s
   const code = etag !== "" && etag === uploaded?.script?.etag && original?.script_runtime !== undefined && (try same(original.script_runtime, uploaded.script_runtime))
   const bound = try same(try normalizedBindings(before, kind), try normalizedBindings(after, kind))
   if (!tagged || !rotated || !code || !bound) throw refused("The uploaded fee-converter code, runtime or bindings differ from the pinned version.")
-}
-
-export effect function requireQuietJournal(version: Version, databaseId: string, kind: RotationKind) {
-  const database = bindingOf(version, "FEE_DB")
-  const bound = database === undefined ? undefined : textOf(database, "database_id") ?? textOf(database, "id")
-  if (!uuid.test(databaseId) || database?.type !== "d1" || bound !== databaseId) throw refused("The active fee-converter D1 binding differs from the reviewed database.")
-  const cloudflare = try Cloudflare
-  const unverified = kind === "solana" ? "Could not verify the Solana fee journal." : "Could not verify the bound fee-converter journal."
-  const answer = cloudflare.write("fee-converter journal", "POST", `/d1/database/${databaseId}/query`, { sql: kind === "solana" ? unresolvedSolanaWork : unresolvedFeeWork }) catch effect () => {
-    throw refused(unverified)
-  }
-  const results = Schema.decodeUnknownEffect(Schema.Array(QueryResult))(answer) catch effect () => {
-    throw refused(unverified)
-  }
-  const [result, ...others] = results
-  const [row, ...more] = result?.results ?? []
-  const counts = journalColumns[kind].map((column) => row?.[column])
-  if (result === undefined || others.length > 0 || !result.success || row === undefined || more.length > 0 || !counts.every((count) => typeof count === "number" && Number.isSafeInteger(count) && count >= 0)) {
-    throw refused(unverified)
-  }
-  if (!counts.every((count) => count === 0)) {
-    throw refused(kind === "solana"
-      ? "Solana has unresolved fee sends, gas reservations or an active lease. Reconcile before changing RPC bindings."
-      : "The fee-converter journal has unresolved sends, bridge orders or Robinhood gas. Review recovery before rotating.")
-  }
 }

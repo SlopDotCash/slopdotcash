@@ -25,7 +25,7 @@ export schema SubmissionFeeRateAnswer {
 
 export schema SubmissionFeeWay {
   readonly network: string
-  readonly chainId: number
+  readonly chainId: number | null
   readonly contract: string
   readonly token: string
   readonly symbol: string

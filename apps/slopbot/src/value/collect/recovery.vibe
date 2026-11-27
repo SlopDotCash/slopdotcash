@@ -37,15 +37,16 @@ function requiredObjects(source: WorkUnitSource) {
   ]
 }
 
-export effect function recoverValueSourceFiles(source: WorkUnitSource, repository: PublicMergeRepository, directory: string, policy: RegisteredRepository | null) {
+export effect function recoverValueSourceFiles(source: WorkUnitSource, repository: PublicMergeRepository, directory: string, policy: RegisteredRepository | null, negotiatedDiff = false) {
   const { evidence } = source
   if (repository.private !== false || repository.id !== evidence.repositoryDatabaseId || repository.node_id !== evidence.repositoryNodeId || repository.full_name?.toLowerCase() !== evidence.repository.toLowerCase())
     throw refused("Immutable file recovery repository differs")
   const capture = fileRecoveryCapture()
-  const listed = try Effect.provide(collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy }), capture.layer)
+  const listing = { repository: evidence.repository, number: evidence.pull.number, policy, negotiatedDiff }
+  const listed = try Effect.provide(collectEvidence(listing), capture.layer)
   const requests = try capture.requests([listed])
   const recovered = try recoveredFiles(requests, try recoverFiles(directory, requests))
-  const recollected = try collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy, recovered })
+  const recollected = try collectEvidence({ ...listing, recovered })
   if (comparedFields.some((field) => canonicalJson(recollected[field]) !== canonicalJson(evidence[field]))) throw refused("Source changed during immutable file recovery")
   const context = evidence.contextFiles
   return {
@@ -54,14 +55,14 @@ export effect function recoverValueSourceFiles(source: WorkUnitSource, repositor
   } satisfies WorkUnitSource
 }
 
-export effect function hydrateValueMergeSource(source: WorkUnitSource, recipe: MergeRecipe | undefined, repository: PublicMergeRepository, policy: RegisteredRepository | null) {
+export effect function hydrateValueMergeSource(source: WorkUnitSource, recipe: MergeRecipe | undefined, repository: PublicMergeRepository, policy: RegisteredRepository | null, negotiatedDiff = false) {
   if (recipe !== undefined && !validMergeRecipe(recipe)) throw refused(recipeDiffers)
   if (repository.node_id !== source.evidence.repositoryNodeId || repository.id !== source.evidence.repositoryDatabaseId) throw refused("Merge reconstruction requires the verified public repository")
   const needsFiles = needsFileRecovery(source)
   if (recipe === undefined && !needsFiles) return source
   if (recipe !== undefined && !needsFiles && !sameRecipeInput(source, recipe)) throw refused(recipeDiffers)
   return try withPublicGitObjects(repository, requiredObjects(source), (directory) => effect {
-    const complete = needsFiles ? try recoverValueSourceFiles(source, repository, directory, policy) : source
+    const complete = needsFiles ? try recoverValueSourceFiles(source, repository, directory, policy, negotiatedDiff) : source
     if (recipe === undefined) return complete
     if (!sameRecipeInput(complete, recipe)) throw refused(recipeDiffers)
     const mergeResolutions = try collectVerifiedMergeResolutions(mergeInputOf(complete.evidence), directory, recipe.profile)

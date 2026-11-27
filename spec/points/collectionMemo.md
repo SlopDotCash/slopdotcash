@@ -12,12 +12,15 @@ next. The memo only saves reads: every reused answer is the answer a full
 collection would compute from the same inputs, and failing to keep the memo
 never fails the release.
 
-The memo (`slop-collection-memo-v1`) holds `producedAt`, `cutoffAt`,
-`lastFullAt`, the attribution code digest, immutable commit line statistics
-and fenced commit attributions. The shell parses it strictly (exact keys, at
-most 512 MiB, 2,000,000 commit lines and 200,000 attributions, no commit or
-outcome twice, `lastFullAt` at or before `producedAt`, a 64-hex digest); a
-missing or unparseable memo is not usable and the collection runs in full.
+The memo (`slop-collection-memo-v2`, with `slop-collection-memo-v1` accepted
+on read as rules version 1 dated at `lastFullAt`) holds `producedAt`,
+`cutoffAt`, `lastFullAt`, the attribution code digest, the semantic
+`attributionRulesVersion`, immutable commit line statistics and fenced commit
+attributions with per-answer `computedAt` timestamps. The shell parses it
+strictly (exact keys, at most 512 MiB, 2,000,000 commit lines and 200,000
+attributions, no commit or outcome twice, `lastFullAt` and every `computedAt`
+at or before `producedAt`, a 64-hex digest, a positive integer rules version);
+a missing or unparseable memo is not usable and the collection runs in full.
 Each attribution records its fence (pull request number, URL, head commit,
 merge and update times, repository node and eligible commit list) and every
 pull, incoming cross-reference list and text reference its answer read; the
@@ -47,23 +50,25 @@ full collection. A run that names no memo has no session.
 
 ```quint
 pure val auditOneIn = 50
+pure val changedCodeAuditOneIn = 10
 pure val fullIntervalMs = 604800000
 pure val maxMemoBytes = 536870912
 pure val maxCommitLines = 2000000
 pure val maxAttributions = 200000
 type CollectionMode = FullCollection | IncrementalCollection
-type ModeReason = NoPreviousMemo | FullRequested | WeeklyFull | CodeChanged | MemoMatches
+type ModeReason = NoPreviousMemo | FullRequested | RulesChanged | CodeChanged | MemoMatches
 type MemoPhase = Unopened | Auditing | Answering | SnapshotWritten | MemoWritten | MemoNotWritten | MemoRefused
 type MemoRefusal = NotRefused | UntrustedRun | FutureMemo
 type RunContext = { actions: bool, gitRef: str, eventName: str }
-type PriorAnswer = { outcomeId: int, version: int, result: int }
-type MemoFile = { usable: bool, producedAt: int, lastFullAt: int, sameCode: bool, attributions: List[PriorAnswer] }
+type PriorAnswer = { outcomeId: int, version: int, result: int, expired: bool }
+type MemoFile = { usable: bool, producedAt: int, lastFullAt: int, sameRules: bool, sameCode: bool, attributions: List[PriorAnswer] }
 type Answer = { outcomeId: int, version: int, result: int, held: bool, reused: bool, audited: bool, recorded: bool }
 type MemoRun = { phase: MemoPhase, refusal: MemoRefusal, mode: CollectionMode, reason: ModeReason, now: int,
-  lastFullAt: int, prior: List[PriorAnswer], answers: List[Answer], nextMemo: List[PriorAnswer], mismatch: bool,
-  producedAt: int, writtenLastFullAt: int }
+  lastFullAt: int, auditRate: int, prior: List[PriorAnswer], answers: List[Answer], nextMemo: List[PriorAnswer],
+  mismatch: bool, producedAt: int, writtenLastFullAt: int }
 pure val initial: MemoRun = { phase: Unopened, refusal: NotRefused, mode: FullCollection, reason: NoPreviousMemo, now: 0,
-  lastFullAt: 0, prior: List(), answers: List(), nextMemo: List(), mismatch: false, producedAt: 0, writtenLastFullAt: 0 }
+  lastFullAt: 0, auditRate: auditOneIn, prior: List(), answers: List(), nextMemo: List(), mismatch: false, producedAt: 0,
+  writtenLastFullAt: 0 }
 pure def trustedMemoUse(context: RunContext): bool =
   not(context.actions) or
     (context.gitRef == "refs/heads/main" and
@@ -82,49 +87,60 @@ pure def lawUntrustedActionsRunNeverUsesMemo(context: RunContext): bool =
 pure def lawOversizedMemoUnusable(bytes: int): bool = bytes > maxMemoBytes implies not(memoWithinBounds(bytes, 0, 0))
 ```
 
-### A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed
+### A collection runs in full without a usable memo, when forced or when the attribution rules changed
 
 The mode is decided once, when the memo is opened, from the first reason
 that applies, in this order: no usable memo (`no previous memo`), the
 `full_collection` input (`SLOP_COLLECTION_FULL=true`, `full collection
-requested`), more than 604,800,000 ms since the memo's `lastFullAt` (`weekly
-full collection`), a different attribution code digest (`attribution code
-changed`); otherwise the collection is incremental (`previous memo matches`).
-The shell logs `collection mode: <mode> (<reason>)`. A full collection
-reuses no attribution. Commit statistics of a usable memo are reused in
-either mode.
+requested`), or a different semantic `attributionRulesVersion` (`attribution
+rules changed`). Otherwise the collection is incremental: when the code digest
+changed since the previous memo without a rules version bump (`code changed
+since the previous memo; auditing 1 in 10`), the audit sample grows from 1 in
+50 to 1 in 10; when the code digest matches (`previous memo matches`), the
+audit sample stays 1 in 50. Answers past their per-outcome refresh age (between
+half and all of 604,800,000 ms since `computedAt`) are left out and recomputed
+live instead of triggering a weekly full run. The shell logs
+`collection mode: <mode> (<reason>)`. A full collection reuses no attribution.
+Commit statistics of a usable memo are reused in either mode.
 
 ```quint
-pure def modeReason(memo: MemoFile, forced: bool, now: int): ModeReason =
+pure def modeReason(memo: MemoFile, forced: bool): ModeReason =
   if (not(memo.usable)) NoPreviousMemo
   else if (forced) FullRequested
-  else if (now - memo.lastFullAt > fullIntervalMs) WeeklyFull
+  else if (not(memo.sameRules)) RulesChanged
   else if (not(memo.sameCode)) CodeChanged
   else MemoMatches
-pure def modeFor(reason: ModeReason): CollectionMode = if (reason == MemoMatches) IncrementalCollection else FullCollection
+pure def modeFor(reason: ModeReason): CollectionMode =
+  if (reason == MemoMatches or reason == CodeChanged) IncrementalCollection else FullCollection
+pure def auditRateFor(reason: ModeReason): int =
+  if (reason == CodeChanged) changedCodeAuditOneIn else auditOneIn
 pure def canOpenMemo(r: MemoRun, memo: MemoFile, context: RunContext, forced: bool, now: int): bool =
   r.phase == Unopened and now >= 0 and memoWellFormed(memo)
 pure def openMemo(r: MemoRun, memo: MemoFile, context: RunContext, forced: bool, now: int): MemoRun =
-  val reason = modeReason(memo, forced, now)
+  val reason = modeReason(memo, forced)
   val mode = modeFor(reason)
   if (not(trustedMemoUse(context))) { ...r, phase: MemoRefused, refusal: UntrustedRun }
   else if (memo.usable and memo.producedAt > now) { ...r, phase: MemoRefused, refusal: FutureMemo }
   else { ...r, phase: Auditing, mode: mode, reason: reason, now: now,
     lastFullAt: if (memo.usable) memo.lastFullAt else now,
+    auditRate: auditRateFor(reason),
     prior: if (mode == IncrementalCollection) memo.attributions else List() }
-pure def lawForcedRunIsFull(memo: MemoFile, now: int): bool = modeFor(modeReason(memo, true, now)) == FullCollection
-pure def lawWeekOldMemoIsFull(memo: MemoFile, forced: bool, now: int): bool =
-  now - memo.lastFullAt > fullIntervalMs implies modeFor(modeReason(memo, forced, now)) == FullCollection
-pure def lawChangedCodeIsFull(memo: MemoFile, forced: bool, now: int): bool =
-  not(memo.sameCode) implies modeFor(modeReason(memo, forced, now)) == FullCollection
-pure def lawIncrementalNeedsMatchingMemo(memo: MemoFile, forced: bool, now: int): bool =
-  modeFor(modeReason(memo, forced, now)) == IncrementalCollection implies
-    (memo.usable and not(forced) and now - memo.lastFullAt <= fullIntervalMs and memo.sameCode)
+pure def lawForcedRunIsFull(memo: MemoFile): bool = modeFor(modeReason(memo, true)) == FullCollection
+pure def lawChangedRulesIsFull(memo: MemoFile, forced: bool): bool =
+  not(memo.sameRules) implies modeFor(modeReason(memo, forced)) == FullCollection
+pure def lawChangedCodeStaysIncremental(memo: MemoFile): bool =
+  (memo.usable and memo.sameRules and not(memo.sameCode)) implies
+    (modeFor(modeReason(memo, false)) == IncrementalCollection and auditRateFor(modeReason(memo, false)) == changedCodeAuditOneIn)
+pure def lawIncrementalNeedsMatchingMemo(memo: MemoFile, forced: bool): bool =
+  modeFor(modeReason(memo, forced)) == IncrementalCollection implies
+    (memo.usable and not(forced) and memo.sameRules)
 pure def alwaysRefusedOnlyWithReason(r: MemoRun): bool = (r.phase == MemoRefused) iff (r.refusal != NotRefused)
 pure def alwaysFullNeverReuses(r: MemoRun): bool =
   r.mode == FullCollection implies (r.prior == List() and r.answers.every(a => not(a.reused)))
 pure def stepRefusalIsFinal(before: MemoRun, after: MemoRun): bool = before.phase == MemoRefused implies after == before
-pure def sometimesWeeklyFull(r: MemoRun): bool = r.phase == Auditing and r.reason == WeeklyFull
+pure def sometimesRulesChangedFull(r: MemoRun): bool = r.phase == Auditing and r.reason == RulesChanged and r.mode == FullCollection
+pure def sometimesChangedCodeIncremental(r: MemoRun): bool =
+  r.phase == Auditing and r.reason == CodeChanged and r.mode == IncrementalCollection and r.auditRate == changedCodeAuditOneIn
 pure def sometimesFutureMemoFails(r: MemoRun): bool = r.refusal == FutureMemo
 pure def sometimesUntrustedRunFails(r: MemoRun): bool = r.refusal == UntrustedRun
 ```
@@ -151,30 +167,33 @@ pure val oidValues = Set("a", "b")
 
 ### A collection reuses an earlier answer only while every input it was derived from is unchanged
 
-An earlier answer is a candidate only in incremental mode, only when its
-recorded fence equals the live census fence and every recorded input re-read
-is unchanged (the same `version`). Before any answer is reused, a
-deterministic sample of the candidates, those whose `sample` (the first 32
-bits, big-endian, of sha256 of `<cutoffAt>` NUL `<outcome id>`) is a multiple
-of 50, is recomputed live; one difference, a hold included, discards every
-reuse of the run. A sampled candidate is never reused. A reused answer's
-authors are read live again, and an author no longer eligible for commit
-credit makes the answer live. Every other outcome is computed live.
+An earlier answer is a candidate only in incremental mode, only when it is
+younger than its refresh age (`not(expired)`), its recorded fence equals the
+live census fence and every recorded input re-read is unchanged (the same
+`version`). Before any answer is reused, a deterministic sample of the
+candidates, those whose `sample` (the first 32 bits, big-endian, of sha256 of
+`<cutoffAt>` NUL `<outcome id>`) is a multiple of the session's `auditRate`
+(50 when code matches, 10 when code changed without a rules change), is
+recomputed live; one difference, a hold included, discards every reuse of the
+run. A sampled candidate is never reused. A reused answer's authors are read
+live again, and an author no longer eligible for commit credit makes the answer
+live. Every other outcome is computed live.
 
 ```quint
 pure def audited(sample: int): bool = sample % auditOneIn == 0
+pure def auditedAt(sample: int, rate: int): bool = rate > 0 and sample % rate == 0
 pure def answered(r: MemoRun, outcomeId: int): bool = r.answers.some(a => a.outcomeId == outcomeId)
 pure def candidate(r: MemoRun, outcomeId: int, version: int): bool =
-  r.mode == IncrementalCollection and r.prior.some(p => p.outcomeId == outcomeId and p.version == version)
+  r.mode == IncrementalCollection and r.prior.some(p => p.outcomeId == outcomeId and p.version == version and not(p.expired))
 pure def priorResult(r: MemoRun, outcomeId: int): int =
   r.prior.foldl(-1, (acc, p) => if (p.outcomeId == outcomeId) p.result else acc)
 pure def recordedOf(answers: List[Answer]): List[PriorAnswer] =
-  answers.select(a => a.recorded).listMap(a => { outcomeId: a.outcomeId, version: a.version, result: a.result })
+  answers.select(a => a.recorded).listMap(a => { outcomeId: a.outcomeId, version: a.version, result: a.result, expired: false })
 pure def withAnswer(a: Answer, r: MemoRun): MemoRun =
   { ...r, answers: r.answers.append(a),
-    nextMemo: if (a.recorded) r.nextMemo.append({ outcomeId: a.outcomeId, version: a.version, result: a.result }) else r.nextMemo }
+    nextMemo: if (a.recorded) r.nextMemo.append({ outcomeId: a.outcomeId, version: a.version, result: a.result, expired: false }) else r.nextMemo }
 pure def canAudit(r: MemoRun, outcomeId: int, version: int, sample: int, result: int, held: bool, fenced: bool): bool =
-  r.phase == Auditing and not(r.mismatch) and audited(sample) and candidate(r, outcomeId, version) and
+  r.phase == Auditing and not(r.mismatch) and auditedAt(sample, r.auditRate) and candidate(r, outcomeId, version) and
   not(answered(r, outcomeId)) and result >= 0
 pure def audit(r: MemoRun, outcomeId: int, version: int, sample: int, result: int, held: bool, fenced: bool): MemoRun =
   val differs = held or result != priorResult(r, outcomeId)
@@ -184,7 +203,7 @@ pure def audit(r: MemoRun, outcomeId: int, version: int, sample: int, result: in
 pure def canFinishAudit(r: MemoRun): bool = r.phase == Auditing
 pure def finishAudit(r: MemoRun): MemoRun = { ...r, phase: Answering }
 pure def canReuse(r: MemoRun, outcomeId: int, version: int, sample: int): bool =
-  r.phase == Answering and not(r.mismatch) and not(audited(sample)) and candidate(r, outcomeId, version) and
+  r.phase == Answering and not(r.mismatch) and not(auditedAt(sample, r.auditRate)) and candidate(r, outcomeId, version) and
   not(answered(r, outcomeId))
 pure def reuse(r: MemoRun, outcomeId: int, version: int, sample: int): MemoRun =
   withAnswer({ outcomeId: outcomeId, version: version, result: priorResult(r, outcomeId), held: false, reused: true,
@@ -194,7 +213,7 @@ pure def alwaysPriorDistinct(r: MemoRun): bool =
 pure def alwaysAnswersDistinct(r: MemoRun): bool =
   r.answers.every(a => a.outcomeId > 0 and r.answers.select(o => o.outcomeId == a.outcomeId).length() == 1)
 pure def alwaysReuseWithinFence(r: MemoRun): bool =
-  r.answers.every(a => a.reused implies r.prior.some(p => p.outcomeId == a.outcomeId and p.version == a.version and p.result == a.result))
+  r.answers.every(a => a.reused implies r.prior.some(p => p.outcomeId == a.outcomeId and p.version == a.version and p.result == a.result and not(p.expired)))
 pure def alwaysAuditsPrecedeReuse(r: MemoRun): bool =
   (r.phase == Auditing or r.mismatch) implies r.answers.every(a => not(a.reused))
 pure def alwaysAuditedIsRecomputed(r: MemoRun): bool = r.answers.every(a => not(a.audited and a.reused))
@@ -202,6 +221,9 @@ pure def lawSampledEveryFiftieth(sample: int): bool = (sample >= 0 and sample < 
 pure def sometimesAuditMismatchDiscardsReuse(r: MemoRun): bool = r.phase == Answering and r.mismatch and r.answers.length() > 1
 pure def sometimesReusedAfterCleanAudit(r: MemoRun): bool =
   r.answers.some(a => a.audited) and r.answers.some(a => a.reused)
+pure def sometimesExpiredNotReused(r: MemoRun): bool =
+  r.mode == IncrementalCollection and r.prior.some(p => p.expired) and
+  r.answers.some(a => not(a.reused) and r.prior.some(p => p.outcomeId == a.outcomeId and p.expired))
 ```
 
 ### The next memo records exactly the live version of every fenced answer and is written only after the snapshot
@@ -251,21 +273,23 @@ pure def sometimesHoldNotRecorded(r: MemoRun): bool = r.answers.some(a => a.held
 pure def sometimesMemoNotWritten(r: MemoRun): bool = r.phase == MemoNotWritten
 ```
 
-### Simulation samples include a matching, a week-old, a changed-code and a future memo
+### Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo
 
 ```quint
-pure val matchingMemo: MemoFile = { usable: true, producedAt: 1000, lastFullAt: 500, sameCode: true,
-  attributions: List({ outcomeId: 1, version: 0, result: 1 }, { outcomeId: 2, version: 1, result: 11 }) }
+pure val matchingMemo: MemoFile = { usable: true, producedAt: 1000, lastFullAt: 500, sameRules: true, sameCode: true,
+  attributions: List({ outcomeId: 1, version: 0, result: 1, expired: false }, { outcomeId: 2, version: 1, result: 11, expired: false }) }
+pure val expiredMemo: MemoFile = { ...matchingMemo,
+  attributions: List({ outcomeId: 1, version: 0, result: 1, expired: true }, { outcomeId: 2, version: 1, result: 11, expired: false }) }
 pure val trustedRun: RunContext = { actions: true, gitRef: "refs/heads/main", eventName: "push" }
-pure val memoValues = Set(matchingMemo, { ...matchingMemo, sameCode: false },
-  { ...matchingMemo, usable: false, attributions: List() }, { ...matchingMemo, producedAt: 2000 })
+pure val memoValues = Set(matchingMemo, { ...matchingMemo, sameCode: false }, { ...matchingMemo, sameRules: false },
+  expiredMemo, { ...matchingMemo, usable: false, attributions: List() }, { ...matchingMemo, producedAt: 2000 })
 pure val contextValues = Set(trustedRun, { ...trustedRun, eventName: "pull_request" },
   { ...trustedRun, gitRef: "refs/heads/development", eventName: "schedule" },
   { actions: false, gitRef: "refs/heads/feature", eventName: "pull_request" })
 pure val nowValues = Set(1000, 1500, 604801000)
 pure val outcomeIdValues = Set(1, 2)
 pure val versionValues = Set(0, 1)
-pure val sampleValues = Set(0, 50, 7)
+pure val sampleValues = Set(0, 10, 50, 7)
 pure val resultValues = Set(1, 11, 99)
 pure val producedAtValues = Set(1500, 604801000)
 pure val bytesValues = Set(0, 536870912, 536870913)
@@ -276,7 +300,10 @@ pure val eval_witness_sometimesReusedAfterCleanAudit = (("openMemo", matchingMem
 pure val eval_witness_sometimesAuditMismatchDiscardsReuse = (("openMemo", matchingMemo, trustedRun, false, 1000),
   ("audit", 2, 1, 50, 99, false, true), "finishAudit", ("computeLive", 1, 0, 1, false, true))
 pure val eval_witness_sometimesFutureMemoFails = ("openMemo", { ...matchingMemo, producedAt: 2000 }, trustedRun, false, 1500)
-pure val eval_witness_sometimesWeeklyFull = ("openMemo", matchingMemo, trustedRun, false, 604801000)
+pure val eval_witness_sometimesRulesChangedFull = ("openMemo", { ...matchingMemo, sameRules: false }, trustedRun, false, 1000)
+pure val eval_witness_sometimesChangedCodeIncremental = ("openMemo", { ...matchingMemo, sameCode: false }, trustedRun, false, 1000)
+pure val eval_witness_sometimesExpiredNotReused = (("openMemo", expiredMemo, trustedRun, false, 1000), "finishAudit",
+  ("computeLive", 1, 0, 1, false, true))
 pure val eval_witness_sometimesUntrustedRunFails = ("openMemo", matchingMemo, { ...trustedRun, eventName: "pull_request" }, false, 1000)
 pure val eval_witness_sometimesHoldNotRecorded = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
   ("computeLive", 1, 0, 1, true, true), "writeSnapshot", ("writeMemo", 1500))

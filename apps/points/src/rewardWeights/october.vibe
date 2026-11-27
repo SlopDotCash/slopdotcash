@@ -1,0 +1,14 @@
+// spec/settlement/octoberImport.md, "An apply run writes only under the reviewed digest, current main and the production lock"
+import { type RepositoryRegistry } from "../client/snapshot/schema.vibe"
+import { registryOf } from "../client/snapshot/checks.vibe"
+import { publishedJournal } from "../corrections/collect/published.vibe"
+import { batchDigest } from "../kernels/records/ids.vibe"
+import { reviewIdentity } from "../journal/ledger.vibe"
+import { octoberAcceptedWork } from "./octoberProjection.ts"
+
+export effect function publishedOctoberWeights(projectId: string, from: string, repositories: RepositoryRegistry) {
+  const journal = try publishedJournal()
+  const registry = registryOf(repositories)
+  const weights = try Effect.try(() => octoberAcceptedWork(journal, projectId, from, (url) => reviewIdentity(registry, url)))
+  return { digest: try batchDigest(journal), ...weights }
+}

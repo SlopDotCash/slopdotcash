@@ -413,7 +413,7 @@ How `pnpm check` runs them, in its `tests` stage:
 
 ## Definition of done
 
-- Open every Slop pull request against `vibestack`, the default
+- Open every Slop pull request against `develop`, the default
   branch. Follow the [pull request requirements](CONTRIBUTING.md#pull-requests).
 - Verify that the proposed merge fully implements and integrates the top-level
   stories and models in [spec/index.md](spec/index.md) and its linked specs.

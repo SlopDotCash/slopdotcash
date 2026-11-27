@@ -317,4 +317,32 @@ pure val weight_receiveCreate = 8
 pure val weight_waitPoll = 8
 pure val weight_acceptPoll = 8
 pure val weight_observeStanding = 6
+pure val eval_witness_sometimesReady = (
+  ("begin", 1, "key-a", 1),
+  ("acceptStart", identityWorker, 1),
+  ("receiveStart", 1, true, 1),
+  ("beginCallback", identityWorker),
+  ("completeCallback", identityWorker, 1),
+  ("waitPoll", 1),
+  ("acceptPoll", identityWorker),
+  ("receivePoll", 1, 1, true, 1),
+  ("exchange", traceApi, true, true),
+  ("receiveBearer", 1, true, 1),
+  ("authenticateCreate", traceApi),
+  ("commitCreate", traceApi, { kind: RowCreated, row: { serverId: "server-a", status: AwaitingTrace } }),
+  ("receiveCreate", 1, true, 1))
+pure val eval_witness_sometimesConflict = (
+  ("begin", 1, "key-a", 1),
+  ("acceptStart", identityWorker, 1),
+  ("receiveStart", 1, true, 1),
+  ("beginCallback", identityWorker),
+  ("completeCallback", identityWorker, 1),
+  ("waitPoll", 1),
+  ("acceptPoll", identityWorker),
+  ("receivePoll", 1, 1, true, 1),
+  ("exchange", traceApi, true, true),
+  ("receiveBearer", 1, true, 1),
+  ("authenticateCreate", traceApi),
+  ("commitCreate", traceApi, { kind: RowConflict, row: noLookup }),
+  ("receiveCreate", 1, true, 1))
 ```

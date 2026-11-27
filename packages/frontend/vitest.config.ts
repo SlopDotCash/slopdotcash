@@ -11,7 +11,23 @@ const harness = (on: TestProject) => on.import<typeof SiteModule>(join(import.me
 const site: BrowserCommand<[Op], Result<Op>> = async (context, op) => (await harness(context.project)).command(context, op);
 const siteCommands = {
   name: "slop:site-commands",
-  config: (): ViteUserConfig => ({ test: { browser: { commands: { site } } } }),
+  config: (): ViteUserConfig => ({
+    resolve: { dedupe: ["react", "react-dom"] },
+    optimizeDeps: {
+      include: [
+        "@storybook/addon-a11y/preview",
+        "@storybook/react-vite",
+        "effect/Deferred",
+        "lucide-react",
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react/jsx-dev-runtime",
+        "storybook/test",
+      ],
+    },
+    test: { testTimeout: 120_000, browser: { commands: { site } } },
+  }),
   configureVitest: async ({ project: on, vitest }: { readonly project: TestProject; readonly vitest: Vitest }) => {
     if (!on.config.browser.enabled) return;
     const loaded = await harness(on);

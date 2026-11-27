@@ -199,4 +199,13 @@ pure val weight_replaceRoles = 4
 pure val weight_decideAward = 10
 pure val weight_showAmounts = 10
 pure val weight_reconcile = 8
+pure val eval_witness_sometimesClosedWhileReserved = (
+  ("deposit", List(4), "asset", 1, true, 1),
+  ("observeFunds", 2, 1),
+  ("replaceRoles", C::staff, 1),
+  ("receive", 1, C::SlopReceived, PA::awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("closeReporter", 1, 1, "octo"))
 ```

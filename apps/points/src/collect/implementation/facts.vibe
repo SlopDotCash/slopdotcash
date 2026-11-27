@@ -2,14 +2,14 @@
 import { millisOf } from "@repo/platform/clock"
 import type { PointsJournal } from "../../kernels/records/records.schema.ts"
 import { recoverPublished } from "../../recovery/published.vibe"
-import type { ImplementationHistory } from "../../score/facts.vibe"
+import type { AcceptanceMarkers, ImplementationHistory } from "../../score/facts.vibe"
 import { type AcceptedImplementationPredecessor, previousPositiveImplementationSources } from "../../score/history.vibe"
 import type { MergedRepository } from "../merged/collection.vibe"
 import type { MergedOutcome } from "../merged/wire.vibe"
-import type { ImplementationMemo } from "./memo.vibe"
+import type { ImplementationMemo, ImplementationMemoStats } from "./memo.vibe"
 import { type AcceptedImplementationProofs, ImplementationEvidenceUnavailable, type ProofReader, type ProofRepository } from "./native.vibe"
 import { earlierImplementationPredecessor, implementationNodes, readPreviousImplementationSources } from "./previous.vibe"
-import { type AcceptanceMarkers, type AcceptedImplementationSource, type CurrentAcceptance, currentAcceptance, dedupedSources, implementationDigestCandidates, implementationSourcesByShape } from "./sources.vibe"
+import { type AcceptedImplementationSource, type CurrentAcceptance, currentAcceptance, dedupedSources, implementationDigestCandidates, implementationSourcesByShape } from "./sources.vibe"
 
 export type JournalReader = () => (PointsJournal | null)!ImplementationEvidenceUnavailable
 
@@ -17,6 +17,8 @@ export interface ImplementationRequest {
   readonly proofs: ProofReader
   readonly journal: JournalReader
   readonly memo: ImplementationMemo | undefined
+  readonly onAuditMismatch?: () => void!!
+  readonly onMemoRead?: (stats: ImplementationMemoStats) => void!!
 }
 
 export type ImplementationEvidence = Pick<ImplementationHistory, "acceptedImplementationDigests" | "previousImplementationDigests" | "previousAcceptedOrdinaryOwners" | "unresolvedImplementationSources">
@@ -63,20 +65,30 @@ export function unresolvedImplementationComparisons(current: ReadonlyMap<string,
 export effect function readImplementationProofs(read: ProofReader, repository: ProofRepository, sources: ReadonlyArray<AcceptedImplementationSource>, memo: ImplementationMemo | undefined) {
   const digests = new Map<string, string>()
   const missing: AcceptedImplementationSource[] = []
+  const audited: AcceptedImplementationSource[] = []
   for (const source of sources) {
     const digest = memo?.digest(repository.node_id, source)
-    if (digest !== undefined) digests.set(source.id, digest)
-    else missing.push(source)
+    if (digest === undefined) missing.push(source)
+    else {
+      digests.set(source.id, digest)
+      if (memo !== undefined && (try memo.audits(repository.node_id, source.id))) audited.push(source)
+      else if (memo !== undefined) memo.stats.digestsReused += 1
+    }
   }
-  if (missing.length === 0) return { digests, unavailable: new Set<string>() } satisfies AcceptedImplementationProofs
-  const current = try read(repository, missing)
+  if (memo !== undefined) memo.stats.digestsRead += missing.length + audited.length
+  if (missing.length + audited.length === 0) return { digests, unavailable: new Set<string>() } satisfies AcceptedImplementationProofs
+  const current = try read(repository, [...missing, ...audited])
+  const unavailable = new Set(current.unavailable)
+  for (const source of audited) {
+    if (!unavailable.delete(source.id) && memo !== undefined) try memo.auditDigest(digests.get(source.id) ?? "", current.digests.get(source.id))
+  }
   for (const source of missing) {
     const digest = current.digests.get(source.id)
     if (digest === undefined) continue
     digests.set(source.id, digest)
     if (memo !== undefined) try memo.rememberDigest(repository.node_id, source, digest)
   }
-  return { digests, unavailable: current.unavailable } satisfies AcceptedImplementationProofs
+  return { digests, unavailable } satisfies AcceptedImplementationProofs
 }
 
 function carriedOrdinaryOids(outcomes: ReadonlyArray<MergedOutcome>) {
@@ -130,56 +142,76 @@ export effect function implementationFacts(input: ImplementationInput) {
   const previousAcceptedOrdinaryOwners = new Map<string, string>()
   const unresolvedImplementationSources = new Set<string>()
   let previousJournal: PointsJournal | null | undefined = undefined
-  for (const repository of input.repositories) {
-    const current = repository.outcomes.flatMap((outcome) => {
-      const found = acceptances.get(outcome.id)
-      return found === undefined ? [] : [found]
-    })
-    const byShape = implementationSourcesByShape(current)
-    const carried = input.historical === true ? new Set<string>() : carriedOrdinaryOids(repository.outcomes)
-    if (byShape.size === 0 && carried.size === 0) continue
-    if (previousJournal === undefined) previousJournal = try request.journal()
-    const priorSources: ReadonlyArray<AcceptedImplementationPredecessor> = previousJournal === null ? [] : try previousPositiveImplementationSources(previousJournal, {
-      repository: repository.target.id,
-      projectId: repository.target.projectId,
-      mergedBefore: input.windowFrom,
-      recordedThrough: input.recordedThrough,
-    })
-    const prior = try readPreviousImplementationSources({ repositoryNodeId: repository.preflight.id, shapes: new Set(byShape.keys()), sources: priorSources, memo: request.memo, carriedOrdinaryOids: carried })
-    const present = implementationDigestCandidates(current, new Set([...prior.candidates.keys(), ...prior.unresolvedShapes]))
-    const previous = present.length > 0 ? [...prior.candidates.values()].flat() : []
-    const native = try readImplementationProofs(
-      request.proofs,
-      { full_name: repository.target.id, node_id: repository.preflight.id, private: false },
-      dedupedSources([...present, ...previous, ...prior.submittedOrdinaryCandidates.map((candidate) => candidate.source)]),
-      request.memo,
-    )
-    const priorById = new Map(priorSources.map((source) => [source.id, source] as const))
-    const repoKey = repository.target.id.toLowerCase()
-    for (const [oid, sourceId] of prior.acceptedOrdinaryOwners) previousAcceptedOrdinaryOwners.set(`${repoKey}\0${oid}`, sourceId)
-    for (const { source, predecessor } of prior.submittedOrdinaryCandidates) {
-      if (native.unavailable.has(source.id)) prior.unresolvedSubmittedOrdinaryOids.add(source.headSha)
-      if (!native.digests.has(source.id)) continue
-      const key = `${repoKey}\0${source.headSha}`
-      const existing = previousAcceptedOrdinaryOwners.get(key)
-      if (earlierImplementationPredecessor(predecessor, existing === undefined ? undefined : priorById.get(existing))) previousAcceptedOrdinaryOwners.set(key, predecessor.id)
-    }
-    if (prior.unresolvedSubmittedOrdinaryOids.size > 0) {
-      for (const outcome of repository.outcomes) {
-        if ((outcome.commits ?? []).some((commit) => commit.parentCount === 1 && prior.unresolvedSubmittedOrdinaryOids.has(commit.oid) && !previousAcceptedOrdinaryOwners.has(`${repoKey}\0${commit.oid}`))) unresolvedImplementationSources.add(outcome.id)
+  effect function collectRepositories() {
+    for (const repository of input.repositories) {
+      const current = repository.outcomes.flatMap((outcome) => {
+        const found = acceptances.get(outcome.id)
+        return found === undefined ? [] : [found]
+      })
+      const byShape = implementationSourcesByShape(current)
+      const carried = input.historical === true ? new Set<string>() : carriedOrdinaryOids(repository.outcomes)
+      if (byShape.size === 0 && carried.size === 0) continue
+      if (previousJournal === undefined) previousJournal = try request.journal()
+      const priorSources: ReadonlyArray<AcceptedImplementationPredecessor> = previousJournal === null ? [] : try previousPositiveImplementationSources(previousJournal, {
+        repository: repository.target.id,
+        projectId: repository.target.projectId,
+        mergedBefore: input.windowFrom,
+        recordedThrough: input.recordedThrough,
+      })
+      const prior = try readPreviousImplementationSources({ repositoryNodeId: repository.preflight.id, shapes: new Set(byShape.keys()), sources: priorSources, memo: request.memo, carriedOrdinaryOids: carried })
+      const present = implementationDigestCandidates(current, new Set([...prior.candidates.keys(), ...prior.unresolvedShapes]))
+      const previous = present.length > 0 ? [...prior.candidates.values()].flat() : []
+      const native = try readImplementationProofs(
+        request.proofs,
+        { full_name: repository.target.id, node_id: repository.preflight.id, private: false },
+        dedupedSources([...present, ...previous, ...prior.submittedOrdinaryCandidates.map((candidate) => candidate.source)]),
+        request.memo,
+      )
+      const priorById = new Map(priorSources.map((source) => [source.id, source] as const))
+      const repoKey = repository.target.id.toLowerCase()
+      for (const [oid, sourceId] of prior.acceptedOrdinaryOwners) previousAcceptedOrdinaryOwners.set(`${repoKey}\0${oid}`, sourceId)
+      for (const { source, predecessor } of prior.submittedOrdinaryCandidates) {
+        if (native.unavailable.has(source.id)) prior.unresolvedSubmittedOrdinaryOids.add(source.headSha)
+        if (!native.digests.has(source.id)) continue
+        const key = `${repoKey}\0${source.headSha}`
+        const existing = previousAcceptedOrdinaryOwners.get(key)
+        if (earlierImplementationPredecessor(predecessor, existing === undefined ? undefined : priorById.get(existing))) previousAcceptedOrdinaryOwners.set(key, predecessor.id)
+      }
+      if (prior.unresolvedSubmittedOrdinaryOids.size > 0) {
+        for (const outcome of repository.outcomes) {
+          if ((outcome.commits ?? []).some((commit) => commit.parentCount === 1 && prior.unresolvedSubmittedOrdinaryOids.has(commit.oid) && !previousAcceptedOrdinaryOwners.has(`${repoKey}\0${commit.oid}`))) unresolvedImplementationSources.add(outcome.id)
+        }
+      }
+      if (present.length === 0) continue
+      const mergedAt = new Map(repository.outcomes.map((outcome) => [outcome.id, outcome.mergedAt] as const))
+      for (const id of unresolvedImplementationComparisons(byShape, prior.candidates, mergedAt, native, prior.unresolvedShapes)) unresolvedImplementationSources.add(id)
+      for (const { id } of present) {
+        const digest = native.digests.get(id)
+        if (digest !== undefined) acceptedImplementationDigests.set(id, digest)
+      }
+      for (const { id } of previous) {
+        const digest = native.digests.get(id)
+        if (digest !== undefined) previousImplementationDigests.add(`${repoKey}\0${digest}`)
       }
     }
-    if (present.length === 0) continue
-    const mergedAt = new Map(repository.outcomes.map((outcome) => [outcome.id, outcome.mergedAt] as const))
-    for (const id of unresolvedImplementationComparisons(byShape, prior.candidates, mergedAt, native, prior.unresolvedShapes)) unresolvedImplementationSources.add(id)
-    for (const { id } of present) {
-      const digest = native.digests.get(id)
-      if (digest !== undefined) acceptedImplementationDigests.set(id, digest)
+  }
+  for (let audited = false; ; audited = true) {
+    acceptedImplementationDigests.clear()
+    previousImplementationDigests.clear()
+    previousAcceptedOrdinaryOwners.clear()
+    unresolvedImplementationSources.clear()
+    const failed = collectRepositories() catch effect (error) => {
+      if (audited || error._tag !== "ImplementationMemoAudit") throw error
+      if (request.onAuditMismatch !== undefined) try request.onAuditMismatch()
+      else try Console.error("[slop.cash] accepted implementation memo: a saved entry differed from its live read; every saved entry discarded, reading evidence live")
+      return "retry" as const
     }
-    for (const { id } of previous) {
-      const digest = native.digests.get(id)
-      if (digest !== undefined) previousImplementationDigests.add(`${repoKey}\0${digest}`)
-    }
+    if (failed !== "retry") break
+  }
+  if (request.memo !== undefined) {
+    const { stats } = request.memo
+    if (request.onMemoRead !== undefined) try request.onMemoRead(stats)
+    else try Console.error(`[slop.cash] accepted implementation memo: native digests ${stats.digestsReused} reused, ${stats.digestsRead} read; earlier pull requests ${stats.previousReused} reused, ${stats.previousRead} read; ${stats.audited} audited, ${stats.auditMismatches} audit mismatches`)
   }
   const markers = new Map([...acceptances].map(([id, acceptance]) => [id, acceptance.markers] as const))
   return {

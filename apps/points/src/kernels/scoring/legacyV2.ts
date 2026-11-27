@@ -2,13 +2,10 @@
 // spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "The acceptance instant selects the policy"
 
 export const scoreV2EffectiveAt = 1785542400000;
-export const usageNeutralEvidencePolicyAt = 1787097600000;
-export const historicalValuePolicyAt = 1788220800000;
 export const outcomeFirstPolicyAt = 1790812800000;
 export const paymentReviewPolicyAt = 1791588095388;
 export const valuePolicyAt = 1793491200000;
 
-export const detailedMergedPullRequestsPerMonth = 5;
 export const materialTestAdditions = 10;
 export const materialTestChurn = 20;
 export const resolvedIssueCap = 5;
@@ -97,36 +94,6 @@ export function thirdsSum(values: number[]): number {
   //@ decreases values.length
   if (values.length === 0) return 0;
   return thirdsSum(values.slice(0, values.length - 1)) + values[values.length - 1];
-}
-
-/** @throws {never} */
-export function shareScoreThirds(total: number, actors: number, minimumPerActor: number): number[] {
-  //@ requires actors >= 1 && total >= minimumPerActor && (minimumPerActor === 0 || minimumPerActor === 1)
-  //@ ensures \result.length === actors
-  //@ ensures forall(i, 0 <= i && i < actors ==> \result[i] >= minimumPerActor)
-  //@ ensures (total >= actors || minimumPerActor === 0) ==> forall(i, 0 <= i && i < actors ==> \result[i] === Math.floor(total / actors) + (i < total % actors ? 1 : 0))
-  //@ ensures (total >= actors || minimumPerActor === 0) ==> thirdsSum(\result) === total
-  //@ ensures (total < actors && minimumPerActor === 1) ==> forall(i, 0 <= i && i < actors ==> \result[i] === 1)
-  //@ ensures (total < actors && minimumPerActor === 1) ==> thirdsSum(\result) === actors
-  //@ ensures forall(i, 0 <= i && i < actors ==> forall(j, i < j && j < actors ==> \result[i] >= \result[j] && \result[i] - \result[j] <= 1))
-  const base = Math.floor(total / actors);
-  const extra = total % actors;
-  //@ assert total >= 0
-  //@ assert total === base * actors + extra && 0 <= extra && extra < actors && base >= 0
-  const shares: number[] = [];
-  let i = 0;
-  while (i < actors) {
-    //@ invariant 0 <= i && i <= actors && shares.length === i
-    //@ invariant base === 0 && minimumPerActor === 1 ==> forall(k, 0 <= k && k < i ==> shares[k] === 1)
-    //@ invariant base === 0 && minimumPerActor === 1 ==> thirdsSum(shares) === i
-    //@ invariant !(base === 0 && minimumPerActor === 1) ==> forall(k, 0 <= k && k < i ==> shares[k] === base + (k < extra ? 1 : 0))
-    //@ invariant !(base === 0 && minimumPerActor === 1) ==> thirdsSum(shares) === base * i + (i < extra ? i : extra)
-    //@ ghost let before: number[] = shares
-    shares.push(base === 0 && minimumPerActor === 1 ? 1 : base + (i < extra ? 1 : 0));
-    //@ assert shares.slice(0, i) === before
-    i = i + 1;
-  }
-  return shares;
 }
 
 /** @throws {never} */
@@ -345,23 +312,9 @@ export function materialTestStats(files: ChangedFile[]): TestStats {
 }
 
 /** @throws {never} */
-export function hasMaterialTestChange(files: ChangedFile[]): boolean {
-  //@ requires forall(k, 0 <= k && k < files.length ==> files[k].additions >= 0 && files[k].deletions >= 0)
-  const stats = materialTestStats(files);
-  return stats.additions >= materialTestAdditions && stats.churn >= materialTestChurn;
-}
-
-/** @throws {never} */
 export function isNearMaterialTestChange(files: ChangedFile[]): boolean {
   //@ requires forall(k, 0 <= k && k < files.length ==> files[k].additions >= 0 && files[k].deletions >= 0)
   const stats = materialTestStats(files);
   if (stats.additions >= materialTestAdditions && stats.churn >= materialTestChurn) return false;
   return stats.additions >= 5 || stats.churn >= 10;
-}
-
-/** @throws {never} */
-export function legacyPointsOfThirds(thirds: number): number {
-  //@ requires thirds >= 1
-  //@ ensures \result === 10 * thirds && \result >= 10
-  return 10 * thirds;
 }

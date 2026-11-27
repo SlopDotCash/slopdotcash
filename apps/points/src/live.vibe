@@ -15,6 +15,7 @@ export { ClosedMonthLive, type CloseoutMonth, closeoutLedger, contributorAudienc
 export { checkedSnapshot, repositoryRegistry } from "./programs/registry.vibe"
 export { protectedScope } from "./publication/protection.vibe"
 export { restoreSnapshot } from "./snapshot/restore.vibe"
+export { publishedOctoberWeights } from "./rewardWeights/october.vibe"
 
 export const points = area({
   name: "points",

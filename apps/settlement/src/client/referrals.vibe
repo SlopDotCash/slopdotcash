@@ -30,7 +30,7 @@ export const Instant = Schema.String.check(Schema.makeFilter((text: string) => N
 
 const programNetworks = { "robinhood-mainnet": 4663, "robinhood-testnet": 46630 } as const
 
-export const ReferralProgram = Schema.Struct({
+export const ReferralProgramSchema = Schema.Struct({
   network: Schema.Literals(["robinhood-mainnet", "robinhood-testnet"]),
   chainId: Schema.Number,
   distributor: EvmAddress,
@@ -38,21 +38,20 @@ export const ReferralProgram = Schema.Struct({
   decimals: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 36 })),
   codeHash: Digest32,
 }).check(Schema.makeFilter((program) => programNetworks[program.network] === program.chainId))
-export type ReferralProgram = typeof ReferralProgram.Type
+export type ReferralProgram = typeof ReferralProgramSchema.Type
 
-export const ReferralClaim = Schema.Struct({
+const ReferralClaimSchema = Schema.Struct({
   period: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}$/u)),
   epoch: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   root: Digest32,
   cumulativeBase: BaseUnits,
   proof: Schema.Array(Digest32).check(Schema.isMaxLength(256)),
 })
-export type ReferralClaim = typeof ReferralClaim.Type
 
-export const ReferralAccount = Schema.Struct({
+export const ReferralAccountSchema = Schema.Struct({
   enabled: Schema.Literal(true),
   status: Schema.Literals(["ready", "stale", "unknown"]),
-  program: Schema.NullOr(ReferralProgram),
+  program: Schema.NullOr(ReferralProgramSchema),
   observedAt: Schema.NullOr(Instant),
   finalizedAt: Schema.NullOr(Instant),
   wallet: Schema.NullOr(EvmAddress),
@@ -64,20 +63,32 @@ export const ReferralAccount = Schema.Struct({
   ended: Schema.Boolean,
   latestVoided: Schema.Boolean,
   pendingUntil: Schema.NullOr(Instant),
-  claim: Schema.NullOr(ReferralClaim),
+  claim: Schema.NullOr(ReferralClaimSchema),
 })
-export type ReferralAccount = typeof ReferralAccount.Type
+export type ReferralAccount = typeof ReferralAccountSchema.Type
 
 export schema ProgramHidden {
   readonly enabled: false
 }
 
-export schema ReferralAnswer = ProgramHidden | ReferralAccount
+export const ReferralAnswer = Schema.Union([ProgramHidden, ReferralAccountSchema])
 
 export const referralAccruals = route({ method: "GET", path: "/api/v1/referrals/accruals", access: "public", limitKib: 1, request: undefined, answer: AccrualIndex, rejected: "rejected", cache: { browserSeconds: 300 } })
 
 export const referralAccrualFile = route({ method: "GET", path: "/api/v1/referrals/accruals/:period", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: { browserSeconds: 300 } })
 
-export const referralAccount = route({ method: "GET", path: "/api/v1/referrals/me", access: "session", limitKib: 1, request: undefined, answer: ReferralAnswer, rejected: "rejected", cache: "private" })
+export const referralAccount = route({
+  method: "GET",
+  path: "/api/v1/referrals/me",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: ReferralAnswer,
+  rejected: "rejected",
+  cache: "private",
+  refusalHeaders: { "cache-control": "private, no-store" },
+  unauthenticated: { status: 401, code: "sign_in_required", message: "" },
+  sessionExpired: { status: 401, code: "sign_in_required", message: "" },
+})
 
 export const referralApi: ReadonlyArray<AnyRoute> = [referralAccruals, referralAccrualFile, referralAccount]

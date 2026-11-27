@@ -348,6 +348,45 @@ pure val weight_inspectValue = 4
 pure val weight_inspectQueue = 4
 pure val weight_bindReopen = 4
 pure val weight_send = 4
+pure val eval_witness_sometimesReopenRetained = (
+  ("receive", 1, bodyBytes, true),
+  ("authenticate", 1, bodyBytes, true),
+  ("decode", 1, bodyBytes, true, true, reopenBody),
+  ("claim", 1),
+  ("inspectValue", 1, activeRegistry, activeRegistry, true),
+  ("inspectQueue", 1, activeRegistry, true),
+  ("bindReopen", 1, true),
+  ("send", 1, QueuedAckLost))
+pure val eval_witness_sometimesReleased = (
+  ("receive", 1, bodyBytes, true),
+  ("authenticate", 1, bodyBytes, true),
+  ("decode", 1, bodyBytes, true, true, reviewBody),
+  ("claim", 1),
+  ("inspectValue", 1, activeRegistry, activeRegistry, true),
+  ("inspectQueue", 1, activeRegistry, true),
+  ("send", 1, QueuedAckLost))
+pure val eval_witness_sometimesConfirmed = (
+  ("receive", 1, bodyBytes, true),
+  ("authenticate", 1, bodyBytes, true),
+  ("decode", 1, bodyBytes, true, true, reopenBody),
+  ("claim", 1),
+  ("inspectValue", 1, activeRegistry, activeRegistry, true),
+  ("inspectQueue", 1, activeRegistry, true),
+  ("bindReopen", 1, true),
+  ("confirmReopen", { source: sourceReopen, node: "node", currentRevision: "next", author: 1, itemState: OpenItem, maintainer: true, existingDebit: true, reversalOnly: false }))
+pure val eval_witness_sometimesValued = (
+  ("receive", 1, bodyBytes, true),
+  ("authenticate", 1, bodyBytes, true),
+  ("decode", 1, bodyBytes, true, true, valueBody),
+  ("claim", 1),
+  ("inspectValue", 1, activeRegistry, activeRegistry, true))
+pure val eval_witness_sometimesValuedReceiptKeptAfterFailure = (
+  ("receive", 1, bodyBytes, true),
+  ("authenticate", 1, bodyBytes, true),
+  ("decode", 1, bodyBytes, true, true, valueBody),
+  ("claim", 1),
+  ("inspectValue", 1, activeRegistry, activeRegistry, true),
+  ("failRouting", 1))
 ```
 
 The model does not validate live D1 races, WebCrypto or GitHub receipt

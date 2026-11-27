@@ -1,5 +1,6 @@
 // spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/views.md, "Model outcome statistics aggregate self-reported identities against accepted outcomes and never change a score"
 import { DataState, Disclosure, ExternalLink, Metric, MetricGrid, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { formatDateTime } from "../../app/format.ts";
 import { SOURCE_REPOSITORY } from "../../platform/site.ts";
 import type { Shown } from "../home/listing.ts";
 
@@ -16,6 +17,7 @@ export interface WhoBuildsSnapshot {
 }
 
 export interface LiveFootprint {
+  readonly generatedAt?: string;
   readonly contributors: number;
   readonly windowDays: number;
   readonly scoredEvents: number;
@@ -71,7 +73,12 @@ export function WhoBuilds({ snapshot, live, branch }: WhoBuildsProps) {
       <p className="text-muted-foreground">
         {count.format(all.size)} contributors · {whoBuildsDateLabel(snapshot.generatedAt)}
       </p>
-      <DataState status={live.status} onRetry={live.onRetry} skeleton={[]} />
+      <DataState
+        status={live.status}
+        onRetry={live.onRetry}
+        updatedAt={footprint?.generatedAt ? <time dateTime={footprint.generatedAt}>{formatDateTime(footprint.generatedAt)}</time> : undefined}
+        skeleton={[]}
+      />
       <MetricGrid>
         <Metric label="build AI tooling" value={percent(all.aiPrimary, all.classifiable)} detail={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} classifiable`} />
         <Metric label="merged into AI repos" value={percent(all.aiExternalPr, all.size)} detail={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`} />

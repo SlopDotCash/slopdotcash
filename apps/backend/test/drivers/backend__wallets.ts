@@ -120,7 +120,7 @@ function contentOf(challenge: Challenge): string {
 }
 
 function view(state: WalletRegistration): View {
-  const entries = Object.entries(state.challenges) as [string, Challenge][];
+  const entries = Object.entries<Challenge>(state.challenges);
   const byId = new Map(entries.map(([id, challenge]) => [Number(id), challenge]));
   const consumedAt = (id: number) => state.consumptions.find((used) => used.challengeId === id);
   return {

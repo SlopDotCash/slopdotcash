@@ -152,11 +152,15 @@ review was submitted before the close (#3201; a replay may leave out one
 same-repository related pull request created after the recorded assessment
 when both digests still match). An accepted pull request GitHub no longer
 returns keeps its prior Points only with native merge ancestry on the
-registered integration branch, the same prior canonical award, GitHub's
+registered integration lineage, the same prior canonical award, GitHub's
 confirmation that the public source is missing, the unavailable-source hold
 over the whole assessment, and no change to any award of that group,
 independent corrections in the packet included (#3240,
-`assertRemovedMergeGroupsPreserved`). Any binding that does not match is
+`assertRemovedMergeGroupsPreserved`). Slop's branch cutover preserves its
+former lineage at the pinned `develop-old` tip. For that exact repository,
+an exact GitHub 404 reading `development` or comparing the merge to the
+registered `develop` tip permits a separate ancestry check against the
+verified archive tip. Any binding that does not match is
 recorded as rejected: the receipt is then incomplete and nothing is staged.
 
 ```quint

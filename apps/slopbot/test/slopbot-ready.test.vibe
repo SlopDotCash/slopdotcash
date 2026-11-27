@@ -1,10 +1,16 @@
-// spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"
-import { assert, layer } from "@effect/vitest"
+// spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"; spec/slopbot/readyLabel.md, "Story: Merge verified ready pull requests through this repository's workflow"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, it as standaloneIt, layer } from "@effect/vitest"
 import { Response as WebResponse } from "miniflare"
+import { usageFailure } from "@repo/platform/program"
 import type { Handler } from "@repo/platform/testing"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake, signature256 } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
+import { repoRoot } from "@repo/platform/testing/paths"
+import { maxAutoMergesPerRun, pilotRepository, pilotRepositoryId, readyLabelName, slopbotBotId, slopbotBotLogin } from "../gen/slopbot__readyLabel.effect.vibe"
+import { type ApiMethod, type ApiResponse, type AutoMergeApi, githubAutoMergeApi, readyAutoMergeCommand, runReadyAutoMerge } from "../src/programs/readyAutoMerge.vibe"
+import { mergeComment } from "../src/ready/autoMergeRules.ts"
 import { lostQueueNumber } from "./support/ingressNumbers.vibe"
 import { journeyBuild } from "./support/journey.vibe"
 
@@ -331,5 +337,333 @@ layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => 
       open: { labels: [], line: null, row: { state: "off", head_sha: open.head, reason: "ready label is off for this project", next_check_at: null } },
       closed: ["slopbot:ready"],
     })
+  })
+})
+
+const autoHead = "a".repeat(40)
+const autoOldHead = "b".repeat(40)
+const autoBot = { id: slopbotBotId, login: slopbotBotLogin, type: "Bot" }
+const autoAuthor = { id: 11, login: "author", type: "User" }
+const autoMaintainer = { id: 22, login: "maint", type: "User" }
+const autoOutsider = { id: 33, login: "outsider", type: "User" }
+
+interface AutoFixture {
+  readonly number: number
+  pull: Record<string, unknown>
+  events: unknown[]
+  reviews: unknown[]
+  files: unknown[]
+}
+
+interface AutoWorldOptions {
+  readonly permissions?: Readonly<Record<string, string>>
+  readonly fail?: (path: string) => number | undefined
+  readonly mergeStatus?: number
+  readonly integrationBranch?: string
+  readonly defaultBranch?: string
+}
+
+interface AutoWorld {
+  readonly api: AutoMergeApi
+  readonly writes: Array<{ readonly method: ApiMethod; readonly path: string; readonly body: unknown }>
+  readonly lines: string[]
+  betweenReads?: (fixture: AutoFixture) => void
+}
+
+function projectFileContent(branch: string) {
+  const bytes = new TextEncoder().encode(JSON.stringify({
+    repository: { fullName: pilotRepository, id: String(pilotRepositoryId), integrationBranch: branch },
+  }))
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return { encoding: "base64", content: btoa(binary) }
+}
+
+function autoFixture(number: number = 7): AutoFixture {
+  return {
+    number,
+    pull: {
+      number,
+      state: "open",
+      merged: false,
+      draft: false,
+      mergeable: true,
+      mergeable_state: "clean",
+      changed_files: 1,
+      user: autoAuthor,
+      head: { sha: autoHead },
+      base: { ref: "develop", repo: { id: pilotRepositoryId } },
+      labels: [{ name: readyLabelName }],
+    },
+    events: [{ event: "labeled", created_at: "2026-11-25T10:05:00Z", label: { name: readyLabelName }, actor: autoBot }],
+    reviews: [{ user: autoMaintainer, state: "APPROVED", commit_id: autoHead, submitted_at: "2026-11-25T10:00:00Z" }],
+    files: [{ filename: "src/lib/thing.ts" }],
+  }
+}
+
+function autoWorld(fixtures: ReadonlyArray<AutoFixture>, options: AutoWorldOptions = {}): AutoWorld {
+  const permissions: Record<string, string> = { maint: "write", outsider: "read", author: "write", ...options.permissions }
+  const users = [autoAuthor, autoMaintainer, autoOutsider]
+  const seen = new Set<number>()
+  const writes: Array<{ readonly method: ApiMethod; readonly path: string; readonly body: unknown }> = []
+  const lines: string[] = []
+  const result: AutoWorld = {
+    writes,
+    lines,
+    api: (method, path, body) => effect {
+      const failed = options.fail?.(path)
+      if (failed !== undefined) return { status: failed, data: null } satisfies ApiResponse
+      if (method !== "GET") {
+        writes.push({ method, path, body })
+        if (path.endsWith("/merge")) {
+          const status = options.mergeStatus ?? 200
+          return { status, data: { merged: status === 200 } } satisfies ApiResponse
+        }
+        return { status: 201, data: { id: 1 } } satisfies ApiResponse
+      }
+      if (path === `/repos/${pilotRepository}`) {
+        return { status: 200, data: { id: pilotRepositoryId, full_name: pilotRepository, default_branch: options.defaultBranch ?? "main" } } satisfies ApiResponse
+      }
+      if (path.startsWith(`/repos/${pilotRepository}/issues?`)) {
+        return { status: 200, data: [...fixtures.map((item) => ({ number: item.number, pull_request: {} })), { number: 9000 }] } satisfies ApiResponse
+      }
+      if (/\/contents\/.+\?ref=(.+)$/u.test(path)) {
+        return { status: 200, data: projectFileContent(options.integrationBranch ?? "develop") } satisfies ApiResponse
+      }
+      const permission = /\/collaborators\/([^/]+)\/permission$/u.exec(path)
+      if (permission !== null) {
+        const login = permission[1] ?? ""
+        const user = users.find((entry) => entry.login === login)
+        return { status: 200, data: { permission: permissions[login], user } } satisfies ApiResponse
+      }
+      const item = /\/(?:pulls|issues)\/(\d+)(\/[a-z]+)?/u.exec(path)
+      const found = fixtures.find((entry) => entry.number === Number(item?.[1]))
+      if (item === null || found === undefined) return { status: 404, data: null } satisfies ApiResponse
+      if (item[2] === "/events") return { status: 200, data: found.events } satisfies ApiResponse
+      if (item[2] === "/reviews") return { status: 200, data: found.reviews } satisfies ApiResponse
+      if (item[2] === "/files") return { status: 200, data: found.files } satisfies ApiResponse
+      const data = structuredClone(found.pull)
+      if (!seen.has(found.number)) {
+        seen.add(found.number)
+        result.betweenReads?.(found)
+      }
+      return { status: 200, data } satisfies ApiResponse
+    },
+  }
+  return result
+}
+
+effect function runAuto(target: AutoWorld, options: { readonly enabled?: string | undefined; readonly dryRun?: boolean } = {}) {
+  return try runReadyAutoMerge({
+    api: target.api,
+    repository: pilotRepository,
+    enabled: "enabled" in options ? options.enabled : "on",
+    dryRun: options.dryRun ?? false,
+    log: (line) => sync(() => { target.lines.push(line) }),
+  })
+}
+
+effect function autoSkipReason(change: (item: AutoFixture) => void, options: AutoWorldOptions = {}) {
+  const item = autoFixture()
+  change(item)
+  const target = autoWorld([item], options)
+  const outcomes = try runAuto(target)
+  try same(target.writes, [])
+  try same(outcomes.length, 1)
+  try same(outcomes[0]?.action, "skipped")
+  return outcomes[0]?.detail ?? ""
+}
+
+standaloneIt.effect('Ready auto-merge obeys the switch, dry-run write guard, base branch rules, label provenance, write-access approvals, clean mergeability, .github exclusion, second-read pin, run cap, and workflow guardrails (spec/slopbot/readyLabel.md, "The pilot workflow merges only on Slop\'s own repository when switched on, into the registered integration branch, and never touches `.github/`")', () => effect {
+  for (const enabled of [undefined, "", "off", "ON", "true"]) {
+    let calls = 0
+    const target = autoWorld([autoFixture()])
+    const outcomes = try runReadyAutoMerge({
+      api: (method, path, body) => effect {
+        calls++
+        return try target.api(method, path, body)
+      },
+      repository: pilotRepository,
+      enabled,
+      dryRun: false,
+      log: () => Effect.void,
+    })
+    try same({ outcomes, calls }, { outcomes: [], calls: 0 })
+  }
+
+  const verifiedTarget = autoWorld([autoFixture()])
+  const verifiedOutcomes = try runAuto(verifiedTarget)
+  try same(verifiedOutcomes, [{ number: 7, action: "merged", detail: `head ${autoHead} into develop, approved by maint` }])
+  try same(verifiedTarget.writes, [
+    { method: "PUT", path: `/repos/${pilotRepository}/pulls/7/merge`, body: { sha: autoHead, merge_method: "merge" } },
+    { method: "POST", path: `/repos/${pilotRepository}/issues/7/comments`, body: { body: mergeComment(autoHead, ["maint"]) } },
+  ])
+  try same(verifiedTarget.lines[0], `#7 merged: head ${autoHead} into develop, approved by maint`)
+  try same(mergeComment(autoHead, ["maint"]).includes("@"), false)
+
+  const dryTarget = autoWorld([autoFixture()])
+  const dryOutcomes = try runAuto(dryTarget, { enabled: undefined, dryRun: true })
+  try same({ action: dryOutcomes[0]?.action, writes: dryTarget.writes }, { action: "would-merge", writes: [] })
+
+  const dryWriteExit = try effect {
+    provide FetchHttpClient.layer {
+      const client = try HttpClient.HttpClient
+      const api = githubAutoMergeApi(Redacted.make("token"), true, client)
+      return try exit(api("PUT", "/x", {}))
+    }
+  }
+  try same(Exit.isFailure(dryWriteExit), true)
+
+  try same((try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "main" })).includes("never merges into"), true)
+  try same((try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "trunk" }, { defaultBranch: "trunk" })).includes("never merges into"), true)
+  try same(try autoSkipReason((item) => { (item.pull.base as { ref: string }).ref = "feature" }), "feature is not the project's registered integration branch")
+  try same((try autoSkipReason(() => {}, { fail: (path) => (path.includes("/contents/") ? 404 : undefined) })).includes("could not be read (HTTP 404)"), true)
+  try same(try autoSkipReason((item) => { (item.pull.base as { repo: { id: number } }).repo.id = 5 }), "its base is another repository")
+
+  try same(try autoSkipReason((item) => {
+    item.events = [{ event: "labeled", created_at: "2026-11-25T10:05:00Z", label: { name: readyLabelName }, actor: autoMaintainer }]
+  }), "the ready label was last added by maint, not Slopbot")
+  try same((try autoSkipReason((item) => {
+    item.events.push(
+      { event: "unlabeled", created_at: "2026-11-25T10:06:00Z", label: { name: readyLabelName }, actor: autoBot },
+      { event: "labeled", created_at: "2026-11-25T10:07:00Z", label: { name: readyLabelName }, actor: { id: 44, login: "slopdotcash", type: "User" } },
+    )
+  })).includes("not Slopbot"), true)
+  try same(try autoSkipReason((item) => {
+    item.events.push({ event: "unlabeled", created_at: "2026-11-25T10:06:00Z", label: { name: readyLabelName }, actor: autoBot })
+  }), "the newest ready label event is a removal")
+  try same(try autoSkipReason((item) => {
+    item.events = [{ event: "labeled", created_at: "2026-11-25T10:05:00Z", label: { name: "other" }, actor: autoBot }]
+  }), "its event history shows no ready label")
+  try same(try autoSkipReason((item) => {
+    item.events = Array.from({ length: 100 }, () => item.events[0])
+  }), "the event history is too long to read in full")
+
+  try same(try autoSkipReason((item) => {
+    item.reviews = [
+      { user: autoMaintainer, state: "APPROVED", commit_id: autoOldHead, submitted_at: "2026-11-25T10:00:00Z" },
+      { user: autoMaintainer, state: "APPROVED", commit_id: autoHead, submitted_at: "2026-11-25T10:20:00Z" },
+    ]
+  }), "the ready label is older than every review of its head commit")
+  try same(try autoSkipReason((item) => {
+    item.events.push({ event: "head_ref_force_pushed", created_at: "2026-11-25T10:06:00Z", actor: autoAuthor })
+  }), "the head was force pushed after Slopbot added the label")
+
+  try same(try autoSkipReason((item) => { (item.reviews[0] as { commit_id: string }).commit_id = autoOldHead }), "no approval stands at its head commit")
+  try same(try autoSkipReason((item) => { (item.reviews[0] as { user: unknown }).user = autoOutsider }), "no approval at its head commit is from an account with write access")
+  try same(try autoSkipReason((item) => { (item.reviews[0] as { user: unknown }).user = autoAuthor }), "no approval stands at its head commit")
+  try same(try autoSkipReason((item) => { (item.reviews[0] as { user: unknown }).user = { id: 8, login: "helper[bot]", type: "Bot" } }), "no approval stands at its head commit")
+  try same(try autoSkipReason((item) => {
+    item.reviews.push({ user: autoMaintainer, state: "DISMISSED", commit_id: autoHead, submitted_at: "2026-11-25T10:01:00Z" })
+  }), "no approval stands at its head commit")
+  try same(try autoSkipReason(() => {}, { fail: (path) => (path.endsWith("/permission") ? 403 : undefined) }), "the permission of maint could not be read (HTTP 403)")
+  for (const permission of ["admin", "write"]) {
+    const target = autoWorld([autoFixture()], { permissions: { maint: permission } })
+    try same((try runAuto(target))[0]?.action, "merged")
+  }
+
+  const requestFrom = (user: unknown) => (item: AutoFixture) => {
+    item.reviews.push({ user, state: "CHANGES_REQUESTED", commit_id: autoOldHead, submitted_at: "2026-11-25T09:00:00Z" })
+  }
+  try same((try autoSkipReason(requestFrom({ id: 55, login: "second", type: "User" }), { permissions: { second: "admin" } })).includes("permission of second"), true)
+  const outsiderChangeItem = autoFixture()
+  requestFrom(autoOutsider)(outsiderChangeItem)
+  try same((try runAuto(autoWorld([outsiderChangeItem])))[0]?.action, "merged")
+  const blockedItem = autoFixture()
+  requestFrom(autoOutsider)(blockedItem)
+  const blockedTarget = autoWorld([blockedItem], { permissions: { outsider: "write" } })
+  try same({ detail: (try runAuto(blockedTarget))[0]?.detail, writes: blockedTarget.writes }, { detail: "outsider has an open change request", writes: [] })
+
+  for (const state of ["unstable", "blocked", "behind", "dirty", "has_hooks"]) {
+    try same(try autoSkipReason((item) => { item.pull.mergeable_state = state }), `GitHub reports its merge state as ${state}, not clean`)
+  }
+  try same((try autoSkipReason((item) => { item.pull.mergeable = null })).includes("has not worked out"), true)
+  try same(try autoSkipReason((item) => { item.pull.draft = true }), "it is a draft")
+  try same(try autoSkipReason((item) => { item.pull.labels = [] }), `it does not carry ${readyLabelName}`)
+
+  try same((try autoSkipReason((item) => { item.files = [{ filename: ".github/workflows/deploy.yml" }] })).includes("touches .github/workflows/deploy.yml"), true)
+  try same((try autoSkipReason((item) => { item.files = [{ filename: "docs/moved.json", previous_filename: ".GitHub/x.json" }] })).includes("touches .GitHub/x.json"), true)
+  try same(try autoSkipReason((item) => { item.pull.changed_files = 2 }), "the changed file list is incomplete")
+
+  const movedTarget = autoWorld([autoFixture()])
+  movedTarget.betweenReads = (found) => { (found.pull.head as { sha: string }).sha = autoOldHead }
+  const movedOutcomes = try runAuto(movedTarget)
+  try same({ detail: movedOutcomes[0]?.detail, writes: movedTarget.writes }, { detail: "its head or base changed during the checks", writes: [] })
+
+  const refusedTarget = autoWorld([autoFixture()], { mergeStatus: 409 })
+  const refusedOutcomes = try runAuto(refusedTarget)
+  try same({ detail: refusedOutcomes[0]?.detail, writes: refusedTarget.writes.length }, { detail: "GitHub refused the merge (HTTP 409)", writes: 1 })
+  const broken = autoFixture(8)
+  broken.pull = { number: 8 }
+  try same((try runAuto(autoWorld([broken, autoFixture(9)]))).map((outcome) => outcome.action), ["skipped", "merged"])
+
+  const numbers = [16, 15, 14, 13, 12, 11, 10]
+  const capTarget = autoWorld(numbers.map((number) => autoFixture(number)))
+  const capOutcomes = try runAuto(capTarget)
+  try same({
+    merged: capOutcomes.filter((outcome) => outcome.action === "merged").length,
+    order: capOutcomes.map((outcome) => outcome.number),
+    overflow: capOutcomes.slice(maxAutoMergesPerRun).map((outcome) => outcome.detail),
+    logLines: capTarget.lines.length,
+  }, {
+    merged: maxAutoMergesPerRun,
+    order: [10, 11, 12, 13, 14, 15, 16],
+    overflow: ["this run already reached its limit of 5", "this run already reached its limit of 5"],
+    logLines: numbers.length + 1,
+  })
+
+  const listFailed = autoWorld([autoFixture()], { fail: (path) => (path.includes("/issues?") ? 502 : undefined) })
+  try same(Exit.isFailure(try exit(runAuto(listFailed))), true)
+  try same(listFailed.writes, [])
+  try same(Exit.isFailure(try exit(runReadyAutoMerge({ api: listFailed.api, repository: "someone/else", enabled: "on", dryRun: false }))), true)
+
+  const workflow = try scoped(effect {
+    provide Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer) {
+      const fs = try FileSystem.FileSystem
+      const path = try Path.Path
+      const text = try fs.readFileString(path.join(repoRoot, ".github", "workflows", "ready-auto-merge.yml"))
+      const summaryDir = try fs.makeTempDirectoryScoped({ prefix: "ready-auto-merge-" })
+      const summaryFile = path.join(summaryDir, "summary.md")
+      let unknownArg: unknown
+      provide ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_TOKEN: "ghs_test" })) {
+        unknownArg = try readyAutoMergeCommand(["--bogus"])
+      }
+      provide ConfigProvider.layer(ConfigProvider.fromUnknown({
+        GITHUB_TOKEN: "ghs_test",
+        GITHUB_REPOSITORY: pilotRepository,
+        SLOPBOT_AUTO_MERGE: "off",
+        GITHUB_STEP_SUMMARY: summaryFile,
+      })) {
+        try readyAutoMergeCommand([])
+      }
+      const summary = try fs.readFileString(summaryFile)
+      return { text, unknownArg, summary }
+    }
+  })
+  const stripped = workflow.text.split("\n").filter((line) => !line.startsWith("#")).join("\n")
+  try same({
+    dispatchOnly: /^on:\n {2}workflow_dispatch:\npermissions: \{\}\n/mu.test(stripped),
+    noOtherTriggers: ["schedule", "pull_request", "push:", "workflow_run"].every((trigger) => !stripped.includes(trigger)),
+    switched: stripped.includes("vars.SLOPBOT_AUTO_MERGE == 'on'"),
+    mainOnly: stripped.includes("github.ref == 'refs/heads/main'"),
+    repoOnly: stripped.includes(`github.repository == '${pilotRepository}'`),
+    serialized: stripped.includes("concurrency:\n  group: slop-ready-auto-merge\n  cancel-in-progress: false"),
+    permissions: stripped.includes("    permissions:\n      contents: write\n      pull-requests: write\n    steps:"),
+    pinnedCheckout: /ref: \$\{\{ github\.sha \}\}/u.test(stripped) && stripped.includes("persist-credentials: false") && !stripped.includes("head.sha"),
+    invokesCommand: stripped.includes("node apps/slopbot/dist/programs/main.js ready-auto-merge"),
+    unknownArg: workflow.unknownArg,
+    summary: workflow.summary,
+  }, {
+    dispatchOnly: true,
+    noOtherTriggers: true,
+    switched: true,
+    mainOnly: true,
+    repoOnly: true,
+    serialized: true,
+    permissions: true,
+    pinnedCheckout: true,
+    invokesCommand: true,
+    unknownArg: usageFailure,
+    summary: "- SLOPBOT_AUTO_MERGE is not on; nothing was read or merged.\n",
   })
 })

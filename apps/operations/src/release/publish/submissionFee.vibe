@@ -1,5 +1,5 @@
 // spec/operations/release.md, "The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"
-import { feeNetworks } from "@repo/backend/client"
+import { feeNetworks, switchedOn } from "@repo/backend/client"
 import { type FeeMode, type SubmissionFeeConfig, submissionFeeDepositCron, submissionFeePublishable, submissionFeeRateCron } from "../../../gen/operations__release.effect.vibe"
 import type { SubmissionFeeReview } from "../run/publisher.vibe"
 import { Cloudflare } from "../wrangler/cloudflare.vibe"
@@ -7,9 +7,22 @@ import { secretNames } from "../wrangler/outputs.vibe"
 import { ConfigRefused, type Reviewed } from "./config.vibe"
 import { type Publication, type SecretValues, plainRelease, publishWorker } from "./order.vibe"
 
+export interface SolanaReleaseTerms {
+  readonly switchedOn: boolean
+  readonly programId: string | null
+  readonly startSlot: number | null
+}
+
+export interface SubmissionFeeContext {
+  readonly slopbot?: Reviewed
+  readonly solana?: SolanaReleaseTerms
+  readonly checkSecrets?: boolean
+}
+
 export interface SubmissionFeeFacts {
   readonly config: SubmissionFeeConfig
   readonly mode: string
+  readonly solanaMode: string
   readonly settingsIssue: string | undefined
 }
 
@@ -19,19 +32,30 @@ const privateDatabase = "slop-private"
 const resolverKey = "SUBMISSION_FEE_RESOLVER_KEY"
 const endpointNames: ReadonlyArray<readonly [string, string]> = [["base-mainnet", "RPC_URL_SUBMISSION_FEE_BASE"], ["robinhood-mainnet", "RPC_URL_SUBMISSION_FEE_ROBINHOOD"]]
 const endpointSecretNames: ReadonlyArray<string> = endpointNames.map(([, name]) => name)
+const solanaEndpoint = "RPC_URL_SUBMISSION_FEE_SOLANA"
+const solanaSeed = "SUBMISSION_FEE_SOLANA_RESOLVER_SEED"
+const solanaSecretNames: ReadonlyArray<string> = [solanaEndpoint, solanaSeed]
+const allowedSecrets: ReadonlySet<string> = new Set([resolverKey, ...endpointSecretNames, ...solanaSecretNames])
 const modes: ReadonlyMap<string, FeeMode> = new Map([["off", "FeeOff"], ["dry_run", "FeeDryRun"], ["live", "FeeLive"]])
 const address = /^0x[0-9a-fA-F]{40}$/u
+const solanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
 const httpsUrl = /^https:\/\/[^\s]+$/u
-const wholeWei = /^[1-9][0-9]{0,18}$/u
+const wholeUnits = /^[1-9][0-9]{0,18}$/u
+
+export const defaultSolanaReleaseTerms: SolanaReleaseTerms = {
+  switchedOn: true,
+  programId: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+  startSlot: 474211652,
+}
 
 function refused(message: string) {
   return new ConfigRefused({ message })
 }
 
-function wei(value: string | undefined, name: string) {
+function positiveAmount(value: string | undefined, name: string, unit: string) {
   const text = (value ?? "").trim()
   const amount = Number(text)
-  return wholeWei.test(text) && Number.isSafeInteger(amount) ? amount : `${name} must be a positive whole number of wei`
+  return wholeUnits.test(text) && Number.isSafeInteger(amount) ? amount : `${name} must be a positive whole number of ${unit}`
 }
 
 function recorded(terms: (typeof feeNetworks)[number]) {
@@ -40,22 +64,68 @@ function recorded(terms: (typeof feeNetworks)[number]) {
 
 function settingsIssue(vars: Readonly<Record<string, string>>, mode: string) {
   if (mode !== "dry_run" && mode !== "live") return "SUBMISSION_FEE_MODE must be off, dry_run or live"
-  const perTransaction = wei(vars.SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI")
+  const perTransaction = positiveAmount(vars.SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI", "wei")
   if (typeof perTransaction === "string") return perTransaction
-  const perDay = wei(vars.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI")
+  const perDay = positiveAmount(vars.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI", "wei")
   if (typeof perDay === "string") return perDay
   if (perDay < perTransaction) return "The daily native limit must cover one transaction limit"
   const unset = feeNetworks.find((terms) => !recorded(terms))
   return unset === undefined ? undefined : `${unset.network} needs both a contract address and a start block`
 }
 
-export function submissionFeeFacts(reviewed: Reviewed, site: Reviewed, inventory: ReadonlyArray<string>): SubmissionFeeFacts {
+function slopbotParityIssue(slopbot: Reviewed | undefined) {
+  if (slopbot === undefined) return undefined
+  const slopbotMode = (slopbot.file.vars?.SUBMISSION_FEE_MODE ?? "off").trim()
+  return (slopbotMode === "live") === switchedOn
+    ? undefined
+    : "SUBMISSION_FEE_MODE live in Slopbot and switchedOn in submission fee terms must change together"
+}
+
+function solanaIssue(
+  vars: Readonly<Record<string, string>>,
+  solanaMode: string,
+  terms: SolanaReleaseTerms,
+  inventory: ReadonlyArray<string>,
+  checkSecrets: boolean,
+) {
+  if (solanaMode !== "off" && solanaMode !== "dry_run" && solanaMode !== "live") {
+    return "SUBMISSION_FEE_SOLANA_MODE must be off, dry_run or live"
+  }
+  if ((solanaMode === "live") !== terms.switchedOn) {
+    return "SUBMISSION_FEE_SOLANA_MODE live and SUBMISSION_FEE_SOLANA_SWITCHED_ON change together"
+  }
+  if (solanaMode === "off") return undefined
+  const perTransaction = positiveAmount(vars.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX", "lamports")
+  if (typeof perTransaction === "string") return perTransaction
+  const perDay = positiveAmount(vars.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY", "lamports")
+  if (typeof perDay === "string") return perDay
+  if (perDay < perTransaction) return "The daily Solana limit must cover one transaction limit"
+  const programReady = terms.programId !== null && solanaAddress.test(terms.programId)
+    && terms.startSlot !== null && Number.isSafeInteger(terms.startSlot) && terms.startSlot >= 0
+  if (!programReady) return "Submission fee Solana mode needs the program id and its start slot"
+  if (!checkSecrets) return undefined
+  const hasEndpoint = inventory.includes(solanaEndpoint)
+  const hasSeed = solanaMode !== "live" || inventory.includes(solanaSeed)
+  const extra = inventory.some((name) => !allowedSecrets.has(name))
+  if (!hasEndpoint || !hasSeed || extra) return "Submission fee Solana secret inventory is not ready"
+  return undefined
+}
+
+export function submissionFeeFacts(
+  reviewed: Reviewed,
+  site: Reviewed,
+  inventory: ReadonlyArray<string>,
+  context: SubmissionFeeContext = {},
+): SubmissionFeeFacts {
   const file = reviewed.file
   const vars = file.vars ?? {}
   const databases = file.d1_databases ?? []
   const [database] = databases
   const mode = (vars.SUBMISSION_FEE_MODE ?? "off").trim()
+  const solanaMode = (vars.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim()
   const issue = settingsIssue(vars, mode === "off" ? "dry_run" : mode)
+    ?? slopbotParityIssue(context.slopbot)
+    ?? solanaIssue(vars, solanaMode, context.solana ?? defaultSolanaReleaseTerms, inventory, context.checkSecrets ?? true)
   const parsed = issue === undefined ? modes.get(mode) ?? "FeeUnknown" : "FeeUnknown"
   const live = parsed === "FeeLive"
   const config = {
@@ -66,14 +136,14 @@ export function submissionFeeFacts(reviewed: Reviewed, site: Reviewed, inventory
     crons: [...file.triggers?.crons ?? []],
     privateDatabase: databases.length === 1 && database !== undefined && database.binding === databaseBinding
       && (site.file.d1_databases ?? []).some((entry) => entry.database_name === privateDatabase && entry.database_id === database.database_id),
-    secretInVars: Object.keys(vars).some((name) => name === resolverKey || endpointSecretNames.includes(name)),
+    secretInVars: Object.keys(vars).some((name) => allowedSecrets.has(name)),
     mode: parsed,
     contractsRecorded: feeNetworks.length > 0 && feeNetworks.every((terms) => address.test(terms.contract)),
     startBlocksRecorded: feeNetworks.length > 0 && feeNetworks.every((terms) => Number.isSafeInteger(terms.startBlock) && terms.startBlock >= 0),
     resolverKeyHeld: live && inventory.includes(resolverKey),
-    extraSecrets: live && inventory.some((name) => name !== resolverKey && !endpointSecretNames.includes(name)),
+    extraSecrets: live && inventory.some((name) => !allowedSecrets.has(name)),
   } satisfies SubmissionFeeConfig
-  return { config, mode, settingsIssue: issue }
+  return { config, mode, solanaMode, settingsIssue: issue }
 }
 
 function refusal(facts: SubmissionFeeFacts) {
@@ -94,9 +164,12 @@ effect function heldSecrets(name: string) {
   return try secretNames(try cloudflare.wrangler(step, { args: ["secret", "list", "--name", name, "--format=json"] }), step)
 }
 
-export effect function submissionFeeReviewOf(reviewed: Reviewed, site: Reviewed) {
-  const reviewedOnly = submissionFeeFacts(reviewed, site, [])
-  const facts = reviewedOnly.config.mode === "FeeLive" ? submissionFeeFacts(reviewed, site, try heldSecrets(reviewed.file.name)) : reviewedOnly
+export effect function submissionFeeReviewOf(reviewed: Reviewed, site: Reviewed, context: SubmissionFeeContext = {}) {
+  const reviewedOnly = submissionFeeFacts(reviewed, site, [], { ...context, checkSecrets: false })
+  const needsInventory = reviewedOnly.config.mode === "FeeLive" || (reviewedOnly.config.mode !== "FeeUnknown" && reviewedOnly.solanaMode !== "off")
+  const facts = needsInventory
+    ? submissionFeeFacts(reviewed, site, try heldSecrets(reviewed.file.name), { ...context, checkSecrets: true })
+    : reviewedOnly
   return { config: facts.config, refusal: submissionFeePublishable(facts.config) ? undefined : refusal(facts) } satisfies SubmissionFeeReview
 }
 
@@ -119,10 +192,15 @@ export effect function endpointSecrets() {
   return secrets satisfies SecretValues
 }
 
-export effect function publishSubmissionFee(reviewed: Reviewed, site: Reviewed, publication: Publication) {
+export effect function publishSubmissionFee(
+  reviewed: Reviewed,
+  site: Reviewed,
+  publication: Publication,
+  context: SubmissionFeeContext = {},
+) {
   const name = reviewed.file.name
   const held = try heldSecrets(name)
-  const facts = submissionFeeFacts(reviewed, site, held)
+  const facts = submissionFeeFacts(reviewed, site, held, { ...context, checkSecrets: true })
   if (!submissionFeePublishable(facts.config)) throw refused(refusal(facts))
   const endpoints = Object.entries(try endpointSecrets())
   const bound = endpoints.filter(([secret]) => !held.includes(secret))

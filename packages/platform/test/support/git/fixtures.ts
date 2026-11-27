@@ -1,10 +1,9 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateSync, gunzipSync } from "node:zlib";
+import { gunzipSync } from "node:zlib";
 
 const author = {
   GIT_CONFIG_NOSYSTEM: "1",
@@ -41,7 +40,16 @@ export function bareRepository(name: string, binary = "git"): Repository {
   const git = (args: ReadonlyArray<string>, input?: string | Uint8Array, extra: Readonly<Record<string, string>> = {}) =>
     execFileSync(binary, ["--git-dir", path, ...args], { env: { PATH: process.env.PATH ?? "", ...author, ...extra }, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 120_000, maxBuffer: 64 * 1024 * 1024 }).trim();
   git(["init", "--bare", "--template=", path]);
-  const blob = (content: string | Uint8Array) => git(["hash-object", "-w", "--stdin"], content);
+  const writtenBlobs = new Map<string, string>();
+  const blob = (content: string | Uint8Array) => {
+    const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+    const key = bytes.toString("base64");
+    const previous = writtenBlobs.get(key);
+    if (previous !== undefined) return previous;
+    const sha = git(["hash-object", "-w", "--stdin"], bytes);
+    writtenBlobs.set(key, sha);
+    return sha;
+  };
   return {
     root,
     path,
@@ -94,25 +102,11 @@ export function borrowObjects(repository: Repository, from: Repository): void {
 
 /** @throws {Error} */
 export function addUnrelatedObjects(repository: Repository, count: number): void {
-  const header = Buffer.alloc(12);
-  header.write("PACK");
-  header.writeUInt32BE(2, 4);
-  header.writeUInt32BE(count, 8);
-  const chunks = [header];
-  for (let index = 0; index < count; index++) {
-    const bytes = Buffer.from(`unrelated fixture object ${index}\n`);
-    let size = bytes.length;
-    const objectHeader = [0x30 | (size & 15)];
-    size >>>= 4;
-    while (size) {
-      objectHeader[objectHeader.length - 1] |= 0x80;
-      objectHeader.push(size & 127);
-      size >>>= 7;
-    }
-    chunks.push(Buffer.from(objectHeader), deflateSync(bytes));
-  }
-  const pack = Buffer.concat(chunks);
-  repository.git(["index-pack", "--stdin"], Buffer.concat([pack, createHash("sha1").update(pack).digest()]));
+  const entries = Array.from({ length: count }, (_, index) => {
+    const content = `unrelated fixture object ${index}\n`;
+    return `blob\ndata ${Buffer.byteLength(content)}\n${content}\n`;
+  });
+  repository.git(["fast-import", "--quiet", "--done"], `${entries.join("")}done\n`);
 }
 
 /** @throws {Error} */

@@ -1,7 +1,9 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"
 import { publishesGeneratedSkills } from "@repo/contributor/render/publication";
 import { type RegistryBinding, renderProjectSkill } from "@repo/contributor/render/render";
+// eslint-disable-next-line boundaries/no-unknown-dependencies -- committed skill template bundled via Vite ?raw
 import contributorTemplate from "../../../../../../skills/project-contributor-template/SKILL.md?raw";
+// eslint-disable-next-line boundaries/no-unknown-dependencies -- committed skill template bundled via Vite ?raw
 import reviewerTemplate from "../../../../../../skills/project-reviewer-template/SKILL.md?raw";
 
 export type SkillRole = "contributor" | "reviewer";

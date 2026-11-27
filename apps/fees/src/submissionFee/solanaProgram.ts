@@ -5,12 +5,16 @@ import { circleUsdc } from "../runtime/pins.ts";
 export const SOLANA_SUBMISSION_FEE_NETWORK = "solana-mainnet";
 export const SOLANA_SUBMISSION_FEE_MINT = circleUsdc.solana;
 export const SOLANA_SUBMISSION_FEE_KEPT_TO = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY";
-export const SOLANA_SUBMISSION_FEE_PROGRAM_ID: string | null = null;
-export const SOLANA_SUBMISSION_FEE_SWITCHED_ON = false;
+export const SOLANA_SUBMISSION_FEE_PROGRAM_ID: string | null = "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7";
+export const SOLANA_SUBMISSION_FEE_START_SLOT: number | null = 474211652;
+export const SOLANA_SUBMISSION_FEE_SWITCHED_ON = true;
 export const SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES = 169;
 export const SOLANA_SUBMISSION_FEE_RENT_LAMPORTS = String((SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES + 128) * 6960);
 export const SOLANA_PAY_READS = 6;
 export const SOLANA_PAY_LIMITS = { address: 20, item: 30, all: 120 } as const;
+export const SOLANA_RECORDS_PER_READ = 100;
+export const SOLANA_SIGNATURE_PAGE = 1000;
+export const SOLANA_TRANSACTION_BYTES = 1232;
 
 export const CLASSIC_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -35,6 +39,7 @@ export const DEPOSIT_OFFSETS = {
 
 const U64_MAX = (1n << 64n) - 1n;
 const HEX32 = /^0x[0-9a-fA-F]{64}$/u;
+const WHOLE_U64 = /^(0|[1-9][0-9]{0,19})$/u;
 const encoder = new TextEncoder();
 
 export interface SubmissionConfig {
@@ -71,6 +76,19 @@ export interface SolanaInstruction {
   readonly data: Uint8Array;
 }
 
+export interface SubmissionSettlement {
+  readonly kind: "refunded" | "kept" | "reclaimed";
+  readonly destination: string;
+  readonly mint: string;
+  readonly amount: string;
+  readonly destinationOwner: string;
+  readonly destinationRose: string;
+}
+
+export type SettlementParseResult =
+  | { readonly ok: true; readonly settlement: SubmissionSettlement | null }
+  | { readonly ok: false; readonly issue: string };
+
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
@@ -97,7 +115,8 @@ function pubkeyBytes(value: string): Uint8Array | undefined {
   return bytes !== undefined && bytes.length === 32 ? bytes : undefined;
 }
 
-function hex32Bytes(value: string): Uint8Array | undefined {
+/** @throws {never} */
+export function hex32Bytes(value: string): Uint8Array | undefined {
   if (!HEX32.test(value)) return undefined;
   const out = new Uint8Array(32);
   for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(value.slice(2 + i * 2, 4 + i * 2), 16);
@@ -190,7 +209,7 @@ export function decodeSubmissionConfig(bytes: Uint8Array): SubmissionConfig | un
 
 /** @throws {never} */
 export function decodeSubmissionDeposit(bytes: Uint8Array): SubmissionDeposit | undefined {
-  if (bytes.length < SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES || !sameBytes(bytes.subarray(0, 8), DEPOSIT_DISCRIMINATOR)) return undefined;
+  if (bytes.length !== SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES || !sameBytes(bytes.subarray(0, 8), DEPOSIT_DISCRIMINATOR)) return undefined;
   const depositedAt = readI64Le(bytes, DEPOSIT_OFFSETS.depositedAt);
   if (depositedAt < 0n || depositedAt > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
   return {
@@ -207,13 +226,26 @@ export function decodeSubmissionDeposit(bytes: Uint8Array): SubmissionDeposit | 
 }
 
 /** @throws {never} */
+export function decodeDepositIdSlice(bytes: Uint8Array): number | undefined {
+  if (bytes.length !== 8) return undefined;
+  const value = readU64Le(bytes, 0);
+  if (value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
+  return Number(value);
+}
+
+/** @throws {never} */
 export function tokenAccountBalance(bytes: Uint8Array | null, expectedMint: string, expectedOwner: string): bigint | undefined {
-  if (bytes === null || bytes.length < 165) return undefined;
+  if (bytes === null || bytes.length !== 165) return undefined;
   if (bytes[108] !== 1) return undefined;
   const mint = base58Encode(bytes.subarray(0, 32));
   const owner = base58Encode(bytes.subarray(32, 64));
   if (mint !== expectedMint || owner !== expectedOwner) return undefined;
   return readU64Le(bytes, 64);
+}
+
+/** @throws {never} */
+export function tokenAccountDeliverable(bytes: Uint8Array | null, expectedMint: string, expectedOwner: string): boolean {
+  return tokenAccountBalance(bytes, expectedMint, expectedOwner) !== undefined;
 }
 
 /** @throws {never} */
@@ -375,6 +407,232 @@ export function buildUnsignedTransaction(message: Uint8Array, signatureCount = 1
 }
 
 /** @throws {never} */
+export function buildSignedTransaction(signature: Uint8Array, message: Uint8Array): Uint8Array | undefined {
+  if (signature.length !== 64) return undefined;
+  return concatBytes([new Uint8Array([1]), signature, message]);
+}
+
+/** @throws {never} */
+export function firstTransactionSignature(wire: Uint8Array): string | undefined {
+  if (wire.length <= 65 || wire[0] !== 1) return undefined;
+  return base58Encode(wire.subarray(1, 65));
+}
+
+/** @throws {never} */
 export function isSolanaAddress(value: string): value is Address {
   return address(value) !== undefined;
+}
+
+type JsonObject = Readonly<Record<string, unknown>>;
+
+function asObject(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as JsonObject) : undefined;
+}
+
+function asArray(value: unknown): readonly unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asIndex(value: unknown, length: number): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value < length ? value : undefined;
+}
+
+interface ParsedInstruction {
+  readonly program: string;
+  readonly accounts: readonly string[];
+  readonly data: Uint8Array;
+}
+
+interface ExecutedTx {
+  readonly meta: JsonObject;
+  readonly keys: readonly string[];
+  readonly flat: readonly { readonly ix: JsonObject; readonly height: number; readonly top: number }[];
+}
+
+function parseExecutedTx(transaction: unknown): ExecutedTx | null | "invalid" {
+  const tx = asObject(transaction);
+  if (tx === undefined) return "invalid";
+  const meta = asObject(tx.meta);
+  if (meta === undefined) return "invalid";
+  if (meta.err !== null) return null;
+  const innerTx = asObject(tx.transaction);
+  const message = innerTx === undefined ? undefined : asObject(innerTx.message);
+  if (message === undefined) return "invalid";
+  const accountKeys = asArray(message.accountKeys);
+  if (accountKeys === undefined) return "invalid";
+  const loaded = meta.loadedAddresses === undefined || meta.loadedAddresses === null ? undefined : asObject(meta.loadedAddresses);
+  const writable = loaded?.writable === undefined ? [] : asArray(loaded.writable);
+  const readonly = loaded?.readonly === undefined ? [] : asArray(loaded.readonly);
+  if (writable === undefined || readonly === undefined) return "invalid";
+  const keys: string[] = [];
+  for (const entry of [...accountKeys, ...writable, ...readonly]) {
+    const key = asString(entry);
+    if (key === undefined) return "invalid";
+    keys.push(key);
+  }
+  const innerGroups = meta.innerInstructions === undefined || meta.innerInstructions === null ? [] : asArray(meta.innerInstructions);
+  if (innerGroups === undefined) return "invalid";
+  const inner = new Map<number, readonly unknown[]>();
+  for (const groupRaw of innerGroups) {
+    const group = asObject(groupRaw);
+    const groupIndex = group?.index;
+    const groupIxs = group === undefined ? undefined : asArray(group.instructions);
+    if (group === undefined || typeof groupIndex !== "number" || !Number.isSafeInteger(groupIndex) || groupIxs === undefined) return "invalid";
+    inner.set(groupIndex, groupIxs);
+  }
+  const topInstructions = asArray(message.instructions);
+  if (topInstructions === undefined) return "invalid";
+  const flat: { readonly ix: JsonObject; readonly height: number; readonly top: number }[] = [];
+  for (let top = 0; top < topInstructions.length; top += 1) {
+    const ix = asObject(topInstructions[top]);
+    if (ix === undefined) return "invalid";
+    flat.push({ ix, height: 1, top });
+    for (const childRaw of inner.get(top) ?? []) {
+      const child = asObject(childRaw);
+      const stackHeight = child?.stackHeight;
+      if (child === undefined || typeof stackHeight !== "number" || !Number.isSafeInteger(stackHeight) || stackHeight < 2) return "invalid";
+      flat.push({ ix: child, height: stackHeight, top });
+    }
+  }
+  return { meta, keys, flat };
+}
+
+function parseInstructionParts(ix: JsonObject, keys: readonly string[]): ParsedInstruction | undefined {
+  const programIdx = asIndex(ix.programIdIndex, keys.length);
+  const rawAccounts = asArray(ix.accounts);
+  const rawData = asString(ix.data);
+  if (programIdx === undefined || rawAccounts === undefined || rawData === undefined) return undefined;
+  const program = keys[programIdx];
+  const data = base58Decode(rawData);
+  if (program === undefined || data === undefined) return undefined;
+  const accounts: string[] = [];
+  for (const entry of rawAccounts) {
+    const idx = asIndex(entry, keys.length);
+    if (idx === undefined) return undefined;
+    const key = keys[idx];
+    if (key === undefined) return undefined;
+    accounts.push(key);
+  }
+  return { program, accounts, data };
+}
+
+/** @throws {never} */
+export function submissionCreation(transaction: unknown, programId: string, deposit: string, record?: SubmissionDeposit): boolean {
+  const executed = parseExecutedTx(transaction);
+  if (executed === null || executed === "invalid") return false;
+  const want = record === undefined
+    ? undefined
+    : depositInstruction({
+      programId,
+      payer: record.payer,
+      mint: record.mint,
+      source: record.payer,
+      item: record.item,
+      amount: record.amount,
+      keptTo: record.keptTo,
+      nonce: record.nonce,
+    });
+  for (const entry of executed.flat) {
+    const call = parseInstructionParts(entry.ix, executed.keys);
+    if (call === undefined || call.program !== programId || call.data.length < 8) continue;
+    if (!sameBytes(call.data.subarray(0, 8), DEPOSIT_IX_DISCRIMINATOR)) continue;
+    if (call.accounts[6] !== deposit) continue;
+    if (want === undefined) return true;
+    if (sameBytes(call.data, want.data) && call.accounts[0] === record?.payer && call.accounts[3] === record?.mint) return true;
+  }
+  return false;
+}
+
+function tokenBalanceUnits(row: JsonObject | undefined): bigint | undefined {
+  if (row === undefined) return 0n;
+  const ui = asObject(row.uiTokenAmount);
+  const text = ui === undefined ? undefined : asString(ui.amount);
+  if (text === undefined || !WHOLE_U64.test(text)) return undefined;
+  return BigInt(text);
+}
+
+function findTokenBalance(entries: unknown, position: number): JsonObject | undefined | "invalid" {
+  const rows = entries === undefined || entries === null ? [] : asArray(entries);
+  if (rows === undefined) return "invalid";
+  const matches: JsonObject[] = [];
+  for (const raw of rows) {
+    const row = asObject(raw);
+    if (row === undefined) return "invalid";
+    if (row.accountIndex === position) matches.push(row);
+  }
+  if (matches.length > 1) return "invalid";
+  return matches[0];
+}
+
+/** @throws {never} */
+export function submissionSettlement(transaction: unknown, programId: string, deposit: string): SettlementParseResult {
+  const executed = parseExecutedTx(transaction);
+  if (executed === "invalid") return { ok: false, issue: "Invalid Solana transaction record" };
+  if (executed === null) return { ok: true, settlement: null };
+  const { meta, keys, flat } = executed;
+  for (let at = 0; at < flat.length; at += 1) {
+    const entry = flat[at];
+    if (entry === undefined) continue;
+    const call = parseInstructionParts(entry.ix, keys);
+    if (call === undefined) return { ok: false, issue: "Malformed Solana instruction" };
+    if (call.program !== programId || call.data.length < 8) continue;
+    const isResolve = sameBytes(call.data.subarray(0, 8), RESOLVE_IX_DISCRIMINATOR);
+    const isReclaim = !isResolve && sameBytes(call.data.subarray(0, 8), RECLAIM_IX_DISCRIMINATOR);
+    if (!isResolve && !isReclaim) continue;
+    if (call.accounts[2] !== deposit) continue;
+    let kind: SubmissionSettlement["kind"] = "reclaimed";
+    if (isResolve) {
+      if (call.data.length !== 17 || (call.data[8] !== 0 && call.data[8] !== 1))
+        return { ok: false, issue: "Malformed resolve instruction" };
+      kind = call.data[8] === 1 ? "refunded" : "kept";
+    }
+    const mint = call.accounts[4];
+    const vault = call.accounts[5];
+    const destination = call.accounts[6];
+    if (mint === undefined || vault === undefined || destination === undefined)
+      return { ok: false, issue: "Malformed settlement accounts" };
+    if (vault !== submissionVaultAddress(programId, mint))
+      return { ok: false, issue: "The settlement names another vault" };
+    let amount: bigint | null = null;
+    for (let next = at + 1; next < flat.length; next += 1) {
+      const candidate = flat[next];
+      if (candidate === undefined || candidate.top !== entry.top || candidate.height <= entry.height) break;
+      if (candidate.height !== entry.height + 1) continue;
+      const child = parseInstructionParts(candidate.ix, keys);
+      if (child === undefined) return { ok: false, issue: "Malformed inner instruction" };
+      if (child.program === CLASSIC_TOKEN_PROGRAM && child.data.length === 10 && child.data[0] === 12
+        && child.accounts[0] === vault && child.accounts[1] === mint && child.accounts[2] === destination) {
+        if (amount !== null) return { ok: false, issue: "The settlement moved tokens more than once" };
+        amount = readU64Le(child.data, 1);
+      }
+    }
+    if (amount === null || amount <= 0n) return { ok: false, issue: "The settlement shows no token transfer" };
+    const position = keys.indexOf(destination);
+    const before = findTokenBalance(meta.preTokenBalances, position);
+    const after = findTokenBalance(meta.postTokenBalances, position);
+    if (before === "invalid" || after === "invalid" || after === undefined)
+      return { ok: false, issue: "Invalid transaction token balances" };
+    if (asString(after.mint) !== mint) return { ok: false, issue: "The settlement destination holds another token" };
+    const beforeUnits = tokenBalanceUnits(before);
+    const afterUnits = tokenBalanceUnits(after);
+    const owner = asString(after.owner);
+    if (beforeUnits === undefined || afterUnits === undefined || owner === undefined)
+      return { ok: false, issue: "Invalid transaction token balance values" };
+    return {
+      ok: true,
+      settlement: {
+        kind,
+        destination,
+        mint,
+        amount: amount.toString(),
+        destinationOwner: owner,
+        destinationRose: (afterUnits - beforeUnits).toString(),
+      },
+    };
+  }
+  return { ok: true, settlement: null };
 }

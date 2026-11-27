@@ -1,5 +1,5 @@
 // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"
-import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress } from "@repo/settlement/chain/evm/abi"
+import { IMPLEMENTATION_SLOT, U256_MAX, addressWord, bytes32, decodeUint, escrowGetter, evmAddress, factoryGetter } from "@repo/settlement/chain/evm/abi"
 import { vaultKey, vaultsCall } from "@repo/settlement/chain/evm/factories"
 import { sha256Hex } from "@repo/platform/crypto"
 import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals, totalsRefusalMessage } from "@repo/settlement/chain/evm/totals"
@@ -10,8 +10,9 @@ import { type ApprovalEvidence, approvalSettled } from "../../../gen/frontend__b
 import { networkLabel } from "../../kernels/assetText.ts"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransaction } from "../core/evm.vibe"
+import { failureOf } from "../core/injected.ts"
 import { type Call, type Operation, type Step, type VaultCallTerms, type VaultReview, allowanceData, balanceOfData, batchCalls, batchPlan, callPlan, codeBytes, hexQuantity, quantityValue, samePlannedCall, transferCall, wordValue } from "./evmCalls.ts"
-import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, expectedOf, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
+import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, canonicalReceiptAtIndex, expectedOf, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
 import { type DeploymentCheck, deploymentCheck, settled } from "./ownerDecisions.ts"
 import { pledgedFundsRefusal } from "./pledgeRefusals.ts"
 import type { EvmBatchPlan, EvmCallPlan, OwnerPlan } from "./ownerPlans.schema.ts"
@@ -79,6 +80,7 @@ export const evmVaultMessages = {
   planUnreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
   malformed: "Malformed escrow state",
   codeUnavailable: "Escrow runtime code unavailable",
+  factoryCodeMismatch: "Escrow factory code does not match reviewed deployment",
 } as const
 
 const deploymentMessages: Readonly<Record<Exclude<DeploymentCheck, "ok">, string>> = {
@@ -143,13 +145,28 @@ function addressText(text: string): string {
   return parsed === undefined ? "" : addressWord(parsed)
 }
 
+effect function verifyFactory(connection: EvmConnection, review: VaultReview["factory"], block: string) {
+  const factory = evmAddress(review.address)
+  if (factory === undefined) throw refused(deploymentMessages.identity)
+  if ((try runtimeSha256(connection, factory, block)) !== review.codeSha256)
+    throw refused(evmVaultMessages.factoryCodeMismatch)
+  const answer = try evmRequest(connection, "eth_getStorageAt", [factory, IMPLEMENTATION_SLOT, block])
+  const slot = typeof answer === "string" ? answer.toLowerCase() : ""
+  if (!wordPattern.test(slot)) throw refused(deploymentMessages.slotInvalid)
+  if (slot !== addressText(review.implementation.address) || (try runtimeSha256(connection, review.implementation.address, block)) !== review.implementation.codeSha256)
+    throw refused(deploymentMessages.implementation)
+  if ((try word(connection, factory, factoryGetter("registrar"), block)) !== addressText(review.registrar))
+    throw refused(deploymentMessages.identity)
+  return factory
+}
+
 export effect function verifyDeployment(connection: EvmConnection, vault: EvmVault, block: string) {
   const review = vault.review
   const owner = evmAddress(vault.owner)
   const asset = evmAddress(vault.asset)
   const at = evmAddress(vault.vault)
-  const factory = evmAddress(review.factory)
-  if (owner === undefined || asset === undefined || at === undefined || factory === undefined) throw refused(deploymentMessages.identity)
+  if (owner === undefined || asset === undefined || at === undefined) throw refused(deploymentMessages.identity)
+  const factory = try verifyFactory(connection, review.factory, block)
   const code = try runtimeSha256(connection, at, block)
   const slotAnswer = try evmRequest(connection, "eth_getStorageAt", [at, IMPLEMENTATION_SLOT, block])
   const slot = typeof slotAnswer === "string" ? slotAnswer.toLowerCase() : ""
@@ -235,6 +252,11 @@ effect function callOf(vault: EvmVault, operation: Operation, step: Step, gross:
   return try Effect.try({ try: () => transferCall(termsOf(vault), operation, step, gross), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
 }
 
+function withdrawalRefusal(caught: unknown) {
+  const locked = pledgedFundsRefusal(caught)
+  return locked === undefined ? undefined : refused(locked)
+}
+
 export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVault, operation: Operation, step: Step, amount: string, evidence: Evidence, beforePrompt: (plan: EvmCallPlan) => void!E) {
   const review = try reviewTransfer(connection, vault, operation, amount, evidence)
   const native = termsOf(vault).native
@@ -243,11 +265,7 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
   if (step !== "send" && native) throw refused(evmVaultMessages.noApprovalNative)
   const call: Call = try callOf(vault, operation, step, review.gross)
   const transaction = { from: connection.address, ...call }
-  evmRequest(connection, "eth_estimateGas", [transaction]) catch effect (error) => {
-    const locked = pledgedFundsRefusal(error)
-    if (locked !== undefined) throw refused(locked)
-    throw error
-  }
+  try evmRequest(connection, "eth_estimateGas", [transaction], operation === "withdraw" ? withdrawalRefusal : undefined)
   try requireVaultWallet(connection, vault)
   return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
 }
@@ -260,10 +278,8 @@ export effect function sendBatch<E, R>(connection: EvmConnection, vault: EvmVaul
   if (first !== undefined) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, ...first }])
   try requireVaultWallet(connection, vault)
   try beforePrompt(batchPlan(connection.address, vault.chainId, calls))
-  const result: unknown = evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(vault.chainId), atomicRequired: true, calls }]) catch effect (error) => {
-    if (error._tag === "WalletFailed" && batchRefusedCode(failureCode(error))) throw new VaultBatchUnavailable({ message: evmVaultMessages.batchRefused })
-    throw error
-  }
+  const result = try evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(vault.chainId), atomicRequired: true, calls }],
+    (caught) => batchRefusedCode(failureOf(caught).code) ? new VaultBatchUnavailable({ message: evmVaultMessages.batchRefused }) : undefined)
   const reference = batchReferenceOf(result)
   if (reference === undefined) throw new WalletFailed({ message: evmVaultMessages.batchNoReference })
   return reference
@@ -339,9 +355,9 @@ export effect function checkTransfer(connection: EvmConnection, vault: EvmVault,
   return "finalized" satisfies TransferCheck
 }
 
-export effect function batchProgress(connection: EvmConnection, vault: EvmVault, reference: string) {
+export effect function batchProgress(connection: EvmConnection, vault: EvmVault, reference: string, maxReceipts?: number) {
   try requireVaultWallet(connection, vault)
-  const report = batchReport(try evmRequest(connection, "wallet_getCallsStatus", [reference]))
+  const report = batchReport(try evmRequest(connection, "wallet_getCallsStatus", [reference]), maxReceipts === undefined ? undefined : { reference, chainId: vault.chainId, maxReceipts })
   if (report.kind === "unrecognized") throw refused(evmVaultMessages.batchUnrecognized)
   if (report.kind === "partial") throw refused(evmVaultMessages.batchPartial)
   if (report.kind === "landed" && report.hash === undefined) throw refused(evmVaultMessages.batchNoTransaction)
@@ -364,7 +380,7 @@ export interface ReceiptState {
   readonly success: boolean
 }
 
-export effect function receiptState(connection: EvmConnection, vault: EvmVault, hash: string, expected: ExpectedCall | undefined) {
+export effect function receiptState(connection: EvmConnection, vault: EvmVault, hash: string, expected: ExpectedCall | undefined, membership?: "transactionIndex") {
   try requireVaultWallet(connection, vault)
   if (!isTransactionHash(hash)) throw refused(evmVaultMessages.enterHash)
   const receipt = receiptOf(try evmRequest(connection, "eth_getTransactionReceipt", [hash]))
@@ -375,8 +391,9 @@ export effect function receiptState(connection: EvmConnection, vault: EvmVault, 
   }
   const finalizedNumber = blockNumberOf(try evmRequest(connection, "eth_getBlockByNumber", ["finalized", false]))
   if (finalizedNumber === undefined) throw new WalletFailed({ message: "Your wallet returned an invalid block." })
-  const canonicalHash = blockHashOf(try evmRequest(connection, "eth_getBlockByNumber", [hexQuantity(receipt.blockNumber), false]))
-  return { receipt, canonical: canonicalReceipt(receipt, hash, canonicalHash), final: receipt.blockNumber <= finalizedNumber, success: receipt.status === "0x1" } satisfies ReceiptState
+  const block = try evmRequest(connection, "eth_getBlockByNumber", [hexQuantity(receipt.blockNumber), false])
+  const canonical = membership === "transactionIndex" ? canonicalReceiptAtIndex(receipt, hash, block) : canonicalReceipt(receipt, hash, blockHashOf(block))
+  return { receipt, canonical, final: receipt.blockNumber <= finalizedNumber, success: receipt.status === "0x1" } satisfies ReceiptState
 }
 
 export effect function vaultCodeAt(connection: EvmConnection, vault: EvmVault, block: bigint) {

@@ -332,4 +332,22 @@ pure val weight_review = 3
 pure val weight_send = 4
 pure val weight_walletReply = 6
 pure val weight_check = 4
+pure val eval_witness_sometimesReleaseSigned = (
+  ("signIn", 1, true, 1),
+  ("observeApproval", 1, true, server),
+  ("review", Release, 1),
+  ("send", Release, "p1", true, 1),
+  ("walletReply", Release, "p1", WA::Signed, "h1", adapter),
+  ("check", Release, FinalMatch, adapter))
+pure val eval_witness_sometimesFinalizationRefusedInNotice = (
+  ("signIn", 1, true, 1),
+  ("observeMonth", 1, { sequence: 0, automatic: false, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false }, server),
+  ("toggleFinalization", 1),
+  ("toggleFinalizationReply", 1, 1, SettingNoticeWindow, server))
+pure val eval_witness_sometimesCutSaved = (
+  ("signIn", 1, true, 1),
+  ("observeMonth", 1, { sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false }, server),
+  ("editDraft", true, 40, 1),
+  ("save", 1),
+  ("saveReply", 1, 1, SaveAccepted, server))
 ```

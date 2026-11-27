@@ -21,11 +21,11 @@ import { initialReadyDraft, nextReadyLabel, type ReadyField, readyErrors, readyF
 
 export type Json = Readonly<Record<string, unknown>>;
 
-export type UpdateField = "image" | "automaticClosure" | ReadyField | "submissionFee" | "submissionFeeAmount" | "wantedIssues" | "reportDeposit" | "intakeCap" | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "honorSystem" | "maintainerShare" | "repositories";
+export type UpdateField = "image" | "automaticClosure" | ReadyField | "submissionFee" | "submissionFeeAmount" | "standingDeposits" | "wantedIssues" | "reportDeposit" | "intakeCap" | "catchingUp" | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "honorSystem" | "maintainerShare" | "repositories";
 
 export type UpdateDraft = Readonly<Record<UpdateField, string>>;
 
-export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "submissionFee", "submissionFeeAmount", "wantedIssues", "reportDeposit", "intakeCap", "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "honorSystem", "maintainerShare", "repositories"];
+export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "submissionFee", "submissionFeeAmount", "standingDeposits", "wantedIssues", "reportDeposit", "intakeCap", "catchingUp", "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "honorSystem", "maintainerShare", "repositories"];
 
 export interface Edit {
   readonly fields: Partial<UpdateDraft> | null;
@@ -38,7 +38,7 @@ export interface Managed {
   readonly manifest: ManagedManifest;
 }
 
-export type ChangeField = "vault" | "slopbot" | "readyLabel" | "intakeCap" | "submissionFee" | "wantedIssues" | "reportDeposit" | "image" | "integrationBranch" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly" | "honorSystem" | "maintainerShare";
+export type ChangeField = "vault" | "slopbot" | "readyLabel" | "intakeCap" | "catchUp" | "submissionFee" | "standingDeposits" | "wantedIssues" | "reportDeposit" | "image" | "integrationBranch" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly" | "honorSystem" | "maintainerShare";
 
 export interface BranchRequest {
   readonly integrationBranch: IntegrationBranchChoice;
@@ -269,11 +269,47 @@ interface Entries {
   readonly feeError: string | undefined;
 }
 
-function nextFee(current: Json | undefined, on: boolean, amount: FeeAmount): Json | undefined {
-  if (!on) return current?.enabled === true ? { ...current, enabled: false } : current;
-  if (amount.kind === "invalid") return current;
-  const published = current?.enabled === true ? (typeof current.amountMinor === "string" ? current.amountMinor : String(defaultMinor)) : undefined;
-  return published === amount.minor ? current : { enabled: true, amountMinor: amount.minor };
+const catchUpMaxDays = 14;
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+function isIsoInstant(value: unknown): value is string {
+  return typeof value === "string" && isoInstant.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
+/** @throws {never} */
+export function catchUpEnd(manifest: Pick<ManagedManifest, "slopbot">, now: Date): string | null {
+  const until = manifest.slopbot?.catchUpUntil;
+  return isIsoInstant(until) && Date.parse(until) > now.getTime() ? until : null;
+}
+
+/** @throws {never} */
+export function catchUpOfferedEnd(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + catchUpMaxDays)).toISOString();
+}
+
+/** @throws {never} */
+export function catchUpStartAllowed(manifest: Pick<ManagedManifest, "slopbot">, now: Date): boolean {
+  const month = now.toISOString().slice(0, 7);
+  return !(manifest.slopbot?.catchUpHistory ?? []).some((entry) => entry.startedAt.slice(0, 7) === month);
+}
+
+function standingDepositsAccepted(slopbot: unknown): boolean {
+  return feeRecord(slopbot)?.standingDeposits !== false;
+}
+
+function nextFee(current: Json | undefined, on: boolean, amount: FeeAmount, standingAccepted: boolean): Json | undefined {
+  let feeChoice: Json | undefined;
+  if (!on) {
+    feeChoice = current?.enabled === true ? { ...current, enabled: false } : current;
+  } else if (amount.kind === "invalid") {
+    feeChoice = current;
+  } else {
+    const published = current?.enabled === true ? (typeof current.amountMinor === "string" ? current.amountMinor : String(defaultMinor)) : undefined;
+    feeChoice = published === amount.minor ? current : { enabled: true, amountMinor: amount.minor };
+  }
+  if (feeChoice === undefined && standingAccepted) return undefined;
+  const { standingDeposits: _refused, ...fee } = feeChoice ?? { enabled: false };
+  return standingAccepted ? fee : { ...fee, standingDeposits: false };
 }
 
 function entriesOf(manifest: ManagedManifest, value: UpdateDraft): Entries {
@@ -283,12 +319,13 @@ function entriesOf(manifest: ManagedManifest, value: UpdateDraft): Entries {
   const shareValid = shareEntryValid(share);
   const amount = feeAmountOf(value.submissionFeeAmount);
   const feeOn = value.submissionFee === "true";
+  const standingAccepted = value.standingDeposits !== "false";
   return {
     cap: entryOrPublished(capValid, entryNumber(cap), manifest.slopbot?.intakeCap ?? 0),
     capError: capValid ? undefined : `Enter a whole number from ${minCap} to ${maxCap}, or leave it empty.`,
     share: entryOrPublished(shareValid, entryNumber(share) * 100, manifest.reward.maintainerShare ?? 0),
     shareError: shareValid ? undefined : `Enter a whole number from 0 to ${maxShareBasisPoints / 100}, or leave it empty.`,
-    fee: nextFee(feeRecord(manifest.slopbot), feeOn, amount),
+    fee: nextFee(feeRecord(manifest.slopbot), feeOn, amount, standingAccepted),
     feeError: feeOn && amount.kind === "invalid" ? amount.error : undefined,
   };
 }
@@ -307,7 +344,7 @@ export function primaryRepository(manifest: ManagedManifest): StoredRepository |
 }
 
 /** The form as the current revision fills it; closure consent is checked only by an exact saved yes. @throws {never} */
-export function initialDraft(manifest: ManagedManifest): UpdateDraft {
+export function initialDraft(manifest: ManagedManifest, now: Date = new Date()): UpdateDraft {
   const capMinor = manifest.reward.kind === "monthly-pool" ? (manifest.reward.monthlyCapMinor ?? "0") : "0";
   const asset = manifest.rewardAsset;
   const rules = Object.fromEntries(skillRuleFields.map((field) => [field, manifest.contribution?.[field] ?? ""])) as Record<SkillRuleField, string>;
@@ -319,9 +356,11 @@ export function initialDraft(manifest: ManagedManifest): UpdateDraft {
     ...initialReadyDraft(savedReadySettings(manifest)),
     submissionFee: String(fee?.enabled === true),
     submissionFeeAmount: feeText(typeof fee?.amountMinor === "string" ? fee.amountMinor : String(defaultMinor)),
+    standingDeposits: String(fee?.standingDeposits !== false),
     wantedIssues: String(manifest.slopbot?.wantedIssues === true),
     reportDeposit: String(reportDepositOn(manifest)),
     intakeCap: manifest.slopbot?.intakeCap === undefined ? "" : String(manifest.slopbot.intakeCap),
+    catchingUp: String(catchUpEnd(manifest, now) !== null),
     headline: manifest.headline,
     goal: manifest.description,
     website: manifest.links.website ?? "",
@@ -434,13 +473,23 @@ function fundingFields({ managed: { raw, manifest }, value, funding: { choice, a
   return { ...fields, reward: { ...reward, ...fields.reward, rewardStartAt: reward.rewardStartAt, ...promise } };
 }
 
-function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft, entries: Entries): Json {
+function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft, entries: Entries, now: Date): Json {
   const saved = savedEdit(priorConsent(raw.slopbot), value.automaticClosure === "true");
   const readyLabel = nextReadyLabel(value, savedReadySettings(manifest));
+  const runningCatchUp = catchUpEnd(manifest, now);
+  const nextCatchUpUntil =
+    value.catchingUp === "true"
+      ? (runningCatchUp ?? (catchUpStartAllowed(manifest, now) ? catchUpOfferedEnd(now) : manifest.slopbot?.catchUpUntil))
+      : runningCatchUp === null
+        ? manifest.slopbot?.catchUpUntil
+        : undefined;
+  const rawSlopbot = recordOf(raw.slopbot);
   const slopbot = {
     ...(saved === "Absent" ? {} : { automaticClosure: consents(saved) }),
     ...(readyLabel ? { readyLabel } : {}),
     ...(entries.cap > 0 ? { intakeCap: entries.cap } : {}),
+    ...(nextCatchUpUntil !== undefined ? { catchUpUntil: nextCatchUpUntil } : {}),
+    ...(rawSlopbot.catchUpHistory !== undefined ? { catchUpHistory: rawSlopbot.catchUpHistory } : {}),
     ...(entries.fee ? { submissionFee: entries.fee } : {}),
     ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
   };
@@ -457,12 +506,12 @@ function ownerLink(input: LinkInput, published: string | undefined): string | nu
 }
 
 function nextManifest(proposed: Proposed): Json {
-  const { managed: { raw, manifest }, value, added, countsFrom, entries } = proposed;
+  const { managed: { raw, manifest }, value, added, countsFrom, entries, now } = proposed;
   return {
     ...raw,
     ...fundingFields(proposed),
     ...(added.length > 0 ? { repositories: [...listOf(raw.repositories), ...added.map(({ entry }) => ({ ...entry, description: entry.description.trim(), countsFrom }))] } : {}),
-    ...slopbotOf(raw, manifest, value, entries),
+    ...slopbotOf(raw, manifest, value, entries, new Date(now)),
     ...securityOf(raw, value),
     image: value.image || undefined,
     headline: value.headline.trim(),
@@ -479,12 +528,16 @@ const settingFields: Readonly<Partial<Record<ChangeField, SettingField>>> = {
   slopbot: "SlopbotField",
   readyLabel: "SlopbotField",
   intakeCap: "SlopbotField",
+  catchUp: "SlopbotField",
   submissionFee: "SlopbotField",
+  standingDeposits: "SlopbotField",
   wantedIssues: "SlopbotField",
   reportDeposit: "ReportDepositField",
   image: "ImageField",
   headline: "HeadlineField",
   description: "DescriptionField",
+  website: "HeadlineField",
+  x: "HeadlineField",
   integrationBranch: "IntegrationBranchField",
   contributionGuide: "ContributionGuideField",
 };
@@ -503,6 +556,12 @@ function capSummary(slopbot: unknown): string {
   return typeof cap === "number" ? `At ${cap} open outside pull request${cap === 1 ? "" : "s"}` : "Off";
 }
 
+function catchUpSummary(slopbot: unknown, nowMs: number): string {
+  const until = recordOf(slopbot).catchUpUntil;
+  if (!isIsoInstant(until) || Date.parse(until) <= nowMs) return "Off";
+  return `Until ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(until))}`;
+}
+
 function feeSummary(slopbot: unknown): string {
   const fee = submissionFeeSettingOf(recordOf(slopbot).submissionFee);
   return fee === null ? "Off" : `On: ${feeText(fee.amountMinor)} USDC or USDG`;
@@ -512,7 +571,8 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bountyOnly, branch, primary }: Proposed, next: Json): ReadonlyArray<ChangeRow> {
+function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bountyOnly, branch, primary, now }: Proposed, next: Json): ReadonlyArray<ChangeRow> {
+  const nowMs = Date.parse(now);
   const contribution = recordOf(raw.contribution);
   const proposedContribution = recordOf(next.contribution);
   const proposedLinks = recordOf(next.links);
@@ -520,6 +580,7 @@ function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bount
   const promised = (reward: unknown) => (recordOf(reward).honorSystem === true ? "On" : "Off");
   const allowed = (slopbot: unknown) => (recordOf(slopbot).automaticClosure === true ? "Allowed" : "Not allowed");
   const wanted = (slopbot: unknown) => (recordOf(slopbot).wantedIssues === true ? `On: ${wantedLabelName}` : "Off");
+  const standing = (slopbot: unknown) => (standingDepositsAccepted(slopbot) ? "Accepted" : "Refused");
   const deposit = (project: unknown) => (reportDepositOn(project) ? "On" : "Off");
   const integrationBranch = primary?.integrationBranch ?? "";
   const names = (list: unknown) => listOf(list).map((entry) => text(recordOf(entry).id)).join(", ");
@@ -548,7 +609,9 @@ function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bount
     { field: "slopbot", label: "Auto-close", current: allowed(raw.slopbot), proposed: allowed(next.slopbot) },
     { field: "readyLabel", label: "Slopbot ready label", current: readySummary(raw), proposed: readySummary(next) },
     { field: "intakeCap", label: "Pause new contributors", current: capSummary(raw.slopbot), proposed: capSummary(next.slopbot) },
+    { field: "catchUp", label: "Catching up on reviews", current: catchUpSummary(raw.slopbot, nowMs), proposed: catchUpSummary(next.slopbot, nowMs) },
     { field: "submissionFee", label: "Submission fee", current: feeSummary(raw.slopbot), proposed: feeSummary(next.slopbot) },
+    { field: "standingDeposits", label: "Standing deposits", current: standing(raw.slopbot), proposed: standing(next.slopbot) },
     { field: "wantedIssues", label: "Wanted issues", current: wanted(raw.slopbot), proposed: wanted(next.slopbot) },
     { field: "reportDeposit", label: "Report deposit", current: deposit(raw), proposed: deposit(next) },
     { field: "image", label: "Project image", current: text(raw.image), proposed: text(next.image) },
@@ -573,7 +636,7 @@ function touchedAsset(manifest: ManagedManifest, fields: Partial<UpdateDraft> | 
 /** Everything the update form shows and publishes, from the current revision, the saved edit and the clock. @throws {never} */
 export function reviewOf(managed: Managed, edit: Edit, now: Date, branch?: IntegrationBranchChoice): UpdateReview {
   const { manifest } = managed;
-  const initial = initialDraft(manifest);
+  const initial = initialDraft(manifest, now);
   const value: UpdateDraft = { ...initial, ...(edit.fields ?? {}) };
   const added = pendingRepositories(value.repositories);
   const touched = touchedAsset(manifest, edit.fields, initial);

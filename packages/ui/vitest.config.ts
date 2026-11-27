@@ -5,7 +5,12 @@ const singleReact = {
   name: "single-react",
   config: () => ({
     resolve: { dedupe: ["react", "react-dom"] },
-    optimizeDeps: { include: ["react", "react-dom", "react-dom/client", "react/jsx-dev-runtime", "lucide-react"] },
+    optimizeDeps: {
+      include: [
+        "react", "react-dom", "react-dom/client", "react/jsx-dev-runtime", "lucide-react",
+        "@storybook/addon-a11y/preview", "@storybook/react-vite", "storybook/test",
+      ],
+    },
   }),
 };
 

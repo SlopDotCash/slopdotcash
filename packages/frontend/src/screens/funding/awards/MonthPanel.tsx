@@ -138,7 +138,7 @@ function AllocationEditor({
         >
           <Input inputMode="decimal" spellCheck={false} autoComplete="off" disabled={busy || !open} value={value} onChange={(event) => onDraft({ value: event.target.value, base: row.grossBase, reason })} />
         </Field>
-        <Button variant="secondary" aria-label={`Save ${row.login}`} disabled={draft === undefined || parsed.kind !== "Parsed" || !allowed} loading={busy} onClick={save}>
+        <Button variant="secondary" aria-label={saved && draft === undefined ? `Saved ${row.login}` : `Save ${row.login}`} disabled={draft === undefined || parsed.kind !== "Parsed" || !allowed} loading={busy} onClick={save}>
           {saved && draft === undefined ? (
             <>
               <Check aria-hidden="true" className="size-4" /> Saved

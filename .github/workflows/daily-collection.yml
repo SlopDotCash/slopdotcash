@@ -27,9 +27,8 @@ jobs:
   start:
     name: Start the daily collection
     if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' ||
-       (github.event_name == 'workflow_dispatch' && inputs.release_run_id == ''))
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.release_run_id == '')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -41,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/main' || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
@@ -71,7 +70,6 @@ jobs:
     name: Publish or resume a main collection
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.ref == 'refs/heads/main' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.id == github.event.repository.id &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')) ||
@@ -89,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'workflow_run' && 'refs/heads/main' || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:

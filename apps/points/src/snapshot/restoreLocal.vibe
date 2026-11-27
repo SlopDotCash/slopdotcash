@@ -5,6 +5,8 @@ import { atomicWrite, attempt } from "./files.vibe"
 
 export const ledgerEntry = "data/leaderboard.json"
 export const profilesEntry = "data/profiles.json"
+const freshDigestEntry = "data/leaderboard-fresh.sha256"
+const freshDigestBytes = 65
 export const maxCollectedParts = 8
 export const maxCollectedProfilesBytes = 8 * 1024 * 1024
 
@@ -46,10 +48,11 @@ export function collectedEntries(entries: ReadonlyArray<ZipEntry>): ReadonlyArra
   let parts = 0
   for (const entry of entries) {
     const part = partEntry.test(entry.name)
-    if (entry.name !== ledgerEntry && entry.name !== profilesEntry && !part) continue
+    if (entry.name !== ledgerEntry && entry.name !== profilesEntry && entry.name !== freshDigestEntry && !part) continue
     if (names.has(entry.name) || (entry.fileType !== 0 && entry.fileType !== regularFile) || entry.size <= 0) return "Invalid data entry in the checked bundle"
     if (entry.name === ledgerEntry && entry.size > maxFileBytes) return "Ledger exceeds its bound"
     if (entry.name === profilesEntry && entry.size > maxCollectedProfilesBytes) return "Profiles exceed their bound"
+    if (entry.name === freshDigestEntry && entry.size !== freshDigestBytes) return "Fresh collection digest is malformed"
     if (part) {
       parts += 1
       if (entry.size > maxPartBytes || parts > maxCollectedParts) return "Ledger part exceeds its bound"
@@ -74,6 +77,9 @@ export effect function extractCollectedData(archive: string, destination: string
   for (const entry of wanted) {
     const content = Effect.try(() => zipContent(bytes, entry)) catch effect () => {
       throw new CollectedDataRefused({ message: "Invalid data entry in the checked bundle" })
+    }
+    if (entry.name === freshDigestEntry && !/^[a-f0-9]{64}\n$/u.test(new TextDecoder().decode(content))) {
+      throw new CollectedDataRefused({ message: "Fresh collection digest is malformed" })
     }
     const target = files.join(destination, entry.name.slice("data/".length))
     try attempt(fs.writeFile(target, content, { flag: "wx", mode: 0o600 }), target, "Collected data could not be written")

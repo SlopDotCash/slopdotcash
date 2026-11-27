@@ -7,7 +7,7 @@ import { outboundVia } from "@repo/platform/http"
 import { settableClock } from "@repo/platform/testing/clock"
 import type { GitHubFake } from "@repo/platform/testing/github"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
-import { type CollectionMemoFile, type MemoSession, openMemoFromEnv, openSession, readCollectionMemo, writeMemo } from "../src/collect/memo/memo.vibe"
+import { type CollectionMemoFile, type MemoSession, attributionChangedCodeAuditOneIn, attributionRulesVersion, collectionMemoStatsLines, openMemoFromEnv, openSession, parseCollectionMemo, readCollectionMemo, watchAttribution, writeMemo } from "../src/collect/memo/memo.vibe"
 import { restoreMemo } from "../src/collect/memo/restore.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
@@ -59,7 +59,7 @@ function lineEvidence(collection: Collection | undefined) {
   return (collection?.work.outcomes ?? []).map((outcome) => ({ id: outcome.id, commits: (outcome.commits ?? []).map((commit) => [commit.oid, commit.additions, commit.deletions]) }))
 }
 
-describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
+describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced or when the attribution rules changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
   it.live("a memo written by a full collection answers the next collection's unchanged commit statistics, a changed object id is read live and a malformed memo collects in full", () => effect {
     const world = try Effect.try(() => seeded())
     provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
@@ -95,6 +95,41 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
         const changedOid = first === undefined ? [] : [[first[0], first[1], first[2] === "f".repeat(40) ? "e".repeat(40) : "f".repeat(40), first[3], first[4]] as const]
         const changed = try collected("changed", { ...incremental.written, commitLines: [...changedOid, ...incremental.written.commitLines.slice(1)] })
 
+        const nowMs = try Clock.currentTimeMillis
+        const changedCodeSession = try openSession({ memo: full.written, forceFull: false, nowMs, codeDigest: "d".repeat(64), context: localRun })
+        const changedRulesSession = try openSession({ memo: full.written, forceFull: false, nowMs, codeDigest, rulesVersion: attributionRulesVersion + 1, context: localRun })
+        const v1Text = JSON.stringify({
+          format: "slop-collection-memo-v1",
+          producedAt: full.written.producedAt,
+          cutoffAt: full.written.cutoffAt,
+          lastFullAt: full.written.lastFullAt,
+          attributionCodeDigest: full.written.attributionCodeDigest,
+          commitLines: full.written.commitLines,
+          attributions: [{
+            outcomeId: "PR_v1",
+            fence: {
+              number: 1,
+              url: "https://github.com/ada/widgets/pull/1",
+              headRefOid: "a".repeat(40),
+              mergedAt: full.written.producedAt,
+              updatedAt: full.written.producedAt,
+              repositoryNodeId: "R_widgets",
+              eligibleCommitShas: ["a".repeat(40)],
+            },
+            pulls: [],
+            references: [],
+            incoming: [],
+            result: { kind: "none" },
+          }],
+        })
+        const parsedV1 = try parseCollectionMemo(v1Text, encoder.encode(v1Text).length)
+        const slowWarnings: string[] = []
+        const watchedValue = try watchAttribution("PR_slow", effect {
+          try Effect.sleep("20 millis")
+          return "ok"
+        }, (value) => value, { thresholdMs: 5, write: (line: string) => Effect.sync(() => { slowWarnings.push(line) }) })
+        const statsLine = collectionMemoStatsLines(changedCodeSession)
+
         try fs.writeFileString(memoPath, "{\"format\":\"slop-collection-memo-v1\"}\n")
         const environment = (values: Record<string, string>) => ConfigProvider.layer(ConfigProvider.fromUnknown({ SLOP_COLLECTION_MEMO: memoPath, ...values }))
         effect function outcomeOf(variables: Record<string, string>) {
@@ -107,17 +142,27 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
 
         const commitCount = new Set(full.evidence.flatMap((outcome) => outcome.commits.map(([oid]) => oid))).size
         try same({
-          full: { mode: full.mode, phase: full.phase, lineReads: full.lineReads > 0, counts: full.counts, lastFull: full.written.lastFullAt === full.written.producedAt, rows: full.written.commitLines.length },
+          full: { mode: full.mode, phase: full.phase, lineReads: full.lineReads > 0, counts: full.counts, lastFull: full.written.lastFullAt === full.written.producedAt, rows: full.written.commitLines.length, rulesVersion: full.written.attributionRulesVersion },
           incremental: { mode: incremental.mode, lineReads: incremental.lineReads, counts: incremental.counts, evidence: incremental.evidence, lastFull: incremental.written.lastFullAt, rows: incremental.written.commitLines },
           changed: { lineReads: changed.lineReads, counts: changed.counts, evidence: changed.evidence, rows: changed.written.commitLines },
+          changedCode: { mode: changedCodeSession.state().mode, reason: changedCodeSession.state().reason, auditOneIn: changedCodeSession.auditOneIn },
+          changedRules: { mode: changedRulesSession.state().mode, reason: changedRulesSession.state().reason },
+          v1Compat: { rulesVersion: parsedV1.attributionRulesVersion, computedAt: parsedV1.attributions[0]?.computedAt },
+          slowWatch: { value: watchedValue, stillRunning: slowWarnings.some((line) => line.includes("slow attribution still running: PR_slow")), finished: slowWarnings.some((line) => line.includes("slow attribution: PR_slow") && line.includes("ok")) },
+          statsHasAudit: statsLine.includes(`audited (1 in ${attributionChangedCodeAuditOneIn})`),
           malformed: typeof malformed === "string" ? malformed : { mode: malformed?.session.mode, reason: malformed?.session.state().reason, output: malformed?.output },
           untrusted,
           unparsedFull,
           nothing,
         }, {
-          full: { mode: "FullCollection", phase: "MemoWritten", lineReads: true, counts: { reused: 0, read: commitCount }, lastFull: true, rows: commitCount },
+          full: { mode: "FullCollection", phase: "MemoWritten", lineReads: true, counts: { reused: 0, read: commitCount }, lastFull: true, rows: commitCount, rulesVersion: attributionRulesVersion },
           incremental: { mode: "IncrementalCollection", lineReads: 0, counts: { reused: commitCount, read: 0 }, evidence: full.evidence, lastFull: full.written.lastFullAt, rows: full.written.commitLines },
           changed: { lineReads: 1, counts: { reused: commitCount - 1, read: 1 }, evidence: full.evidence, rows: full.written.commitLines },
+          changedCode: { mode: "IncrementalCollection", reason: "CodeChanged", auditOneIn: attributionChangedCodeAuditOneIn },
+          changedRules: { mode: "FullCollection", reason: "RulesChanged" },
+          v1Compat: { rulesVersion: 1, computedAt: full.written.lastFullAt },
+          slowWatch: { value: "ok", stillRunning: true, finished: true },
+          statsHasAudit: true,
           malformed: { mode: "full", reason: "NoPreviousMemo", output: undefined },
           untrusted: "MemoRefused",
           unparsedFull: "MemoRefused",
@@ -130,6 +175,7 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
 
 const currentRun = 900
 const trustedRun = 800
+const olderRun = 799
 const foreignRun = 801
 const runAttempt = 2
 
@@ -140,9 +186,10 @@ interface Served {
   readonly digest: string
   readonly expired?: boolean
   readonly ageMs?: number
+  readonly runId?: number
 }
 
-function workflowRun(id: number, headSha: string, headRepository: string) {
+function workflowRun(id: number, headSha: string, headRepository: string, ageMs = 3_600_000) {
   return {
     id,
     head_sha: headSha,
@@ -151,27 +198,40 @@ function workflowRun(id: number, headSha: string, headRepository: string) {
     path: ".github/workflows/deploy.yml",
     status: "completed",
     run_attempt: runAttempt,
+    created_at: new Date(actionsStart - ageMs).toISOString(),
     repository: { full_name: repository },
     head_repository: { full_name: headRepository },
   }
 }
 
 function servedRuns(fake: GitHubFake, headSha: string, artifacts: ReadonlyArray<Served>) {
-  fake.alterNext(/^GET \/repos\/ada\/widgets\/actions\/workflows\/deploy\.yml\/runs\?branch=main&status=completed&per_page=40$/u, () => jsonAnswer({
-    total_count: 3,
-    workflow_runs: [workflowRun(currentRun, headSha, repository), workflowRun(foreignRun, headSha, "mallory/widgets"), workflowRun(trustedRun, headSha, repository)],
-  }))
+  const byRun = new Map<number, ReturnType<typeof workflowRun>>([
+    [currentRun, workflowRun(currentRun, headSha, repository, 60_000)],
+    [foreignRun, workflowRun(foreignRun, headSha, "mallory/widgets", 1_800_000)],
+    [trustedRun, workflowRun(trustedRun, headSha, repository, 3_600_000)],
+    [olderRun, workflowRun(olderRun, headSha, repository, 2 * 86_400_000)],
+  ])
+  const entryOf = (artifact: Served) => ({
+    id: artifact.id,
+    name: artifact.name,
+    digest: artifact.digest,
+    size_in_bytes: artifact.zip.length,
+    expired: artifact.expired ?? false,
+    created_at: new Date(actionsStart - (artifact.ageMs ?? 3_600_000)).toISOString(),
+    workflow_run: { id: artifact.runId ?? trustedRun, head_sha: headSha },
+  })
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const matched = artifacts.filter((artifact) => artifact.name === `collection-memo-${attempt}`).map(entryOf)
+    fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/artifacts\\?name=collection-memo-${attempt}&per_page=100$`, "u"), () => jsonAnswer({ total_count: matched.length, artifacts: matched }))
+  }
+  for (const [id, run] of byRun) {
+    if (id === currentRun) continue
+    fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/runs/${id}$`, "u"), () => jsonAnswer(run))
+  }
+  const trustedArtifacts = artifacts.filter((artifact) => (artifact.runId ?? trustedRun) === trustedRun).map(entryOf)
   fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/runs/${trustedRun}/artifacts\\?per_page=100$`, "u"), () => jsonAnswer({
-    total_count: artifacts.length,
-    artifacts: artifacts.map((artifact) => ({
-      id: artifact.id,
-      name: artifact.name,
-      digest: artifact.digest,
-      size_in_bytes: artifact.zip.length,
-      expired: artifact.expired ?? false,
-      created_at: new Date(actionsStart - (artifact.ageMs ?? 3_600_000)).toISOString(),
-      workflow_run: { id: trustedRun, head_sha: headSha },
-    })),
+    total_count: trustedArtifacts.length,
+    artifacts: trustedArtifacts,
   }))
   for (const artifact of artifacts) fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/artifacts/${artifact.id}/zip$`, "u"), () => answer(artifact.zip, { status: 200, headers: { "content-type": "application/zip" } }))
 }
@@ -196,6 +256,9 @@ describe('Restore the newest trusted memo for a fresh main collection (spec/oper
     const sidecar = checkpointOf([archived("accepted-implementation-memo.json", sidecarText)])
     const discussions = checkpointOf([{ name: cachedName, content: encoder.encode(cachedText), deflated: false }])
     const listing = (memoDigest: string): ReadonlyArray<Served> => [
+      { id: 9100, name: "collection-memo-1", ...older, runId: olderRun, ageMs: 2 * 86_400_000 },
+      { id: 9199, name: "collection-memo-1", ...older, runId: foreignRun },
+      { id: 9198, name: "collection-memo-1", ...older, runId: currentRun },
       { id: 9101, name: "collection-memo-1", ...older },
       { id: 9102, name: "collection-memo-2", zip: newest.zip, digest: memoDigest },
       { id: 9103, name: "collection-memo-3", ...newest, expired: true },
@@ -231,12 +294,14 @@ describe('Restore the newest trusted memo for a fresh main collection (spec/oper
           }
           const flags = Object.fromEntries((try fs.readFileString(results)).trim().split("\n").map((line) => line.split("=") as [string, string]))
           const downloads = fake.requests.slice(before).map((request) => /\/actions\/artifacts\/(\d+)\/zip$/u.exec(new URL(request.url).pathname)?.[1]).filter((id) => id !== undefined)
+          const scannedWorkflowRuns = fake.requests.slice(before).some((request) => request.url.includes("/actions/workflows/"))
           return {
             flags,
             memo: try text(`${output}/collection-memo.json`),
             sidecar: try text(`${output}/accepted-implementation-memo.json`),
             discussion: try text(`${output}/leaderboard-discussions/${cachedName}`),
             downloads,
+            scannedWorkflowRuns,
           }
         })
       }
@@ -244,8 +309,8 @@ describe('Restore the newest trusted memo for a fresh main collection (spec/oper
       const good = try restored(newest.digest)
       const mismatched = try restored(older.digest)
       try same({ good, mismatched }, {
-        good: { flags: { memo: "true", discussions: "true" }, memo: memoText, sidecar: sidecarText, discussion: cachedText, downloads: ["9102", "9202", "9302"] },
-        mismatched: { flags: { memo: "false", discussions: "false" }, memo: null, sidecar: null, discussion: null, downloads: ["9102"] },
+        good: { flags: { memo: "true", discussions: "true" }, memo: memoText, sidecar: sidecarText, discussion: cachedText, downloads: ["9102", "9202", "9302"], scannedWorkflowRuns: false },
+        mismatched: { flags: { memo: "false", discussions: "false" }, memo: null, sidecar: null, discussion: null, downloads: ["9102"], scannedWorkflowRuns: false },
       })
     }
   })

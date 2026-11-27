@@ -1,7 +1,7 @@
 // spec/settlement/evmScan.md, "Completion advances the cursor monotonically, even when runs finish out of order"; spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head"
 import { isoNow } from "@repo/platform/clock"
 import { D1, type D1Error, RowMismatch, first, sql } from "@repo/platform/d1"
-import { type Event, type EvmScan, Rejected, apply, decodeEvent, initial, pageFor } from "../../gen/settlement__evmScan.effect.vibe"
+import { type Event, type EvmScan, type Rejected, apply, decodeEvent, initial, pageFor } from "../../gen/settlement__evmScan.effect.vibe"
 import type { ScanScope } from "./index.vibe"
 
 schema CursorRow { readonly position: string }

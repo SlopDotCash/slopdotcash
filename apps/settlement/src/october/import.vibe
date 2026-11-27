@@ -1,0 +1,62 @@
+// spec/settlement/octoberImport.md, "An apply run writes only under the reviewed digest, current main and the production lock"; spec/settlement/octoberImport.md, "A proposal already written is never added to or replaced"
+import { D1, type Statement, sql } from "@repo/platform/d1"
+import { protectedScope } from "@repo/points/live"
+import { holdsAll, guardQueries } from "../closeout/run.vibe"
+import { type compileOctoberElizaProposal } from "./plan.ts"
+
+export error OctoberProposalRefused { message: string }
+
+type Proposal = ReturnType<typeof compileOctoberElizaProposal>["proposal"]
+
+function exists(statement: Statement) {
+  return sql`EXISTS (${statement})`
+}
+
+function requireSql(query: Statement) {
+  return sql`INSERT INTO monthly_reward_bases (project_id) SELECT NULL WHERE COALESCE((${query}), 0) <> 1`
+}
+
+export function octoberStatements(proposal: Proposal, manifest: string, capturedAt: string, eligibility: ReadonlyArray<Statement>) {
+  const { id, period, revision, manifestSha256, sourceSnapshotSha256, grossBase, pointsBatch, enforcementGeneration, awards } = proposal
+  const scope = sql`project_id = ${id} AND period = ${period}`
+  const hasBase = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope}`)
+  const exactHeader = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope} AND manifest = ${manifest} AND manifest_sha256 = ${manifestSha256} AND source_snapshot_sha256 = ${sourceSnapshotSha256} AND cap_base = ${grossBase} AND recipient_count = ${awards.length} AND early_close_at IS NULL AND reviewed_october = 1`)
+  const packed = JSON.stringify(awards.map((award) => [award.githubUserId, award.login, award.grossBase, award.sourceDigest]))
+  const exactCount = sql`(SELECT COUNT(*) FROM monthly_reward_base_rows WHERE ${scope}) = ${awards.length}`
+  const exactRows = sql`NOT EXISTS (
+    SELECT 1 FROM json_each(${packed}) w WHERE NOT EXISTS (
+      SELECT 1 FROM monthly_reward_base_rows WHERE ${scope} AND github_user_id = json_extract(w.value, '$[0]') AND github_login = json_extract(w.value, '$[1]') AND gross_base = json_extract(w.value, '$[2]') AND source_digest = json_extract(w.value, '$[3]')
+    )
+  )`
+  const readback = [exactHeader, exactCount, exactRows]
+  const fresh = [
+    exists(sql`SELECT 1 FROM projects WHERE id = ${id} AND status = 'active' AND revision = ${revision} AND manifest_sha256 = ${manifestSha256} AND manifest = ${manifest}`),
+    sql`(SELECT digest FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1) = ${pointsBatch}`,
+    sql`(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ${enforcementGeneration}`,
+    sql`NOT ${protectedScope(sql`${id}`, sql`${period}`)}`,
+    sql`NOT ${exists(sql`SELECT 1 FROM monthly_reward_base_rows WHERE ${scope}`)}`,
+    ...eligibility,
+  ]
+  const preflight = [...fresh.map((condition) => sql`${hasBase} OR ${condition}`), ...readback.map((condition) => sql`NOT ${hasBase} OR ${condition}`)]
+  const writes = [
+    ...guardQueries(preflight).map(requireSql),
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at, reviewed_october)
+      VALUES (${id}, ${period}, ${manifest}, ${manifestSha256}, ${sourceSnapshotSha256}, ${grossBase}, ${awards.length}, ${capturedAt}, 1) ON CONFLICT (project_id, period) DO NOTHING`,
+    sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest)
+      SELECT ${id}, ${period}, json_extract(w.value, '$[0]'), json_extract(w.value, '$[1]'), json_extract(w.value, '$[2]'), json_extract(w.value, '$[3]')
+      FROM json_each(${packed}) w WHERE ${exactHeader} ON CONFLICT (project_id, period, github_user_id) DO NOTHING`,
+    ...guardQueries(readback).map(requireSql),
+  ]
+  return { preflight, readback, writes }
+}
+
+export effect function executeOctober<E, R>(plan: ReturnType<typeof octoberStatements>, apply: boolean, beforeWrite: () => void!E!R) {
+  if (!(try holdsAll(plan.preflight))) throw new OctoberProposalRefused({ message: "The current October proposal fails an import guard." })
+  if (try holdsAll(plan.readback)) return "already-imported"
+  if (!apply) return "preview"
+  try beforeWrite()
+  const db = try D1
+  const written = Effect.as(db.batch(plan.writes), true) catch () => false
+  if (try holdsAll(plan.readback)) return "applied"
+  throw new OctoberProposalRefused({ message: written ? "October import readback differs." : "October import was not confirmed." })
+}

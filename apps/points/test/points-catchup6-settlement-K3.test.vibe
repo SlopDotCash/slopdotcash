@@ -8,8 +8,9 @@ import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { type JournalReader } from "../src/collect/implementation/facts.vibe"
-import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
-import { type ProofReader, readAcceptedImplementationProofs } from "../src/collect/implementation/native.vibe"
+import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, implementationMemoRulesDigest, implementationMemoRulesHash, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
+import { implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn, implementationMemoRulesVersion } from "../src/collect/memo/memo.vibe"
+import { ImplementationEvidenceUnavailable, type ProofReader, readAcceptedImplementationProofs } from "../src/collect/implementation/native.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { assembleSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
@@ -207,21 +208,80 @@ it.live('A written implementation memo is reused on the next pass, and a stale o
     const contents = try fs.readFileString(sidecar)
     const stale = parseImplementationMemo(contents, codeDigest, (try Clock.currentTimeMillis) + 8 * day) catch (error) => error._tag
     try fs.writeFileString(sidecar, contents.replace(codeDigest, "b".repeat(64)))
+    const changedCode = try Effect.provide(openImplementationMemo(codeDigest), environment)
+    const rulesMismatch = parseImplementationMemo(contents, codeDigest, try Clock.currentTimeMillis, implementationMemoRulesVersion + 1) catch (error) => error._tag
+    try fs.writeFileString(sidecar, contents.replace(`"rulesVersion":${implementationMemoRulesVersion}`, `"rulesVersion":${implementationMemoRulesVersion + 1}`))
     const refused = { count: 0 }
     const tampered = try Effect.provide(openImplementationMemo(codeDigest), environment)
     const relive = (try collected(world, try localProofs(repositoryDirectory, refused), tampered)).implementation.history.acceptedImplementationDigests
+    const pinnedHash = try implementationMemoRulesHash(new URL("../../..", import.meta.url).pathname)
 
+    const { audited, auditMismatches, digestsRead, digestsReused } = reopened.stats
     try same({
       calls: [live.count, reused.count, refused.count],
+      savedEvidence: { read: digestsRead, checked: digestsReused + audited, auditMismatches },
+      auditRates: [reopened.auditOneIn, changedCode.auditOneIn],
       reusedDigests: [...again].sort(),
       reliveDigests: [...relive].sort(),
       stale: typeof stale === "string" ? stale : "accepted",
+      rulesMismatch: typeof rulesMismatch === "string" ? rulesMismatch : "accepted",
+      pinnedHash,
     }, {
-      calls: [1, 0, 1],
+      calls: [1, audited === 0 ? 0 : 1, 1],
+      savedEvidence: { read: audited, checked: first.size, auditMismatches: 0 },
+      auditRates: [implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn],
       reusedDigests: [...first].sort(),
       reliveDigests: [...first].sort(),
       stale: "ImplementationMemoInvalid",
+      rulesMismatch: "ImplementationMemoInvalid",
+      pinnedHash: implementationMemoRulesDigest,
     })
   })
+  }
+})
+
+effect function twoParentPull(world: Seeded, branch: string, carried: number, dayOffset: number) {
+  const fake = world.fake.world
+  const listed = try Effect.try(() => fake.repo(repository))
+  const base = listed.branches.get(listed.defaultBranch) ?? ""
+  const path = `src/${branch}.ts`
+  const lines = ["added\n", "tested\n"]
+  const change = { [path]: lines.join("") }
+  const patch = try Effect.try(() => fake.addCommit(repository, { branch, parents: [base], author: "grace", files: { [path]: lines[0] ?? "" } }))
+  const tested = try Effect.try(() => fake.addCommit(repository, { branch, parents: [patch], author: "grace", files: change }))
+  const first = try Effect.try(() => fake.addCommit(repository, { parents: [base], author: "ada", files: carried > 0 ? { [path]: lines.slice(0, carried).join("") } : {} }))
+  const recorded = try Effect.try(() => fake.addCommit(repository, { parents: [first, tested], author: "ada", files: change }))
+  const number = try Effect.try(() => fake.addPull({
+    repo: repository, author: "grace", title: `Submit ${branch}`, mergedAt: new Date(start - dayOffset * day).toISOString(),
+    commits: [patch, tested], headSha: tested, headRef: branch, mergeCommit: recorded,
+    files: [{ path, additions: 2, deletions: 0, status: "added" }],
+  }))
+  return (try Effect.try(() => fake.pull(repository, number))).nodeId
+}
+
+it.live('Empty and inconsistent two-parent acceptances hold new implementation credit while a matching acceptance credits the submitted author (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const empty = try twoParentPull(world, "empty-acceptance", 2, 4)
+  const partial = try twoParentPull(world, "partial-acceptance", 1, 3)
+  const complete = try twoParentPull(world, "complete-acceptance", 0, 2)
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
+    try scoped(effect {
+      const noComparison: ProofReader = () => effect { throw new ImplementationEvidenceUnavailable({ message: "these acceptances need no patch comparison" }) }
+      const { collection, implementation } = try collected(world, noComparison, undefined)
+      const scored = try assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection), history: implementation.history })
+      const state = (id: string) => (scored.valueAssessmentCoverage ?? []).find((row) => row.pullRequestId === id)?.status
+      try same({
+        emptyMarker: implementation.markers.get(empty),
+        partialMarker: implementation.markers.get(partial),
+        coverage: [state(empty), state(partial), state(complete)],
+        credited: scored.ledger.filter((entry) => entry.category === "merged-pull-request" && [empty, partial, complete].includes(entry.source.id))
+          .map((entry) => [entry.source.id, entry.actor.login]),
+      }, {
+        emptyMarker: { emptyAcceptanceMarker: true },
+        partialMarker: { acceptedLineCountsDiffer: true },
+        coverage: ["incomplete", "incomplete", "missing"],
+        credited: [[complete, "grace"]],
+      })
+    })
   }
 })

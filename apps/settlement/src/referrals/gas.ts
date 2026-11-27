@@ -2,7 +2,6 @@
 // spec/settlement/referrals.md, "Poster gas has transaction and UTC-day ceilings"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
 
 export const PER_TRANSACTION_WEI = 200000000000000n;
-export const PER_DAY_WEI = 2000000000000000n;
 
 /** @throws {never} */
 export function gasLimitWithMargin(estimate: bigint): bigint {
@@ -29,9 +28,9 @@ export function reservedWei(gasLimit: bigint, maxFeePerGas: bigint): bigint {
 }
 
 /** @throws {never} */
-export function actualWei(gasUsed: bigint, effectiveGasPrice: bigint, gasLimit: bigint, maxFeePerGas: bigint): bigint {
-  //@ requires gasUsed >= 0 && effectiveGasPrice >= 0 && gasLimit >= 0 && maxFeePerGas >= 0
-  //@ ensures gasUsed <= gasLimit && effectiveGasPrice <= maxFeePerGas ==> \result <= gasLimit * maxFeePerGas
+export function actualWei(gasUsed: bigint, effectiveGasPrice: bigint, _gasLimit: bigint, _maxFeePerGas: bigint): bigint {
+  //@ requires gasUsed >= 0 && effectiveGasPrice >= 0 && _gasLimit >= 0 && _maxFeePerGas >= 0
+  //@ ensures gasUsed <= _gasLimit && effectiveGasPrice <= _maxFeePerGas ==> \result <= _gasLimit * _maxFeePerGas
   //@ ensures \result === gasUsed * effectiveGasPrice
   return gasUsed * effectiveGasPrice;
 }

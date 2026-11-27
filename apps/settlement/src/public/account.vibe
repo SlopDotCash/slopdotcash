@@ -1,18 +1,22 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
 import { RowMismatch, first, sql } from "@repo/platform/d1"
-import { type AccountBalance, AccountMonthlyAward, type AccountPayment, AccountWallet, DeliveryState, DirectTransfer, type PaymentsAccount, UnreservedAwardState, WalletObservation } from "../client/public.vibe"
+import { type AccountBalance, type AccountMonthlyAward, type AccountPayment, AccountWallet, DeliveryState, DirectTransfer, type PaymentsAccount, UnreservedAwardState, WalletObservation } from "../client/public.vibe"
 import { PaymentChain } from "../client/vault.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { CHAINS, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { PayoutConsentRow, payoutBindingKey, payoutBindings } from "./payoutConsent.vibe"
 import { InvalidPaymentRecord } from "./records.vibe"
 
 schema AccountRows {
   readonly wallets: string
   readonly payments: string
+  readonly payoutConsents: string
   readonly monthlyAwards: string
   readonly directTransfers: string
   readonly walletObservations: string
 }
+
+schema AccountWalletRows { readonly wallets: string }
 
 schema PaymentRow {
   readonly id: string
@@ -56,19 +60,33 @@ effect function listOf<S extends Schema.Constraint>(schema: S, text: string, lab
   }
 }
 
-function accountQuery(githubId: string, separateDirectHistory: boolean) {
-  return sql`SELECT
-  (SELECT json_group_array(json_object('chain', w.chain, 'claimId', w.id, 'address', w.wallet_address,
+function accountWalletQuery(githubId: string) {
+  return sql`SELECT json_group_array(json_object('chain', w.chain, 'claimId', w.id, 'address', w.wallet_address,
     'authorized', json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END),
     'firstAuthorizedAt', (SELECT MIN(first.authorized_at) FROM payment_wallet_authorizations first JOIN wallet_claims claim ON claim.id = first.claim_id
-      WHERE claim.github_user_id = w.github_user_id AND first.github_user_id = w.github_user_id AND claim.chain = w.chain)))
-    FROM effective_payment_wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id = w.id WHERE w.github_user_id = ${githubId}) AS wallets,
+      WHERE claim.github_user_id = w.github_user_id AND first.github_user_id = w.github_user_id AND claim.chain = w.chain))) AS wallets
+    FROM effective_payment_wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${githubId}`
+}
+
+function accountQuery(githubId: string, separateDirectHistory: boolean) {
+  return sql`SELECT
+  (${accountWalletQuery(githubId)}) AS wallets,
   (SELECT json_group_array(json_object('id', o.id, 'vault', o.vault, 'projectId', project_id, 'network', network, 'chain', chain,
     'assetAddress', asset_address, 'assetDecimals', asset_decimals, 'grossBase', gross_base, 'feeBase', fee_base, 'state', o.state,
     'transactionId', paid_transaction,
     'submittedTransactionId', (SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id = o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),
     'deliveryState', CASE WHEN o.state = 'paid' THEN 'paid' WHEN q.state = 'submitted' THEN 'submitted' WHEN q.state = 'held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END))
     FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id = o.id WHERE github_user_id = ${githubId}) AS payments,
+  (SELECT json_group_array(json_object('projectId', o.project_id, 'network', b.network, 'vault', b.vault,
+    'claimAddress', w.wallet_address, 'claimDigest', w.record_sha256, 'chainId', b.chain_id,
+    'version', b.expected_version, 'expiresAt', b.expires_at))
+    FROM payment_binding_authorizations b
+    JOIN effective_payment_wallet_claims w ON w.id = b.claim_id AND w.github_user_id = b.github_user_id AND w.source = 'd1_registry'
+    JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id
+    JOIN (SELECT DISTINCT project_id, network, lower(vault) AS vault, chain FROM payment_obligations
+      WHERE github_user_id = ${githubId} AND state = 'reserved' AND chain <> 'solana') o
+      ON o.network = b.network AND o.vault = b.vault AND o.chain = w.chain
+    WHERE b.github_user_id = ${githubId}) AS payoutConsents,
   (SELECT json_group_array(json_object('projectId', project_id, 'period', period, 'network', network, 'assetAddress', asset, 'assetDecimals', decimals,
     'grossBase', gross, 'feeBase', fee, 'netBase', net, 'state', state))
     FROM (SELECT r.project_id, r.period, r.network, json_extract(r.snapshot, '$.asset') asset,
@@ -122,12 +140,22 @@ export effect function paymentsAccount(githubId: string, separateDirectHistory: 
   if (found === undefined) throw new RowMismatch({ text: "payments account", issue: "Payment account projection is unavailable" })
   const payments: Array<{ readonly payment: AccountPayment; readonly net: bigint }> = []
   for (const row of try listOf(PaymentRow, found.payments, "account payments")) payments.push(try paymentOf(row))
+  const before = try listOf(AccountWallet, found.wallets, "account wallets")
+  const consents = try listOf(PayoutConsentRow, found.payoutConsents, "account payout consents")
+  const bindings = try payoutBindings(githubId, consents)
+  const reread = consents.length > 0 ? try first(AccountWalletRows, accountWalletQuery(githubId)) : undefined
+  const wallets = reread === undefined ? before : try listOf(AccountWallet, reread.wallets, "account wallets")
+  const changed = new Set(before.filter((wallet) => !wallets.some((current) => current.claimId === wallet.claimId && current.authorized === wallet.authorized)).map((wallet) => wallet.chain))
   const monthlyAwards: AccountMonthlyAward[] = []
   for (const row of try listOf(AwardRow, found.monthlyAwards, "account monthly awards")) monthlyAwards.push(try awardOf(row))
   return {
     githubUserId: githubId,
-    wallets: try listOf(AccountWallet, found.wallets, "account wallets"),
-    payments: payments.map((entry) => entry.payment),
+    wallets,
+    payments: payments.map(({ payment }) => {
+      if (payment.state !== "reserved" || payment.chain === "solana") return payment
+      const bindingStatus = changed.has(payment.chain) ? "unavailable" : bindings.get(payoutBindingKey(payment.projectId, payment.network, payment.vault))
+      return bindingStatus === undefined ? payment : { ...payment, bindingStatus }
+    }),
     monthlyAwards,
     balances: balancesOf(payments),
     directTransfers: try listOf(DirectTransfer, found.directTransfers, "account direct transfers"),

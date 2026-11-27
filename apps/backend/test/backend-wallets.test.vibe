@@ -16,7 +16,7 @@ const Backend = areaLayer({
   config: "test/support/backendRoutes/vite.config.ts",
   entry: "backendRoutes",
   d1: { SLOP_DB: "slop-private" },
-  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", OPERATOR_GITHUB_IDS: operatorId, TRACE_AUTH_SECRET: traceSecret },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", OPERATOR_GITHUB_IDS: operatorId, TRACE_AUTH_SECRET: traceSecret, SLOP_ENVIRONMENT: "local" },
   services: { ASSETS: () => new Response("Not found", { status: 404 }) },
 })
 

@@ -133,7 +133,10 @@ export function currentPath(githubUrl: string | undefined): string | undefined {
 }
 
 effect function registeredPath(repositoryId: string) {
-  const row = try first(RegisteredManifest, sql`SELECT p.manifest FROM project_repositories r JOIN projects p ON p.id = r.project_id WHERE r.repository_key = ${`github:${repositoryId}`}`)
+  const row = try first(
+    RegisteredManifest,
+    sql`SELECT p.manifest FROM projects p WHERE CAST(json_extract(p.manifest, '$.authority.repositoryId') AS TEXT) = ${repositoryId} OR EXISTS (SELECT 1 FROM json_each(p.manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) = ${repositoryId}) LIMIT 1`,
+  )
   if (row === undefined) return undefined
   const parsed = Effect.try(() => JSON.parse(row.manifest) as unknown) catch () => undefined
   const manifest = parsed === undefined ? undefined : Schema.decodeUnknownEffect(Listed)(parsed) catch () => undefined

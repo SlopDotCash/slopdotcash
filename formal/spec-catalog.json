@@ -395,7 +395,7 @@
     },
     {
       "path": "spec/backend/accounts.md",
-      "sha256": "47381cb2e08e4affdbf9ce2b06cb3f10b7eb7f1e85b492bb9157240e3a060ee9",
+      "sha256": "7e25d924a51ba1f26c3c9cb7ce93d2d4a22e6ad7dacb4f5dd6804990fcaa5f06",
       "module": "backend__accounts",
       "stories": [
         {
@@ -690,7 +690,8 @@
             "checkedRevisionValues",
             "suppliedVersionValues",
             "nextStateValues",
-            "choiceValues"
+            "choiceValues",
+            "eval_witness_sometimesOwnerWeekSession"
           ]
         }
       ],
@@ -2065,7 +2066,7 @@
     },
     {
       "path": "spec/backend/projectComposition.md",
-      "sha256": "c6dfd476cbb910a06d538998698a8a15b929184d4f4f4b2d823bd7fd68f06a50",
+      "sha256": "86c35d2c4ea8c87390fb06bfdaee9b08ddb48eb8c34cd496b40bc1fc859e518e",
       "module": "backend__projectComposition",
       "stories": [
         {
@@ -2344,7 +2345,10 @@
             "weight_remove",
             "weight_decideMalice",
             "weight_journalAccountAppeal",
-            "weight_journalAccountDenial"
+            "weight_journalAccountDenial",
+            "eval_witness_sometimesFlagPausedActiveManifest",
+            "eval_witness_sometimesOwnerExcludedFromNextMonth",
+            "eval_witness_sometimesRestoredAfterRestriction"
           ]
         }
       ],
@@ -3698,7 +3702,7 @@
     },
     {
       "path": "spec/contracts/evmEscrow.md",
-      "sha256": "a9513df9b4da6bdf5641eac74b80a62aaa1e88a021458849b75698ffd492f215",
+      "sha256": "344eb0cf81a220dc8399e87bce49e74f96e3c068fd18c0298bedddc41e08b885",
       "module": "contracts__evmEscrow",
       "stories": [
         {
@@ -4113,7 +4117,9 @@
             "fromPeriodValues",
             "countValues",
             "weight_pledgeMonths",
-            "weight_expirePledge"
+            "weight_expirePledge",
+            "eval_witness_sometimesEvmStrandedLeaf",
+            "eval_witness_sometimesEvmStrandedLeafLocked"
           ]
         }
       ],
@@ -4274,7 +4280,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "a51e643ca1ff0eef38265b4884b7c80b3d89b0a65d4ea9023504af9b70851b25",
+      "sha256": "23f5737c06a8487d58d65f463a17f19ab473aa8d3c0d99a7aa1d298fb5443ee5",
       "module": "contracts__solanaEscrow",
       "stories": [
         {
@@ -4709,7 +4715,11 @@
             "weight_releaseMonthlyAward",
             "weight_releaseMonthlyReserve",
             "weight_vetoBinding",
-            "weight_tick"
+            "weight_tick",
+            "eval_witness_sometimesPledgeOpenAfterAdmission",
+            "eval_witness_sometimesAwardReleased",
+            "eval_witness_sometimesLeafCommitted",
+            "eval_witness_sometimesWholeReserveReleased"
           ]
         }
       ],
@@ -5176,7 +5186,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "5df232bd954d1335281c855da1b40d9862b79ac09ea4d841fde8091d275e067d",
+      "sha256": "492bc360c82a839e544cfe9c43e96492b55b084e6a9a5fd48708b89526a57705",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -5275,18 +5285,26 @@
           "line": 39
         },
         {
-          "target": "./openedRun.md",
+          "target": "./traceLicensing.md",
           "line": 40
         },
         {
-          "target": "./prOpened.md",
+          "target": "./sessionCleaner.md",
           "line": 41
+        },
+        {
+          "target": "./openedRun.md",
+          "line": 42
+        },
+        {
+          "target": "./prOpened.md",
+          "line": 43
         }
       ]
     },
     {
       "path": "spec/contributor/installation.md",
-      "sha256": "ea55c1e8e9dc6b97645f7a72de8518dffd69278c35349a10dfff791361bcc59c",
+      "sha256": "fec3e3939b8911a5bdc632665e5542e901eca980b6fc6a32dc760414ab5bdf97",
       "module": "contributor__installation",
       "stories": [
         {
@@ -5451,7 +5469,9 @@
             "weight_retain",
             "weight_commit",
             "weight_confirm",
-            "weight_finish"
+            "weight_finish",
+            "eval_witness_sometimesNewRevisionAfterRisk",
+            "eval_witness_sometimesUpgradeNeedsNewAuthorization"
           ]
         }
       ],
@@ -5692,7 +5712,7 @@
     },
     {
       "path": "spec/contributor/maintainerWorkflow.md",
-      "sha256": "cec731909348e1d3992002508c1d5c7139b5f4077a71b8644fe891812bd9ed49",
+      "sha256": "56d01ced788d471b18027274521210d1b154e423f30a218ad5578149e6feec70",
       "module": "contributor__maintainerWorkflow",
       "stories": [
         {
@@ -5822,12 +5842,14 @@
             "stepFinishedIsFinal",
             "sometimesFinishedAfterPreparing",
             "byValues",
-            "weight_siteAct",
-            "weight_checkPermission",
-            "weight_confirmSession",
-            "weight_readBack",
-            "weight_giveDecision",
-            "repositoryIdValues"
+            "repositoryIdValues",
+            "eval_witness_sometimesRefusedWithoutHumanDecision",
+            "eval_witness_sometimesAccountChangeDiscardedCase",
+            "eval_witness_sometimesSetupCheckApplied",
+            "eval_witness_sometimesUncertainReadBackApplied",
+            "eval_witness_sometimesDecisionRecorded",
+            "eval_witness_sometimesReviewedWithoutMerge",
+            "eval_witness_sometimesAuthorizedMerge"
           ]
         }
       ],
@@ -6014,7 +6036,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "7214281ea7c92cc8fc99831cf1838afbdb60ccd7d0249eaaeb351b4b7b0afe8a",
+      "sha256": "cee56317c7428f79e91599c565f22883e067a068f38126d35e1a23dfe06d6756",
       "module": "contributor__publication",
       "stories": [
         {
@@ -6023,15 +6045,15 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance",
-          "line": 254
+          "line": 255
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source",
-          "line": 363
+          "line": 364
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index",
-          "line": 597
+          "line": 603
         }
       ],
       "rules": [
@@ -6054,7 +6076,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / terms.json is served for every listed project, paused included, and carries only public program terms",
-          "line": 61,
+          "line": 62,
           "definitions": [
             "TermsField",
             "termsFields",
@@ -6065,7 +6087,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry",
-          "line": 80,
+          "line": 81,
           "definitions": [
             "artifactAnswer",
             "lawSkillNeedsFieldsAndClearance",
@@ -6075,7 +6097,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery lists one row per repository of each installable project with published generated skills",
-          "line": 122,
+          "line": 123,
           "definitions": [
             "RepositoryEntry",
             "DiscoveryRow",
@@ -6089,7 +6111,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing",
-          "line": 161,
+          "line": 162,
           "definitions": [
             "MonthListing",
             "IntakeListing",
@@ -6108,7 +6130,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD",
-          "line": 223,
+          "line": 224,
           "definitions": [
             "ArtifactResponse",
             "handled",
@@ -6120,7 +6142,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The template index binds templateSha256 to the template, renderer and accepted-revision digests",
-          "line": 265,
+          "line": 266,
           "definitions": [
             "RevisionStatus",
             "SourceFile",
@@ -6141,7 +6163,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / Only bytes equal to the build commit's tracked tree are labelled committed",
-          "line": 314,
+          "line": 315,
           "definitions": [
             "sourceStatus",
             "groupStatus",
@@ -6153,7 +6175,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The server renders only template files whose bytes match the index digest",
-          "line": 342,
+          "line": 343,
           "definitions": [
             "ServedTemplateFile",
             "maxTemplateFileBytes",
@@ -6164,7 +6186,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Each global skill, its discovery copy, its index entry and llms.txt carry the same digest",
-          "line": 370,
+          "line": 371,
           "definitions": [
             "GlobalRole",
             "GlobalSource",
@@ -6193,7 +6215,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / llms.txt and skill-manifest.json state the build commit and its committed or working-tree status",
-          "line": 452,
+          "line": 453,
           "definitions": [
             "manifestStatus",
             "lawGlobalStatusIsExact",
@@ -6202,7 +6224,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / The bootstrap's renderer contract names files that exist byte-identical at the build commit",
-          "line": 477,
+          "line": 478,
           "definitions": [
             "guideRendererPaths",
             "globalSetPublishable",
@@ -6214,7 +6236,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Protocol documents are generated from their one maintained source and historical protocol links stay immutable",
-          "line": 507,
+          "line": 508,
           "definitions": [
             "ProtocolDocument",
             "DocumentSource",
@@ -6229,7 +6251,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 545,
+          "line": 551,
           "definitions": [
             "servedFacts",
             "knownValues",
@@ -6261,7 +6283,7 @@
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index / The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route",
-          "line": 606,
+          "line": 612,
           "definitions": [
             "SitemapProject",
             "PublishedCycle",
@@ -6303,39 +6325,39 @@
         },
         {
           "target": "../backend/backlogRule.md",
-          "line": 128
+          "line": 129
         },
         {
           "target": "./skillAuthority.md",
-          "line": 137
+          "line": 138
         },
         {
           "target": "../frontend/poolListing.md",
-          "line": 165
+          "line": 166
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 171
-        },
-        {
-          "target": "../backend/intakeCap.md",
           "line": 172
         },
         {
+          "target": "../backend/intakeCap.md",
+          "line": 173
+        },
+        {
           "target": "../backend/backlogRule.md",
-          "line": 175
+          "line": 176
         },
         {
           "target": "./skillAuthority.md",
-          "line": 322
+          "line": 323
         },
         {
           "target": "../app/index.md",
-          "line": 614
+          "line": 620
         },
         {
           "target": "../frontend/routes.md",
-          "line": 615
+          "line": 621
         }
       ]
     },
@@ -6581,8 +6603,41 @@
       ]
     },
     {
+      "path": "spec/contributor/sessionCleaner.md",
+      "sha256": "433699804aaf2a80a67fc9d1a02459898b246b472f4ce5d697ccca963dfa6eb0",
+      "module": "contributor__sessionCleaner",
+      "stories": [
+        {
+          "heading": "Story: Keep only openly licensed in-repo content and redact everything else",
+          "line": 12
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep only openly licensed in-repo content and redact everything else / Only an openly licensed in-repo tracked read or name-only listing is kept",
+          "line": 19,
+          "definitions": [
+            "CleanOutcome",
+            "Cleaner",
+            "initial",
+            "keeps",
+            "canClassify",
+            "classify",
+            "alwaysKeptRequiresOpenInRepoContent",
+            "alwaysClassifiedIsKeptOrRedacted",
+            "lawOutsideOrUnlicensedRedacted",
+            "sometimesKeptTracked",
+            "sometimesKeptNameOnly",
+            "sometimesRedacted"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/contributor/sessionExchange.md",
-      "sha256": "3a2b1632d7af9377f396355f6d278cfde2a4bd170b967fe4963d6b5054794425",
+      "sha256": "7f3d0084d620b585762783895dfb6dfc2eb95996eb6cdc49c9bbe1215fe49aa8",
       "module": "contributor__sessionExchange",
       "stories": [
         {
@@ -6754,7 +6809,9 @@
             "weight_receiveCreate",
             "weight_waitPoll",
             "weight_acceptPoll",
-            "weight_observeStanding"
+            "weight_observeStanding",
+            "eval_witness_sometimesReady",
+            "eval_witness_sometimesConflict"
           ]
         }
       ],
@@ -7095,6 +7152,94 @@
           "line": 9
         }
       ]
+    },
+    {
+      "path": "spec/contributor/traceLicensing.md",
+      "sha256": "560c69aa87f82da38ec141a08ded88d3abaabebd46aa889aca7a56c1947c2d2b",
+      "module": "contributor__traceLicensing",
+      "stories": [
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Upload licences follow the active setting, ban status and confirmed terms version",
+          "line": 24,
+          "definitions": [
+            "TermsVersion",
+            "ConfirmedVersion",
+            "LicenceState",
+            "LicenceEventKind",
+            "LicenceBasis",
+            "TraceRecord",
+            "Licensing",
+            "emptyTrace",
+            "initial",
+            "traceAt",
+            "withTrace",
+            "licensedCount",
+            "eligible",
+            "eligibleCount",
+            "withdrawTrace",
+            "canFinalize",
+            "finalize",
+            "alwaysLicenceBacked",
+            "alwaysGrantBacked",
+            "alwaysUploadBasisIsV2OrV3",
+            "sometimesUploadLicensed"
+          ]
+        },
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Enabling, v3 re-confirmation, disabling, closure and bans enforce consent boundaries",
+          "line": 76,
+          "definitions": [
+            "canEnable",
+            "enable",
+            "canEnableUnderV2",
+            "enableUnderV2",
+            "canReconfirm",
+            "reconfirm",
+            "canNoopToggle",
+            "noopToggle",
+            "canDisable",
+            "disable",
+            "canClose",
+            "close",
+            "canReopen",
+            "reopen",
+            "canBan",
+            "ban",
+            "alwaysLicensedNeedsConsent",
+            "alwaysV3UploadNeedsV3Confirmation",
+            "alwaysV3LicenceNeedsV3Confirmation",
+            "alwaysClosedHoldsNothing",
+            "sometimesWithdrawnOnDisable",
+            "sometimesReconfirmedV3",
+            "sometimesClosedAndReopened"
+          ]
+        },
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Explicit opt-in requires active licensing, matching bulk count and v3 confirmation for v3 traces",
+          "line": 126,
+          "definitions": [
+            "canOptIn",
+            "optIn",
+            "canOptInAll",
+            "optInAll",
+            "canOptInRefused",
+            "optInRefused",
+            "canOptInNeedsConfirm",
+            "optInNeedsConfirm",
+            "sometimesOptedIn",
+            "slotValues",
+            "expectedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/contributor/traceServer.md",
@@ -8443,7 +8588,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "9cd6a0aa38f635e813228d9a48220e517dcf5a9a28414f5ff5af543469300753",
+      "sha256": "eeb184913a95500080d095095c812cb90db58356816ca3bbccc795f25840a960",
       "module": "fees__conversion",
       "stories": [
         {
@@ -8818,7 +8963,8 @@
             "weight_accrue",
             "weight_registerVault",
             "weight_observeBalance",
-            "weight_abandonIntent"
+            "weight_abandonIntent",
+            "eval_witness_sometimesClaimFinalized"
           ]
         }
       ],
@@ -9146,7 +9292,7 @@
     },
     {
       "path": "spec/fees/index.md",
-      "sha256": "cce4b6b59491bd024f6fe91e07e438fa366a57bea9ee33c3accffcadf3d3835e",
+      "sha256": "43573bba88c5ee223857b0e960c01e0b515ccf61ff968f4280680beb786a8448",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -9213,8 +9359,12 @@
           "line": 19
         },
         {
-          "target": "../settlement/",
+          "target": "./submissionFeeStandingDeposits.md",
           "line": 20
+        },
+        {
+          "target": "../settlement/",
+          "line": 21
         }
       ]
     },
@@ -9812,12 +9962,16 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "0109bfa630d68c851a489869bb6f06a706871601c8ef7fe6344be57cecafc9d9",
+      "sha256": "deba566df72bb910d195c418ca05e30d6aadee7f98c01a239062d2f9f8020122",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
           "heading": "Story: Send only what is due, once, inside the native ceilings",
           "line": 33
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors",
+          "line": 332
         }
       ],
       "rules": [
@@ -9946,7 +10100,48 @@
             "sometimesRevertParksNothing",
             "sometimesParkedReleased",
             "refusedValues",
-            "brokenValues"
+            "brokenValues",
+            "eval_witness_sometimesSettled",
+            "eval_witness_sometimesFailedThenSentAgain",
+            "eval_witness_sometimesSecondBatchSettled",
+            "eval_witness_sometimesOverBudget",
+            "eval_witness_sometimesParkedAndRestSent"
+          ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
+          "line": 339,
+          "definitions": [
+            "solanaMaxBatch",
+            "solanaExpiredReason",
+            "solanaLandedFailedReason",
+            "solanaCountsTowardDailyBudget",
+            "solanaMayJoinBatch",
+            "solanaCourtesyAllowed",
+            "solanaParkOnSingleFailure",
+            "lawSolanaExpiredPaysNoBudget",
+            "lawSolanaLandedFailedCountsBudget",
+            "lawSolanaTaintedNeverBatchesWithAnother",
+            "lawSolanaSingleFailureParksOnlySingleLandedFail",
+            "modeValues",
+            "sendRowValues",
+            "reasonValues",
+            "batchSizeValues",
+            "depositCountValues"
+          ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
+          "line": 384,
+          "definitions": [
+            "WorkerLedgerResult",
+            "WorkerOutcomes",
+            "workerRunOutcomes",
+            "lawSolanaConfigErrorLeavesEvmRunning",
+            "lawSolanaOffIsInert",
+            "evmOnValues",
+            "solanaModeValues",
+            "solanaConfigOkValues"
           ]
         }
       ],
@@ -9971,6 +10166,133 @@
           "line": 21
         }
       ]
+    },
+    {
+      "path": "spec/fees/submissionFeeStandingDeposits.md",
+      "sha256": "c2538ab4247529c7223fc1193dfd75fded87b2f01cd97ce20ed86894b76f51c4",
+      "module": "fees__submissionFeeStandingDeposits",
+      "stories": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger",
+          "line": 22
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / A standing deposit pays its row only as burned SLOP on the standing ledger",
+          "line": 28,
+          "definitions": [
+            "StandingRefusal",
+            "StandingDepositFacts",
+            "StandingResolveFacts",
+            "standingDepositNetwork",
+            "standingDepositLedger",
+            "standingDepositContract",
+            "standingDepositStartBlock",
+            "standingDepositUsdMinor",
+            "standingDepositCap",
+            "standingDepositReclaimDays",
+            "standingDepositExpiryDays",
+            "standingDepositWindowDays",
+            "standingDepositGraceHours",
+            "standingDepositVerdict",
+            "standingResolveAction",
+            "lawStandingPaidOnlyByBurnedSlop",
+            "lawStandingKeptOnlyAsBurnedSlop",
+            "depositFactsValues",
+            "standingResolveFactsValues"
+          ]
+        },
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes",
+          "line": 101,
+          "definitions": [
+            "StandingRowState",
+            "StandingOutcome",
+            "CoverKind",
+            "Slot",
+            "CoverSlot",
+            "StandingState",
+            "emptySlot",
+            "initial",
+            "slotOf",
+            "withSlot",
+            "openCoveredCount",
+            "coverEnded",
+            "coveringNow",
+            "mayCover",
+            "strikeHappened",
+            "allCoveredClear",
+            "coverStateOf",
+            "checkedSlot",
+            "dueOutcomeOf",
+            "canPostRow",
+            "postRow",
+            "canCancelRow",
+            "cancelRow",
+            "canPayRow",
+            "payRow",
+            "canRequestWithdraw",
+            "requestWithdraw",
+            "canExpireDeposit",
+            "expireDeposit",
+            "canPassWait",
+            "passWait",
+            "canOwnerRefuseStanding",
+            "ownerRefuseStanding",
+            "canRecordFirstMerge",
+            "recordFirstMerge",
+            "canOpenSlot",
+            "openSlot",
+            "canCoverSlot",
+            "coverSlot",
+            "canAskSlot",
+            "askSlot",
+            "canMergeSlot",
+            "mergeSlot",
+            "canCloseSlot",
+            "closeSlot",
+            "canReopenSlot",
+            "reopenSlot",
+            "canLabelSlot",
+            "labelSlot",
+            "canUnlabelSlot",
+            "unlabelSlot",
+            "canEndWindow",
+            "endWindow",
+            "canEndGrace",
+            "endGrace",
+            "canCheckCover",
+            "checkCover",
+            "canDecideOutcome",
+            "decideOutcome",
+            "canSendOutcome",
+            "sendOutcome",
+            "slotConsistent",
+            "alwaysOneOutcomeAtMostOnce",
+            "alwaysKeptOnlyAfterStrike",
+            "alwaysRefundOnlyAfterWait",
+            "alwaysUnpaidCoversNothing",
+            "alwaysStrikeIsFinal",
+            "sometimesCoveredAndRefunded",
+            "sometimesStrikeKeepsDeposit",
+            "sometimesCapAsksSecondPull",
+            "sometimesExpiryRefunds",
+            "sometimesCancelledCoversNothing",
+            "eval_witness_sometimesCoveredAndRefunded",
+            "eval_witness_sometimesStrikeKeepsDeposit",
+            "eval_witness_sometimesCapAsksSecondPull",
+            "eval_witness_sometimesExpiryRefunds",
+            "eval_witness_sometimesCancelledCoversNothing",
+            "slotValues"
+          ]
+        }
+      ],
+      "imports": [
+        "fees__submissionFeeDeposits",
+        "backend__submissionFeeTerms"
+      ],
+      "references": []
     },
     {
       "path": "spec/frontend/batchedDeposit.md",
@@ -10486,7 +10808,7 @@
     },
     {
       "path": "spec/frontend/feePages.md",
-      "sha256": "675f5be3c200f4c0a892f929d6f7c31c8e83fd61a9c162aab575216035387609",
+      "sha256": "0ad4a7a105ec8e5f5ec18d1e9f92c27261ccb0614a83d2bb3ec3dc133499b096",
       "module": "frontend__feePages",
       "stories": [
         {
@@ -10644,7 +10966,15 @@
             "weight_send",
             "weight_walletReply",
             "weight_ask",
-            "weight_answer"
+            "weight_answer",
+            "eval_witness_sometimesReceived",
+            "eval_witness_sometimesFinished",
+            "eval_witness_sometimesBlockedWithinHour",
+            "eval_witness_sometimesUnclearKept",
+            "eval_witness_sometimesWrongWalletRefused",
+            "eval_witness_sometimesAutoChecked",
+            "eval_witness_sometimesUnsentCleared",
+            "eval_witness_sometimesAnotherWalletAfterDecline"
           ]
         }
       ],
@@ -10681,7 +11011,7 @@
     },
     {
       "path": "spec/frontend/index.md",
-      "sha256": "7e69dba045fe429f2a3f5609a6036e736f2bc85e5af74c611ee2e809d0c184c5",
+      "sha256": "3dc0498eaad135ad5e7617fd1a6fe9e23056a123521d3a23f9a40a13c58a3f34",
       "module": "frontend",
       "stories": [],
       "rules": [],
@@ -10814,12 +11144,16 @@
         {
           "target": "./requestedRepos.md",
           "line": 43
+        },
+        {
+          "target": "./recordPages.md",
+          "line": 44
         }
       ]
     },
     {
       "path": "spec/frontend/monthLock.md",
-      "sha256": "616279bbdcd42514aaff3e3a75d928b40d9839ce86c75ab6a74692303d38083d",
+      "sha256": "459786e61cf1e9f53682c56b463417e357a10d7a657f2e6539733795e7aa8424",
       "module": "frontend__monthLock",
       "stories": [
         {
@@ -10888,7 +11222,7 @@
         },
         {
           "heading": "Story: Lock months from the owner's wallet / Rules",
-          "line": 163,
+          "line": 174,
           "definitions": [
             "pendingLock",
             "pendingRelease",
@@ -11077,7 +11411,7 @@
     },
     {
       "path": "spec/frontend/ownerMonthly.md",
-      "sha256": "da68d04adb864c22c8d6087255b85e2e239b9d2ff7b48a3464f254eb98e416f9",
+      "sha256": "ce25cb18374b0300e580a1d5e56efb8d4f104bd6070b8958056bb121d2ae92a1",
       "module": "frontend__ownerMonthly",
       "stories": [
         {
@@ -11241,7 +11575,10 @@
             "weight_review",
             "weight_send",
             "weight_walletReply",
-            "weight_check"
+            "weight_check",
+            "eval_witness_sometimesReleaseSigned",
+            "eval_witness_sometimesFinalizationRefusedInNotice",
+            "eval_witness_sometimesCutSaved"
           ]
         }
       ],
@@ -11463,7 +11800,7 @@
     },
     {
       "path": "spec/frontend/paymentHistory.md",
-      "sha256": "c97e2ba4284fb810d71363e3f77b7ff5b5b59087ca927e31fa3a8e6995d16b64",
+      "sha256": "d4fab4f0eee8f59d9b081eb6dbcae03d7aed74fec284ee1c7e43c70c7844c40c",
       "module": "frontend__paymentHistory",
       "stories": [
         {
@@ -11534,7 +11871,9 @@
             "nextCursorValues",
             "lifetimeValues",
             "weight_requestPage",
-            "weight_receivePage"
+            "weight_receivePage",
+            "eval_witness_sometimesMultiPageComplete",
+            "eval_witness_sometimesRetriedComplete"
           ]
         }
       ],
@@ -11701,7 +12040,7 @@
     },
     {
       "path": "spec/frontend/presentation.md",
-      "sha256": "64d444d2b05a947c9b64e7885f2b5bb2ed48ded803eb27547dd6213454b3b70c",
+      "sha256": "4783fbd3db46f4b14712f1c458875d4560d8b33e491c7bc1153cc0433ae91bcf",
       "module": "frontend__presentation",
       "stories": [
         {
@@ -11738,7 +12077,7 @@
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home",
-          "line": 511
+          "line": 524
         }
       ],
       "rules": [
@@ -11930,6 +12269,7 @@
           "line": 470,
           "definitions": [
             "AgentTarget",
+            "AgentPayload",
             "AgentShortcut",
             "agentShortcuts",
             "siteSkillPath",
@@ -11939,14 +12279,14 @@
             "genericPromptAvailable",
             "lawOpeningAnyShortcutCopies",
             "lawShortcutsNeverReplaceGenericSetup",
-            "lawOnlyWebChatsOpenNewTabs",
+            "lawOnlyDesktopHandoffsOpenNewTabs",
             "shortcutValues",
             "shortcutsValues"
           ]
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home / Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together",
-          "line": 516,
+          "line": 529,
           "definitions": [
             "HomeAudience",
             "CopyFeedback",
@@ -12526,7 +12866,7 @@
     },
     {
       "path": "spec/frontend/provisionalVault.md",
-      "sha256": "f773a6825f1d87dadc11886e6c3ee6dd7632f0b3214f45f0823b5a8e4146aca2",
+      "sha256": "b2cda3718594ed5087c588e17140dfc2ea7e2f718ff7e15c382994160c106498",
       "module": "frontend__provisionalVault",
       "stories": [
         {
@@ -12620,13 +12960,14 @@
             "atomicValues",
             "approvalReadValues",
             "weight_readAllowance",
+            "eval_witness_sometimesApprovalSaved",
             "eval_witness_sometimesDepositAfterApproval",
             "eval_witness_sometimesBatchedDeposit"
           ]
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Included deposits are received pending finality only when there is an exact deposit event",
-          "line": 199,
+          "line": 201,
           "definitions": [
             "canIncludeDeposit",
             "includeDeposit",
@@ -12642,7 +12983,7 @@
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Only a finalized deposit in a registered vault is eligible for accounting",
-          "line": 235,
+          "line": 237,
           "definitions": [
             "canCountDeposit",
             "countDeposit",
@@ -12852,6 +13193,54 @@
       ]
     },
     {
+      "path": "spec/frontend/recordPages.md",
+      "sha256": "f527516ec7391b2f827d2286c908a7f601808c39e487d8e223a294d9b6fe3d79",
+      "module": "frontend__recordPages",
+      "stories": [
+        {
+          "heading": "Story: Read the public record and published payout receipts without mistaking failure for an empty record",
+          "line": 14
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Read the public record and published payout receipts without mistaking failure for an empty record / A failed record read shows unavailable with retry and never empty receipts, and remount drops pending answers",
+          "line": 20,
+          "definitions": [
+            "RecordRead",
+            "RecordShown",
+            "RecordPage",
+            "initial",
+            "canAnswer",
+            "answer",
+            "canRetry",
+            "retry",
+            "canRemount",
+            "remount",
+            "canStaleAnswer",
+            "staleAnswer",
+            "shown",
+            "alwaysLoadingMatchesPending",
+            "alwaysFailedShowsNoReceipts",
+            "alwaysLoadsBounded",
+            "alwaysStaleNonNegative",
+            "alwaysReceiptsNonNegative",
+            "alwaysReadyNeverRetries",
+            "sometimesValidRecordShowsReceipts",
+            "sometimesEmptyRecordShowsEmptySentence",
+            "sometimesFailedReadRecoversOnRetry",
+            "sometimesRemountDropsStaleAnswer",
+            "validValues",
+            "receiptsValues",
+            "eval_witness_sometimesFailedReadRecoversOnRetry",
+            "eval_witness_sometimesRemountDropsStaleAnswer"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/frontend/referralSettings.md",
       "sha256": "a69600ecf4c0d7e5fb4d696232bc4fc6c8bccca3b5de3c73bdbcf5408899049c",
       "module": "frontend__referralSettings",
@@ -12932,7 +13321,7 @@
     },
     {
       "path": "spec/frontend/registry.md",
-      "sha256": "a02b11e5deb84abd813f8d7bb962328c1d5a361ba9443f5a042a5b95e5c83191",
+      "sha256": "e880710ee0aecaef68f271abe7ea73790c204e701aa048c077d09e887a70a55d",
       "module": "frontend__registry",
       "stories": [
         {
@@ -13331,7 +13720,7 @@
     },
     {
       "path": "spec/frontend/solanaBountyPrompt.md",
-      "sha256": "f992445fc5075d9a02d6772bf11fb16f982b4685681956d099268f0852c0d3ad",
+      "sha256": "5b1e10645a462ee3ad743d4318536fd03c65220f6dd9f8bd27f4409d62937ad9",
       "module": "frontend__solanaBountyPrompt",
       "stories": [
         {
@@ -13432,7 +13821,8 @@
             "weight_verify",
             "weight_verifyReply",
             "weight_checkHistory",
-            "weight_historyReply"
+            "weight_historyReply",
+            "eval_witness_sometimesFreshPlanAfterExpiry"
           ]
         }
       ],
@@ -13850,7 +14240,7 @@
     },
     {
       "path": "spec/frontend/walletConsent.md",
-      "sha256": "bf29eb0a86d61f3de956829bd8356a979b99ac7d40aa78747c71fd964e4fa3e4",
+      "sha256": "9bd469b776b9ed0149867346d82aed3bc6741566776aec8bd8b6ef7b86daab0d",
       "module": "frontend__walletConsent",
       "stories": [
         {
@@ -13974,7 +14364,10 @@
             "weight_sign",
             "weight_signReply",
             "weight_post",
-            "weight_postReply"
+            "weight_postReply",
+            "eval_witness_sometimesDialogAccepted",
+            "eval_witness_sometimesSignInAgain",
+            "eval_witness_sometimesAccepted"
           ]
         }
       ],
@@ -14251,7 +14644,7 @@
     },
     {
       "path": "spec/operations/backup.md",
-      "sha256": "65953d2929da80e24a8c678595f83ab0c410e3492b573be7e2fde2809fe905ca",
+      "sha256": "c1390ee62f4d226c3538c57840d9188fe8ea6d9520effdbf3d369daddc168557",
       "module": "operations__backup",
       "stories": [
         {
@@ -14473,13 +14866,8 @@
             "weight_copyPage",
             "weight_verifyPage",
             "weight_finish",
-            "weight_beginRestore",
-            "weight_checkChain",
-            "weight_writeDestination",
-            "weight_readDestination",
             "weight_retain",
             "weight_failPage",
-            "weight_replayFailed",
             "weight_start",
             "weight_classify",
             "weight_writeMissingMarker",
@@ -14489,13 +14877,22 @@
             "keyValues",
             "exactValues",
             "releasedValues",
-            "weight_reserveTarget",
             "weight_freezeGeneration",
             "weight_markTarget",
             "weight_recordRetirement",
             "weight_retireGeneration",
             "weight_settleReference",
-            "weight_setRetirementRelease"
+            "weight_setRetirementRelease",
+            "eval_witness_sometimesHeld",
+            "eval_witness_sometimesDeleted",
+            "eval_witness_sometimesAdmissionKept",
+            "eval_witness_sometimesDeletionReceipt",
+            "eval_witness_sometimesGenerationRetired",
+            "eval_witness_sometimesWaitingDayStarted",
+            "eval_witness_sometimesMissingAfterMarker",
+            "eval_witness_sometimesLateWriteBacked",
+            "eval_witness_sometimesFrozenWithLateWrite",
+            "eval_witness_sometimesTargetMissingRecorded"
           ]
         }
       ],
@@ -14509,18 +14906,18 @@
     },
     {
       "path": "spec/operations/dailyCollection.md",
-      "sha256": "f2729925dfb5c30409175c4374b09bf733b0565ff8dfe351c6118be4202e2341",
+      "sha256": "ae62027bd70bfa0191f353615cc765d8df24efeb183b85e6b191c433d2e09f51",
       "module": "operations__dailyCollection",
       "stories": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it",
-          "line": 20
+          "line": 21
         }
       ],
       "rules": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A daily tick starts one fresh collection only when none runs",
-          "line": 26,
+          "line": 27,
           "definitions": [
             "DailyCollection",
             "initial",
@@ -14536,7 +14933,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A superseded collection is published by a retained-data release at most three times and never replaces newer data",
-          "line": 65,
+          "line": 66,
           "definitions": [
             "maxPublishAttempts",
             "failedJobReruns",
@@ -14557,7 +14954,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A failed collection with a checkpoint is resumed once, never a resume of a resume",
-          "line": 107,
+          "line": 108,
           "definitions": [
             "resumeQuietMinutes",
             "resumePollMinutes",
@@ -14571,7 +14968,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A follow-up acts only on a completed trusted main release, and publishes before it resumes",
-          "line": 131,
+          "line": 132,
           "definitions": [
             "FollowedRun",
             "ReleaseRead",
@@ -14585,7 +14982,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Live data older than 48 hours fails the daily run",
-          "line": 163,
+          "line": 164,
           "definitions": [
             "staleLiveMillis",
             "liveDataStale",
@@ -14595,7 +14992,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Simulation samples cover trusted and untrusted runs and the stale boundary",
-          "line": 177,
+          "line": 178,
           "definitions": [
             "trustedRun",
             "followedValues",
@@ -14617,7 +15014,7 @@
         },
         {
           "target": "../points/retainedFreshness.md",
-          "line": 14
+          "line": 15
         }
       ]
     },
@@ -14962,7 +15359,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "a8200db6189799804ed572ee683d0812fdb587039f2ceca87365ca93c44e4d9b",
+      "sha256": "cbc14d7c23d0f33a30dd3b71d669ea003e73b4ced1b9ca47412cd37e5c0a3353",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -14997,68 +15394,72 @@
           "line": 12
         },
         {
-          "target": "./stagingOrder.md",
+          "target": "./recordPublication.md",
           "line": 13
         },
         {
-          "target": "./rpcRotationRun.md",
+          "target": "./stagingOrder.md",
           "line": 14
         },
         {
-          "target": "./robinhoodRpcRotation.md",
+          "target": "./rpcRotationRun.md",
           "line": 15
         },
         {
-          "target": "./identityApp.md",
+          "target": "./robinhoodRpcRotation.md",
           "line": 16
         },
         {
-          "target": "./slopbotRuntime.md",
+          "target": "./identityApp.md",
           "line": 17
         },
         {
-          "target": "./slopbotQuotaWitness.md",
+          "target": "./slopbotRuntime.md",
           "line": 18
         },
         {
-          "target": "./publicationLock.md",
+          "target": "./slopbotQuotaWitness.md",
           "line": 19
         },
         {
-          "target": "./intakeHealth.md",
+          "target": "./publicationLock.md",
           "line": 20
         },
         {
-          "target": "./escrowQualification.md",
+          "target": "./intakeHealth.md",
           "line": 21
         },
         {
-          "target": "./releaseCoverage.md",
+          "target": "./escrowQualification.md",
           "line": 22
         },
         {
-          "target": "./dailyCollection.md",
+          "target": "./releaseCoverage.md",
           "line": 23
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./dailyCollection.md",
           "line": 24
         },
         {
-          "target": "./paymentRun.md",
+          "target": "./paymentJobs.md",
           "line": 25
         },
         {
-          "target": "./extendedQualification.md",
+          "target": "./paymentRun.md",
           "line": 26
         },
         {
-          "target": "./upgradeVerification.md",
+          "target": "./extendedQualification.md",
           "line": 27
         },
         {
+          "target": "./upgradeVerification.md",
+          "line": 28
+        },
+        {
           "target": "../slopbot/assessmentInbox.md",
-          "line": 34
+          "line": 35
         }
       ]
     },
@@ -15514,7 +15915,7 @@
     },
     {
       "path": "spec/operations/notifications.md",
-      "sha256": "2dea17a03933971ea6b85b210767dce76bda85dbe5188f550e4d46773b154f65",
+      "sha256": "604fc3a6bde07ce8ab8d1d1281407d41ba5efe4ac12d789450a027e12e2dea1d",
       "module": "operations__notifications",
       "stories": [
         {
@@ -16066,8 +16467,52 @@
       ]
     },
     {
+      "path": "spec/operations/recordPublication.md",
+      "sha256": "7abcfeebb63a6a19c7aab60f3406f7f9425a1399783635d1dec1d859ed0c4051",
+      "module": "operations__recordPublication",
+      "stories": [
+        {
+          "heading": "Story: Rebuild /data/record.json on every release while preserving prior records and receipts",
+          "line": 10
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Rebuild /data/record.json on every release while preserving prior records and receipts / Every release rebuilds /data/record.json without failing the release and never drops a published receipt",
+          "line": 17,
+          "definitions": [
+            "RecordPhase",
+            "WrittenFile",
+            "RecordRun",
+            "initial",
+            "canConfigure",
+            "configure",
+            "canSkip",
+            "skip",
+            "canBuild",
+            "build",
+            "canFailBuild",
+            "failBuild",
+            "alwaysNeverFailsRelease",
+            "alwaysNothingWrittenWhenSkippedOrNone",
+            "alwaysFailureWritesPreviousOnly",
+            "alwaysPublishedReceiptsNeverDisappear",
+            "sometimesBuiltWithNewReceipts",
+            "sometimesBuiltKeptReceiptsOnReadError",
+            "sometimesFailedWrotePrevious",
+            "sometimesFailedWithoutPrevious",
+            "sometimesSkipped",
+            "prevReceiptsValues",
+            "addedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/operations/release.md",
-      "sha256": "83ba20fac3c7a6ff55ae227d7cfcdf7e1cb90bbe844e30836fe5d6604185c448",
+      "sha256": "e2f4db90e22987d2336088e8253c7a8269393a4854402a49a17e5441b5137ad7",
       "module": "operations__release",
       "stories": [
         {
@@ -16076,7 +16521,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed",
-          "line": 277
+          "line": 282
         }
       ],
       "rules": [
@@ -16148,7 +16593,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / A fresh manual main release may resume discussion reads only through live revalidation",
-          "line": 198,
+          "line": 203,
           "definitions": [
             "CheckpointAttempt",
             "checkpointMaxAgeHours",
@@ -16170,7 +16615,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / Every required check binds the same source and built artifact",
-          "line": 243,
+          "line": 248,
           "definitions": [
             "canBuild",
             "build",
@@ -16187,7 +16632,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / One holder at a time: a release run or another workflow that writes the environment's data",
-          "line": 279,
+          "line": 284,
           "definitions": [
             "lockWorkflow",
             "canWorkflowTakeLock",
@@ -16207,7 +16652,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Production publishes only the current main head; staging publishes a checked ancestor and never rolls back",
-          "line": 326,
+          "line": 331,
           "definitions": [
             "ancestorOrEqual",
             "noRollback",
@@ -16243,7 +16688,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Workers publish before the static site, each only when its own release variable is enabled",
-          "line": 412,
+          "line": 417,
           "definitions": [
             "feeVariable",
             "row",
@@ -16268,7 +16713,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key",
-          "line": 497,
+          "line": 502,
           "definitions": [
             "FeeMode",
             "SubmissionFeeConfig",
@@ -16282,7 +16727,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 540,
+          "line": 554,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16297,7 +16742,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 582,
+          "line": 596,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16317,7 +16762,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 617,
+          "line": 631,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16332,7 +16777,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 645,
+          "line": 659,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16362,17 +16807,9 @@
             "gatesValues",
             "skipProofsValues",
             "skipBrowserTestsValues",
-            "weight_setVariable",
-            "weight_rivalStart",
-            "weight_rivalTakeLock",
-            "weight_rivalFinish",
-            "weight_workflowTakeLock",
-            "weight_workflowFinish",
             "weight_configure",
             "weight_build",
             "weight_collectData",
-            "weight_resumeDiscussions",
-            "weight_revalidate",
             "weight_recordGates",
             "weight_check",
             "weight_acquireLock",
@@ -16380,7 +16817,27 @@
             "weight_publishService",
             "weight_publishSite",
             "weight_reconcilePublication",
-            "weight_verifyServed"
+            "weight_verifyServed",
+            "eval_witness_sometimesUnanchoredRefused",
+            "eval_witness_sometimesRestoredCollectionPublished",
+            "eval_witness_sometimesResumedPublished",
+            "eval_witness_sometimesVerified",
+            "eval_witness_sometimesFeeConverterSkipped",
+            "eval_witness_sometimesVerifiedAfterAdvance",
+            "eval_witness_sometimesPartialAfterMovedHead",
+            "eval_witness_sometimesRecoveredUnpublished",
+            "eval_witness_sometimesStaging",
+            "eval_witness_sometimesStagingAncestorPublished",
+            "eval_witness_sometimesRevalidatedReuse",
+            "eval_witness_sometimesSubmissionFeeBound",
+            "eval_witness_sometimesStagingDryRunBound",
+            "eval_witness_sometimesStagingRollbackRefused",
+            "eval_witness_sometimesUncertain",
+            "eval_witness_sometimesPartial",
+            "eval_witness_sometimesFeeConverterBound",
+            "eval_witness_sometimesFeeRotationInherited",
+            "eval_witness_sometimesInheritanceRefused",
+            "eval_witness_sometimesNonReleaseRecordIgnored"
           ]
         }
       ],
@@ -16395,12 +16852,16 @@
           "line": 18
         },
         {
+          "target": "../points/journal.md",
+          "line": 156
+        },
+        {
           "target": "./intakeHealth.md",
-          "line": 290
+          "line": 295
         },
         {
           "target": "./escrowQualification.md",
-          "line": 642
+          "line": 656
         }
       ]
     },
@@ -17052,7 +17513,7 @@
     },
     {
       "path": "spec/points/assessmentAudit.md",
-      "sha256": "85eaf19606c15cccd4e714fba07ec068362aac47a14a8ace3760fec18041d317",
+      "sha256": "9340cc14c40f4f33d853dbf527e06d4b1ca3a9fa76090bf30cdec9fbdf626d36",
       "module": "points__assessmentAudit",
       "stories": [
         {
@@ -17139,7 +17600,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
-          "line": 204,
+          "line": 208,
           "definitions": [
             "canStageReview",
             "stageReview",
@@ -17165,7 +17626,7 @@
     },
     {
       "path": "spec/points/authorship.md",
-      "sha256": "a60e9a28975368306f84d499ab68b09f209c827e6776ab531437a687a64c6d67",
+      "sha256": "7638fda2b5b4c853eaea828595393bcb9369ac40265eadbd9e90cbaeacc7cee2",
       "module": "points__authorship",
       "stories": [
         {
@@ -17361,7 +17822,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
-          "line": 408,
+          "line": 410,
           "definitions": [
             "ownsAcceptedOrdinaryCommit",
             "usesEarlierOwners",
@@ -17656,20 +18117,21 @@
     },
     {
       "path": "spec/points/collectionMemo.md",
-      "sha256": "5cead74b9f24fbc5d7e093baff9a438603b985c2f9c35274f3677687bcdf761b",
+      "sha256": "c0abb206dd56fd0cdf983e18ef9525c026cee88ee1363cea789c1f4c4b6b381d",
       "module": "points__collectionMemo",
       "stories": [
         {
           "heading": "Story: Reach the same collection with fewer reads",
-          "line": 30
+          "line": 33
         }
       ],
       "rules": [
         {
           "heading": "Story: Reach the same collection with fewer reads / Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection",
-          "line": 36,
+          "line": 39,
           "definitions": [
             "auditOneIn",
+            "changedCodeAuditOneIn",
             "fullIntervalMs",
             "maxMemoBytes",
             "maxCommitLines",
@@ -17692,28 +18154,30 @@
           ]
         },
         {
-          "heading": "Story: Reach the same collection with fewer reads / A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed",
-          "line": 85,
+          "heading": "Story: Reach the same collection with fewer reads / A collection runs in full without a usable memo, when forced or when the attribution rules changed",
+          "line": 90,
           "definitions": [
             "modeReason",
             "modeFor",
+            "auditRateFor",
             "canOpenMemo",
             "openMemo",
             "lawForcedRunIsFull",
-            "lawWeekOldMemoIsFull",
-            "lawChangedCodeIsFull",
+            "lawChangedRulesIsFull",
+            "lawChangedCodeStaysIncremental",
             "lawIncrementalNeedsMatchingMemo",
             "alwaysRefusedOnlyWithReason",
             "alwaysFullNeverReuses",
             "stepRefusalIsFinal",
-            "sometimesWeeklyFull",
+            "sometimesRulesChangedFull",
+            "sometimesChangedCodeIncremental",
             "sometimesFutureMemoFails",
             "sometimesUntrustedRunFails"
           ]
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / Commit statistics are reused only for the same repository node, commit node and object id",
-          "line": 132,
+          "line": 148,
           "definitions": [
             "CommitLine",
             "commitLineFor",
@@ -17726,9 +18190,10 @@
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / A collection reuses an earlier answer only while every input it was derived from is unchanged",
-          "line": 152,
+          "line": 168,
           "definitions": [
             "audited",
+            "auditedAt",
             "answered",
             "candidate",
             "priorResult",
@@ -17747,12 +18212,13 @@
             "alwaysAuditedIsRecomputed",
             "lawSampledEveryFiftieth",
             "sometimesAuditMismatchDiscardsReuse",
-            "sometimesReusedAfterCleanAudit"
+            "sometimesReusedAfterCleanAudit",
+            "sometimesExpiredNotReused"
           ]
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / The next memo records exactly the live version of every fenced answer and is written only after the snapshot",
-          "line": 207,
+          "line": 229,
           "definitions": [
             "canComputeLive",
             "computeLive",
@@ -17774,10 +18240,11 @@
           ]
         },
         {
-          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a week-old, a changed-code and a future memo",
-          "line": 254,
+          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo",
+          "line": 276,
           "definitions": [
             "matchingMemo",
+            "expiredMemo",
             "trustedRun",
             "memoValues",
             "contextValues",
@@ -17792,7 +18259,9 @@
             "eval_witness_sometimesReusedAfterCleanAudit",
             "eval_witness_sometimesAuditMismatchDiscardsReuse",
             "eval_witness_sometimesFutureMemoFails",
-            "eval_witness_sometimesWeeklyFull",
+            "eval_witness_sometimesRulesChangedFull",
+            "eval_witness_sometimesChangedCodeIncremental",
+            "eval_witness_sometimesExpiredNotReused",
             "eval_witness_sometimesUntrustedRunFails",
             "eval_witness_sometimesHoldNotRecorded",
             "eval_witness_sometimesMemoNotWritten"
@@ -18647,7 +19116,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "0f804f8cef47fffe4398f392c0f486f2d2c0c7528120dacdc8e862bcbec0af93",
+      "sha256": "3caa2fd9dab2677adf7c8df9a8d19eefa01ef7345bfbf26b2a46c511dc7ca2f5",
       "module": "points__journal",
       "stories": [
         {
@@ -18746,8 +19215,18 @@
           ]
         },
         {
-          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score",
           "line": 292,
+          "definitions": [
+            "OmittedReviewWindow",
+            "allocatedBeforeSnapshot",
+            "freshSnapshotMatches",
+            "unseenOmittedReview"
+          ]
+        },
+        {
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "line": 320,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -18759,7 +19238,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 316,
+          "line": 344,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -18768,7 +19247,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 346,
+          "line": 374,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -18778,7 +19257,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 380,
+          "line": 408,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -18786,7 +19265,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 416,
+          "line": 444,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -18799,7 +19278,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 468,
+          "line": 496,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -18813,7 +19292,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 517,
+          "line": 545,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -18824,7 +19303,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 547,
+          "line": 575,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -18853,7 +19332,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 646,
+          "line": 678,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -18884,7 +19363,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 725,
+          "line": 757,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -18893,7 +19372,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 755,
+          "line": 787,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -18902,7 +19381,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 786,
+          "line": 818,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -18916,7 +19395,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 823,
+          "line": 855,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -18932,7 +19411,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 851,
+          "line": 883,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -18945,7 +19424,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 885,
+          "line": 917,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -18973,7 +19452,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 951,
+          "line": 983,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -18997,7 +19476,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 977,
+          "line": 1009,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19037,7 +19516,10 @@
             "actorValues",
             "creditValues",
             "requestedValues",
-            "totalValues"
+            "totalValues",
+            "eval_witness_sometimesRetainedOmissionZeroed",
+            "eval_witness_sometimesIncidentRecovered",
+            "eval_witness_sometimesJointAbsorbedOwnRecord"
           ]
         }
       ],
@@ -19092,28 +19574,32 @@
           "line": 185
         },
         {
-          "target": "./evaluations.md",
+          "target": "./reviews.md",
           "line": 294
         },
         {
+          "target": "./evaluations.md",
+          "line": 322
+        },
+        {
           "target": "./scoringPolicy.md",
-          "line": 319
+          "line": 347
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 727
+          "line": 759
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 757
+          "line": 789
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 788
+          "line": 820
         },
         {
           "target": "./allocation.md",
-          "line": 794
+          "line": 826
         }
       ]
     },
@@ -20381,7 +20867,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "7b959fbde1742b3b3604a297f97b9bb26c3399a3350b9ae45514e10487280bb9",
+      "sha256": "759385bcefec00fe66afe29c695dcf436f05e92b4925fa93387e83feea3820cd",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -20532,6 +21018,7 @@
             "lawIdenticalChangeNeedsOneEarlierRewardedSource",
             "lawSurvivingCarrierNeedsPinnedTip",
             "lawCarriedMergeEdgeNeedsTheEarlierHeadSecond",
+            "lawEmptyMergePreservesEarlierRecipientShares",
             "changeValues",
             "edgeValues",
             "lawUncoveredClaimRefused",
@@ -20543,7 +21030,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
-          "line": 515,
+          "line": 530,
           "definitions": [
             "HistoricalScope",
             "HistoricalInput",
@@ -20580,7 +21067,7 @@
         },
         {
           "target": "./authorship.md",
-          "line": 527
+          "line": 542
         }
       ]
     },
@@ -21770,7 +22257,7 @@
     },
     {
       "path": "spec/security/cases.md",
-      "sha256": "0fb9a87b1170d75161bc6aac408481e593346d06618031aaf0ed83a0fb7968c4",
+      "sha256": "7e4e7d8982e0ace01590c6aeed0cf27d584165dbab39668508b43175dd8ae1aa",
       "module": "security__cases",
       "stories": [
         {
@@ -22018,7 +22505,11 @@
             "weight_appeal",
             "weight_finishTriage",
             "weight_decideAppeal",
-            "weight_observeAuthority"
+            "eval_witness_sometimesRelatedApproved",
+            "eval_witness_sometimesFullAwardHeld",
+            "eval_witness_sometimesLegacyApproved",
+            "eval_witness_sometimesStandardApproved",
+            "eval_witness_sometimesInformationProvided"
           ]
         }
       ],
@@ -22067,7 +22558,7 @@
     },
     {
       "path": "spec/security/continuity.md",
-      "sha256": "6d5c0aae8c208f2adef91cce7d9b88a909d54b959c1313b06701aaab7cf4ac4f",
+      "sha256": "75195355eef2dc0a3b7327f23fa85834a7fcadce9e1b953f886fd6ede43ec2dc",
       "module": "security__continuity",
       "stories": [
         {
@@ -22173,7 +22664,8 @@
             "weight_replaceRoles",
             "weight_decideAward",
             "weight_showAmounts",
-            "weight_reconcile"
+            "weight_reconcile",
+            "eval_witness_sometimesClosedWhileReserved"
           ]
         }
       ],
@@ -22215,7 +22707,7 @@
     },
     {
       "path": "spec/security/enforcement.md",
-      "sha256": "7a2433ef9d4be47eccdc628e5424fa5fd1287ea11015ae80891b2a4d395cac31",
+      "sha256": "8a614b8d304ed11d6c8a4b0bfe139f6cd32ad8029abd6f34fc8666659161ea00",
       "module": "security__enforcement",
       "stories": [
         {
@@ -22600,7 +23092,20 @@
             "weight_reinstate",
             "weight_reinstateFlagPause",
             "weight_grantExemption",
-            "eValues"
+            "eValues",
+            "eval_witness_sometimesReinstatedAfterMalice",
+            "eval_witness_sometimesBannedAccountAppealed",
+            "eval_witness_sometimesAccountReinstatementJournaled",
+            "eval_witness_sometimesReleasedAccountCannotAppeal",
+            "eval_witness_sometimesFlagPauseLifted",
+            "eval_witness_sometimesFlagPauseLiftablePastPendingInvestigation",
+            "eval_witness_sometimesFlagPauseLiftedPastPendingInvestigation",
+            "eval_witness_sometimesFlagPauseLiftableAtOtherPin",
+            "eval_witness_sometimesFlagPauseLiftedPastOtherPin",
+            "eval_witness_sometimesGrantKeepsEarlierAssessment",
+            "eval_witness_sometimesRequeuedStaysCovered",
+            "eval_witness_sometimesRequeueAfterGrantStaysCovered",
+            "eval_witness_sometimesQuarantinedByIncomplete"
           ]
         }
       ],
@@ -23789,7 +24294,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "be3ce022767179e235bae1091c17e10c1c4641490040e6cdbe1a2c3a4601c6aa",
+      "sha256": "3a3bc06253d827eb4745f2a4d635cf43224937353d007fd8c6d0bcc7be62e8d0",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -24009,7 +24514,8 @@
             "weight_reconcileCopies",
             "weight_readReceipt",
             "weight_expireVerification",
-            "weight_finishTriage"
+            "weight_finishTriage",
+            "eval_witness_sometimesReceiptQueued"
           ]
         }
       ],
@@ -24889,7 +25395,7 @@
     },
     {
       "path": "spec/settlement/asiNovemberCloseout.md",
-      "sha256": "ee2b8550119b216fb152bee274b2bd2809cf6258626d035341d7a274e8ab874d",
+      "sha256": "b89b3fe79db3251f9628fd8df5e9e5c73809bb6d8ca8e65160483870d3563aa6",
       "module": "settlement__asiNovemberCloseout",
       "stories": [
         {
@@ -25008,47 +25514,58 @@
     },
     {
       "path": "spec/settlement/attesterActivation.md",
-      "sha256": "2e89b2eaf9de56f1c4770c78472d427cce6b359e8f0fa4d82a16fcdc41326587",
+      "sha256": "8e45e8cb880015bdf5c33a65e914d74acea8b0924be8ec5334c189ddd174c9d1",
       "module": "settlement__attesterActivation",
       "stories": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated",
-          "line": 33
+          "line": 26
         }
       ],
       "rules": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / A released switch is on only for an activated lane, in qualification order",
-          "line": 35,
+          "line": 28,
           "definitions": [
             "Actor",
             "PaymentService",
             "SolanaCheck",
+            "ReleasePhase",
+            "HistoricalRelease",
             "SignerRead",
             "Activation",
             "initial",
+            "historicalNetworks",
+            "historicalRelease",
             "solanaReady",
             "eligible",
             "canObserveLedger",
             "observeLedger",
+            "canObserveHistoricalRelease",
+            "observeHistoricalRelease",
             "canObserveSolanaCheck",
             "observeSolanaCheck",
             "canReleaseSwitches",
             "releaseSwitches",
             "alwaysSwitchNeedsActivatedLane",
+            "alwaysHistoricalNetworksAreReviewed",
             "alwaysNetworkListIsSwitchedOn",
             "alwaysLedgerShape",
             "stepEvidenceOnlyGrows",
+            "stepHistoricalNetworksCannotReturn",
             "lawRobinhoodNeedsThirdLane",
             "lawSolanaNeedsRecoveryVaultAndReadiness",
+            "lawHistoricalReleaseNeedsBaseAndMatchedEvidence",
+            "lawReleaseCannotRestoreDisabledHistoricalNetworks",
             "sometimesBaseOn",
             "sometimesThreeNetworksOn",
+            "sometimesKeepsHistoricalNetworksOn",
             "sometimesSolanaHeldForReadiness"
           ]
         },
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / The executor and attester refuse a disabled network before reading any signer secret",
-          "line": 90,
+          "line": 120,
           "definitions": [
             "noRead",
             "canRequestSigner",
@@ -25060,14 +25577,17 @@
           ]
         },
         {
-          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the 14 November development values",
-          "line": 113,
+          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the reviewed legacy switch and its refused alternatives",
+          "line": 143,
           "definitions": [
             "activatedValues",
+            "networkValues",
+            "evidenceValues",
             "onValues",
             "byValues",
             "weight_observeLedger",
-            "weight_releaseSwitches"
+            "weight_releaseSwitches",
+            "eval_witness_sometimesKeepsHistoricalNetworksOn"
           ]
         }
       ],
@@ -25076,14 +25596,18 @@
       ],
       "references": [
         {
+          "target": "./signer.md",
+          "line": 9
+        },
+        {
           "target": "../operations/escrowQualification.md",
-          "line": 17
+          "line": 13
         }
       ]
     },
     {
       "path": "spec/settlement/bindingAuthority.md",
-      "sha256": "15e685e2e9e83eeff5cea2ffa54445fe059cbe7e17b3ee459f1ae8c90e619fc1",
+      "sha256": "43c30bba4ccb5836c3057c00f78c812373f812cb20bce5062d7eab76607f3846",
       "module": "settlement__bindingAuthority",
       "stories": [
         {
@@ -25096,11 +25620,11 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation",
-          "line": 164
+          "line": 191
         },
         {
           "heading": "Story: State the guarantees and the accepted risk",
-          "line": 207
+          "line": 234
         }
       ],
       "rules": [
@@ -25166,8 +25690,17 @@
           ]
         },
         {
+          "heading": "Story: Let the owner cancel an unpaid binding inside its window / Payouts reopens with the current wallet authorization or finalized binding",
+          "line": 164,
+          "definitions": [
+            "PayoutBindingStatus",
+            "RetainedPayoutConsent",
+            "payoutBindingStatus"
+          ]
+        },
+        {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / The registrar on EVM, or the project owner on Solana, proposes and may cancel one rotation at a time",
-          "line": 166,
+          "line": 193,
           "definitions": [
             "rotationProposer",
             "excludedAuthority",
@@ -25179,7 +25712,7 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / Solana needs the rotation authority's confirmation; anyone executes after the delay",
-          "line": 191,
+          "line": 218,
           "definitions": [
             "canConfirmRotation",
             "confirmRotation",
@@ -25189,7 +25722,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Versions only grow, history is retained and the cancellation budget is bounded",
-          "line": 209,
+          "line": 236,
           "definitions": [
             "alwaysActorsUnique",
             "alwaysCancelBudget",
@@ -25207,7 +25740,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / With the owner-decision zero delay no cancellation window is ever open",
-          "line": 242,
+          "line": 269,
           "definitions": [
             "alwaysZeroDelayLeavesNoVeto",
             "sometimesCancelledWithDelay",
@@ -25221,7 +25754,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Simulation samples",
-          "line": 264,
+          "line": 291,
           "definitions": [
             "byValues",
             "namedValues",
@@ -25240,7 +25773,9 @@
           ]
         }
       ],
-      "imports": [],
+      "imports": [
+        "backend__bindingConsent"
+      ],
       "references": [
         {
           "target": "./escrow.md",
@@ -25698,7 +26233,7 @@
     },
     {
       "path": "spec/settlement/escrow.md",
-      "sha256": "db1df56bf6ff56901221076b5d775130c4ddfc6184653d65c4d1220aa01281b2",
+      "sha256": "c63eb7a4b9717a6c3cebdb4f09eb94e2fe5e1240924ecf9db72ca7e27841ac43",
       "module": "settlement__escrow",
       "stories": [
         {
@@ -26057,7 +26592,11 @@
             "countValues",
             "amountValues",
             "periodValues",
-            "legacyValues"
+            "legacyValues",
+            "eval_witness_sometimesLegacyMonthCountsExistingOnce",
+            "eval_witness_sometimesPledgedAdmittedWhileOff",
+            "eval_witness_sometimesManualAfterRelease",
+            "eval_witness_sometimesWithdrawWhilePoolPending"
           ]
         }
       ],
@@ -26735,22 +27274,22 @@
     },
     {
       "path": "spec/settlement/keeperLifecycle.md",
-      "sha256": "77898bdb47b8abfd2a6cb6697729e938524ef74f1753b4782cb8ed4240d0aefc",
+      "sha256": "0096f403a12b778ae526a7f4fe00370312175b787ca09a135c2f7c1c840b14bd",
       "module": "settlement__keeperLifecycle",
       "stories": [
         {
           "heading": "Story: Connect internal requests to one live core run",
-          "line": 20
+          "line": 24
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry",
-          "line": 103
+          "line": 107
         }
       ],
       "rules": [
         {
           "heading": "Story: Connect internal requests to one live core run / Public and wrong internal routes cannot start work",
-          "line": 22,
+          "line": 26,
           "definitions": [
             "KeeperMode",
             "Caller",
@@ -26785,7 +27324,7 @@
         },
         {
           "heading": "Story: Connect internal requests to one live core run / Off and failed preflight settle without invoking a signer",
-          "line": 82,
+          "line": 86,
           "definitions": [
             "settleRun",
             "matchesRun",
@@ -26797,7 +27336,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Native fee liability and nonce become durable with the exact signed bytes",
-          "line": 105,
+          "line": 109,
           "definitions": [
             "SignerReport",
             "GasEvidence",
@@ -26818,7 +27357,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / An unmined send is replaced only by fee, same nonce and content, after activation",
-          "line": 154,
+          "line": 158,
           "definitions": [
             "latestAttempt",
             "originalAttempt",
@@ -26839,7 +27378,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee",
-          "line": 199,
+          "line": 203,
           "definitions": [
             "replacementWaitSeconds",
             "replacementDue",
@@ -26849,7 +27388,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block",
-          "line": 216,
+          "line": 220,
           "definitions": [
             "extraFeeReserved",
             "extraFeeValues"
@@ -26857,7 +27396,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Core completion and per-request result delivery have independent lifetimes",
-          "line": 234,
+          "line": 238,
           "definitions": [
             "canItemFailure",
             "itemFailure",
@@ -26874,7 +27413,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Restart abandons only ephemeral work and unresolved callers from that instance",
-          "line": 266,
+          "line": 270,
           "definitions": [
             "canRestart",
             "restart",
@@ -26918,19 +27457,19 @@
       "references": [
         {
           "target": "./keeperRpc.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "./keeperScan.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "../operations/paymentJobs.md",
-          "line": 12
+          "line": 16
         },
         {
           "target": "./feeReplacement.md",
-          "line": 157
+          "line": 161
         }
       ]
     },
@@ -26997,7 +27536,7 @@
     },
     {
       "path": "spec/settlement/keeperScan.md",
-      "sha256": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a",
+      "sha256": "abb9e02a84d556af4e3083d4df30c1b436fd24d9eb950958043d19c21bbbed49",
       "module": "settlement__keeperScan",
       "stories": [
         {
@@ -27025,7 +27564,7 @@
         },
         {
           "heading": "Story: Preserve the operation that failed during a keeper run / Returning to scanning requires successful receipt verification and indexing",
-          "line": 54,
+          "line": 65,
           "definitions": [
             "canBeginReceipt",
             "beginReceipt",
@@ -27069,7 +27608,7 @@
         },
         {
           "target": "./keeperDiagnostics.md",
-          "line": 60
+          "line": 71
         }
       ]
     },
@@ -27608,7 +28147,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "1a00a53336cd454e3b50c87f23235bd37cc777877a86e672ef43807847af04fc",
+      "sha256": "a08e744bdf9f3e3cbf068537adecb6f674bc5a392d545a3fd4b7b47c1ca0a379",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -27822,27 +28361,28 @@
           "definitions": [
             "alwaysAllocationConserved",
             "proposedPhase",
+            "reviewedOctoberPool",
             "alwaysCapFromRevision",
             "alwaysUnproposedEmpty"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Every cut keeps its reason bounds, its change and exactly one Inbox notice",
-          "line": 515,
+          "line": 534,
           "definitions": [
             "alwaysCutsRecorded"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The public cut list is exactly each contributor's latest change when that change is a cut",
-          "line": 527,
+          "line": 546,
           "definitions": [
             "alwaysPublicCutsCurrent"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff",
-          "line": 537,
+          "line": 556,
           "definitions": [
             "alwaysAutomaticHonoursCutNotice",
             "alwaysFreezeAfterCutNotice",
@@ -27851,7 +28391,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Obligations follow the frozen shares exactly, excluding only banned accounts",
-          "line": 556,
+          "line": 575,
           "definitions": [
             "alwaysObligationsMatchShares",
             "alwaysEveryPayableShareAccounted",
@@ -27864,7 +28404,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Frozen amounts, recorded triggers and obligation progress never move backwards",
-          "line": 579,
+          "line": 598,
           "definitions": [
             "frozenPhase",
             "stepFrozenStable",
@@ -27879,7 +28419,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Proposals, changes, cuts, freezes, exclusions and payments are reachable",
-          "line": 605,
+          "line": 624,
           "definitions": [
             "sometimesWalletlessReserve",
             "sometimesCompleted",
@@ -27937,7 +28477,19 @@
             "weight_createObligations",
             "weight_recordReserved",
             "weight_recordPaid",
-            "weight_recordConflict"
+            "weight_recordConflict",
+            "eval_witness_sometimesPledgedFrozenWithinCutNotice",
+            "eval_witness_sometimesPledgedMonthFrozen",
+            "eval_witness_sometimesCloseoutFinalizedEarly",
+            "eval_witness_sometimesMaintainerWithoutPointsPaid",
+            "eval_witness_sometimesUnderfundedThenFunded",
+            "eval_witness_sometimesCompleted",
+            "eval_witness_sometimesOwnerAdjustedAndFinalized",
+            "eval_witness_sometimesWalletlessReserve",
+            "eval_witness_sometimesBanExcluded",
+            "eval_witness_sometimesLateCutHoldsDefaultOff",
+            "eval_witness_sometimesEarlierMonthNotAutomatic",
+            "eval_witness_sometimesCutThenOwnerFinalized"
           ]
         }
       ],
@@ -27977,6 +28529,10 @@
         {
           "target": "./monthPledges.md",
           "line": 421
+        },
+        {
+          "target": "./octoberImport.md",
+          "line": 501
         }
       ]
     },
@@ -28233,7 +28789,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "ac804ec4af73de31bfe2bb9f565d64b727f93e365e7eb05c1a1c6f70f763b1ad",
+      "sha256": "c1523ef06f1cede63896fad0acea70f0bf72ea9ac2f70e77522c1529d50b3d47",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -28423,7 +28979,8 @@
             "snapshot",
             "v2Journal",
             "monthJournal",
-            "journalValues"
+            "journalValues",
+            "eval_witness_sometimesPrerequisiteIncluded"
           ]
         }
       ],
@@ -28544,7 +29101,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "06f79f49a07836ca0bc52fc2306429bfef3a5c51b71320da24146725c34c3d6e",
+      "sha256": "bee0f23d8b37c434682d0a94bcdac15ff05a2c2e5d05717b69f35aab03df98f3",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -28832,7 +29389,12 @@
             "weight_observeSettings",
             "weight_setMonthly",
             "weight_noteUnderfunded",
-            "weight_pledgeMonths"
+            "weight_pledgeMonths",
+            "eval_witness_sometimesCursorPassedLeaf",
+            "eval_witness_sometimesReleasedMonthPassed",
+            "eval_witness_sometimesPoolBlocksManual",
+            "eval_witness_sometimesMonthReserved",
+            "eval_witness_sometimesObligationPaid"
           ]
         }
       ],
@@ -28909,18 +29471,18 @@
     },
     {
       "path": "spec/settlement/octoberImport.md",
-      "sha256": "37c98c7a803393e9996f909988fe2a73fbb61c7573355bc378d94effdc5e42c9",
+      "sha256": "eb03dc75cf857a6b50a8900d3c956076d8cf80432534ef19e0c2615ddbb8486f",
       "module": "settlement__octoberImport",
       "stories": [
         {
           "heading": "Story: Write each reviewed October proposal once",
-          "line": 14
+          "line": 16
         }
       ],
       "rules": [
         {
           "heading": "Story: Write each reviewed October proposal once / Planning computes the packet and writes nothing",
-          "line": 16,
+          "line": 18,
           "definitions": [
             "PacketWeight",
             "PacketEntry",
@@ -28943,7 +29505,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / An apply run writes only under the reviewed digest, current main and the production lock",
-          "line": 52,
+          "line": 54,
           "definitions": [
             "entryFor",
             "eligibleNow",
@@ -28961,7 +29523,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / A proposal already written is never added to or replaced",
-          "line": 89,
+          "line": 91,
           "definitions": [
             "canMonthlyPropose",
             "monthlyPropose",
@@ -28976,7 +29538,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / Imports, kept workflow proposals, withheld recipients and replays are reachable",
-          "line": 118,
+          "line": 120,
           "definitions": [
             "sometimesImported",
             "sometimesWorkflowProposalKept",
@@ -29005,7 +29567,7 @@
         },
         {
           "target": "./payoutExclusions.md",
-          "line": 58
+          "line": 60
         }
       ]
     },
@@ -29652,7 +30214,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "8624b6e769dab6526e77da97c0c1ffffc76f8e7269c74b4275233dd7237a42f7",
+      "sha256": "dc54853cc49bed5ec0ce3a21cfb1f1bf6fe15be4f9fe13cb0c06f42e678dbdf8",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -29874,7 +30436,10 @@
             "weight_prepareDirect",
             "weight_recordPair",
             "weight_recordTransfer",
-            "weight_recoverDirect"
+            "weight_recoverDirect",
+            "eval_witness_sometimesVaultAwardPaid",
+            "eval_witness_sometimesDirectAwardPaid",
+            "eval_witness_sometimesPaidAfterPayerRevoked"
           ]
         }
       ],
@@ -31059,7 +31624,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "7c2d8dd8328e08c76ac3d6126c82640deea44da74efd4cf7398bab65fd57c3e4",
+      "sha256": "07bf9142f22bd9493cc210c703a25b13d99acbbddad51bfbbeed284d4257208b",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31252,7 +31817,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 410,
+          "line": 417,
           "definitions": [
             "actorValues",
             "attemptValues",
@@ -31735,7 +32300,7 @@
     },
     {
       "path": "spec/settlement/vaultSnapshots.md",
-      "sha256": "2f78c24fc047a856dd807b1c93d1bb383776167463654cdb1c6d82459fad7c33",
+      "sha256": "d673baaafcc4da7c87cb835da0ba2ef03ad0d2c96a424caca9946cd88470a61f",
       "module": "settlement__vaultSnapshots",
       "stories": [
         {
@@ -31752,15 +32317,15 @@
         },
         {
           "heading": "Story: Keep each vault's first read of the month",
-          "line": 464
+          "line": 498
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read",
-          "line": 512
+          "line": 546
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero",
-          "line": 553
+          "line": 587
         }
       ],
       "rules": [
@@ -31941,12 +32506,16 @@
             "weight_checkGenesis",
             "weight_readTotals",
             "weight_readPrior",
-            "weight_write"
+            "weight_write",
+            "eval_witness_sometimesServerFinishes",
+            "eval_witness_sometimesExpiredWaitsAgain",
+            "eval_witness_sometimesTrustedRecovery",
+            "eval_witness_sometimesSavedRefused"
           ]
         },
         {
           "heading": "Story: Keep each vault's first read of the month / The first finalized read of each UTC month is recorded once per vault and never changes",
-          "line": 466,
+          "line": 500,
           "definitions": [
             "sameMonthStart",
             "monthStartOf",
@@ -31959,7 +32528,7 @@
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read / An ordinary vault read stores its month pledges, keeping the newest read of each month",
-          "line": 514,
+          "line": 548,
           "definitions": [
             "withMonthPledges",
             "alwaysPledgesOfTheOrdinaryVault",
@@ -31974,7 +32543,7 @@
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero / A failed refresh keeps the last totals marked stale",
-          "line": 555,
+          "line": 589,
           "definitions": [
             "Freshness",
             "ShownBalance",
@@ -32005,11 +32574,11 @@
         },
         {
           "target": "../frontend/projections.md",
-          "line": 485
+          "line": 519
         },
         {
           "target": "./monthPledges.md",
-          "line": 517
+          "line": 551
         }
       ]
     },
@@ -32882,7 +33451,7 @@
     },
     {
       "path": "spec/slopbot/closure.md",
-      "sha256": "001935b29d7545852099bdb3f1be60648886647dddd8696233a2ec3012cd5538",
+      "sha256": "cc47db67576858e362881364573ae190de774411e8c469be758489beec7d1ba9",
       "module": "slopbot__closure",
       "stories": [
         {
@@ -32891,11 +33460,11 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing",
-          "line": 549
+          "line": 552
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision",
-          "line": 594
+          "line": 597
         }
       ],
       "rules": [
@@ -33097,7 +33666,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label",
-          "line": 551,
+          "line": 554,
           "definitions": [
             "canLabelFinding",
             "labelFinding",
@@ -33109,7 +33678,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A restricted project permits only an authorized security comment and the confirmed scam label",
-          "line": 578,
+          "line": 581,
           "definitions": [
             "canCommentSecurity",
             "commentSecurity",
@@ -33122,7 +33691,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / A maintainer reopen or an author appeal blocks further review actions on that revision",
-          "line": 596,
+          "line": 599,
           "definitions": [
             "ReopenActorRole",
             "ReopenEvidence",
@@ -33139,7 +33708,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / An upheld appeal or a maintainer reopen removes the decision's finding label",
-          "line": 630,
+          "line": 633,
           "definitions": [
             "AppealVerdict",
             "AppealOutcome",
@@ -33153,7 +33722,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / Simulation samples include allowed and refused repository, participation and verdict observations",
-          "line": 651,
+          "line": 654,
           "definitions": [
             "verifiedSource",
             "ownRun",
@@ -33221,7 +33790,7 @@
         },
         {
           "target": "../contributor/workflow.md",
-          "line": 512
+          "line": 515
         }
       ]
     },
@@ -33395,7 +33964,7 @@
     },
     {
       "path": "spec/slopbot/composition.md",
-      "sha256": "c9dcda345208e1a755ad4d1d8b507f35a9164c8c1f7afb2f67a7bfba20a999cc",
+      "sha256": "2273adf54c968b95fc6c0b8dcfe8f3c3ceb28ea915f4b2f22600b74710b79dcf",
       "module": "slopbot__composition",
       "stories": [
         {
@@ -33565,7 +34134,9 @@
             "weight_escalateAppeal",
             "weight_decideAppeal",
             "weight_observeItem",
-            "weight_reopenOwnClose"
+            "weight_reopenOwnClose",
+            "eval_witness_sometimesDeniedAppealKeepsDebit",
+            "eval_witness_sometimesUpheldAppealReopened"
           ]
         }
       ],
@@ -33730,18 +34301,18 @@
     },
     {
       "path": "spec/slopbot/historyReadAhead.md",
-      "sha256": "97610afc8d3820c7f1403f8bd5ec101ba58a84dbfe6a4c9734a71fb918c8d4ad",
+      "sha256": "f71fe23c54297820d96a3b9d0a97c649fc25a993d4740d980401493344cadccd",
       "module": "slopbot__historyReadAhead",
       "stories": [
         {
           "heading": "Story: Save waiting on the first history pages without changing a decision",
-          "line": 23
+          "line": 25
         }
       ],
       "rules": [
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / First history pages may be read ahead, a bounded number at once, and decide nothing",
-          "line": 30,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / First history pages may be read ahead beside the loop within a bounded window and decide nothing",
+          "line": 33,
           "definitions": [
             "ReadAheadPhase",
             "ReadAhead",
@@ -33749,23 +34320,21 @@
             "initial",
             "validConcurrency",
             "readsAhead",
+            "readAheadWindow",
+            "started",
             "canBegin",
             "begin",
-            "workerFree",
             "canStartRead",
             "startRead",
-            "canSkipRead",
-            "skipRead",
             "canFinishRead",
             "finishRead",
             "canDropRead",
             "dropRead",
-            "canEndReadAhead",
-            "endReadAhead",
             "alwaysConcurrencyInRange",
             "alwaysReadsWithinConcurrency",
-            "alwaysReadsOnlyWhileWarming",
-            "alwaysStartedInOrder",
+            "alwaysReadsWithinWindow",
+            "alwaysNoReadsWhenFinished",
+            "alwaysSetsDisjoint",
             "alwaysNoReadAheadWithoutConcurrency",
             "stepNoReadStartsAfterADrop",
             "lawInvalidConcurrencyReadsNothing",
@@ -33774,11 +34343,13 @@
           ]
         },
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each warmed page once and reads every other page itself",
-          "line": 96,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each empty warmed page once and reads every other page itself",
+          "line": 99,
           "definitions": [
             "decidedOutcomes",
-            "inOrder",
+            "canAdvance",
+            "advance",
+            "currentUndecided",
             "canTakeWarmed",
             "takeWarmed",
             "canReadLive",
@@ -33787,7 +34358,6 @@
             "failRead",
             "canFinishAll",
             "finishAll",
-            "alwaysWarmingDecidesNothing",
             "alwaysDecidedInOrder",
             "alwaysEachPageReadOnce",
             "alwaysOnlyTheLoopReportsAFailure",
@@ -33796,21 +34366,24 @@
             "sometimesSequentialOnly",
             "sometimesEveryPageTaken",
             "sometimesDroppedPageReadAgain",
-            "sometimesFailureAfterWarmedPage",
-            "sometimesWarmedOutcomeFailsLater"
+            "sometimesNonEmptyReadAgain",
+            "sometimesFailureAfterWarmedPage"
           ]
         },
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a full read-ahead and a dropped one",
-          "line": 147,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a bounded window, a non-empty page and a dropped one",
+          "line": 155,
           "definitions": [
             "concurrencyValues",
             "outcomeCountValues",
             "positionValues",
+            "isEmptyValues",
+            "eval_witness_sometimesReadAheadFull",
+            "eval_witness_sometimesReadAheadDropped",
             "eval_witness_sometimesDroppedPageReadAgain",
+            "eval_witness_sometimesNonEmptyReadAgain",
             "eval_witness_sometimesFailureAfterWarmedPage",
             "eval_witness_sometimesEveryPageTaken",
-            "eval_witness_sometimesWarmedOutcomeFailsLater",
             "eval_witness_sometimesSequentialOnly"
           ]
         }
@@ -33819,7 +34392,7 @@
       "references": [
         {
           "target": "./valueHistory.md",
-          "line": 14
+          "line": 15
         }
       ]
     },
@@ -34542,12 +35115,16 @@
     },
     {
       "path": "spec/slopbot/readyLabel.md",
-      "sha256": "84eaeb7fb6856ee025c81c0bd795322a13c8a58267ef51d0180102eaff9ff062",
+      "sha256": "b7c4b9a70c0ee81eae46415613d544cf7b4275e6dfa1719f5c8388793bac629c",
       "module": "slopbot__readyLabel",
       "stories": [
         {
           "heading": "Story: Label a pull request ready only while every condition holds at its head",
           "line": 22
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow",
+          "line": 428
         }
       ],
       "rules": [
@@ -34709,6 +35286,38 @@
             "observedValues",
             "secondsValues",
             "weight_refresh"
+          ]
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow / The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`",
+          "line": 435,
+          "definitions": [
+            "pilotRepository",
+            "pilotRepositoryId",
+            "slopbotBotId",
+            "slopbotBotLogin",
+            "maxAutoMergesPerRun",
+            "autoMergeListPageLimit",
+            "autoMergeEventPageLimit",
+            "autoMergeReviewPageLimit",
+            "autoMergeFilePageLimit",
+            "AutoMergeLabelSource",
+            "AutoMergeReason",
+            "AutoMergeCandidate",
+            "autoMergeSwitchActive",
+            "autoMergePermittedBase",
+            "autoMergePullOk",
+            "autoMergeReason",
+            "autoMergeAllowed",
+            "autoMergeWillWrite",
+            "lawAutoMergeSwitchOffNeverWrites",
+            "lawAutoMergeNeverTargetsMainOrDefault",
+            "lawAutoMergeRequiresSlopbotFreshLabel",
+            "lawAutoMergeRequiresWriteApprovalAndNoChangeRequest",
+            "lawAutoMergeRequiresCleanAndNoGithubPaths",
+            "lawAutoMergeRecheckPinsHeadBaseAndRunCap",
+            "validAutoMergeCandidate",
+            "candidateValues"
           ]
         }
       ],
@@ -35893,7 +36502,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "053680b16d96e7812d2adf9ee16659c142a521a9415afbdfa55620020788b13d",
+      "sha256": "226e036503fb24a219d18bb03c967a5df6b61ef5789e275ef9f8d6581c6dd4f3",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -35924,7 +36533,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Absence is proved only by a hash-verified tree, never by a 404",
-          "line": 75,
+          "line": 78,
           "definitions": [
             "TreeRead",
             "PathLookup",
@@ -35941,7 +36550,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / A blob, tree or binary claim counts only when its git object hash matches the bytes read",
-          "line": 120,
+          "line": 123,
           "definitions": [
             "ObjectKind",
             "ObjectRead",
@@ -35963,7 +36572,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals",
-          "line": 181,
+          "line": 184,
           "definitions": [
             "LineSource",
             "FileLines",
@@ -35983,7 +36592,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 228,
+          "line": 254,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -35997,7 +36606,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 268,
+          "line": 294,
           "definitions": [
             "CensusPull",
             "CensusQuery",
@@ -36616,7 +37225,7 @@
     },
     {
       "path": "spec/slopbot/webhookDelivery.md",
-      "sha256": "f9e80226ae9ad6951731e2a1791d33fc279f3f60d66512b9801e5038f7dfe335",
+      "sha256": "0f5a52c214e6d58cc6a8c15627e289a18aa899d85e76c992360bd2b4a749ab1e",
       "module": "slopbot__webhookDelivery",
       "stories": [
         {
@@ -36764,7 +37373,12 @@
             "weight_inspectValue",
             "weight_inspectQueue",
             "weight_bindReopen",
-            "weight_send"
+            "weight_send",
+            "eval_witness_sometimesReopenRetained",
+            "eval_witness_sometimesReleased",
+            "eval_witness_sometimesConfirmed",
+            "eval_witness_sometimesValued",
+            "eval_witness_sometimesValuedReceiptKeptAfterFailure"
           ]
         }
       ],
@@ -36779,7 +37393,7 @@
         },
         {
           "target": "./jobQueue.md",
-          "line": 354
+          "line": 393
         }
       ]
     },

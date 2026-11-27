@@ -1,22 +1,23 @@
 import { base58Encode, base64Encode } from "@repo/platform/chain/solana";
 import { webCrypto } from "@repo/platform/crypto";
 import { PLEDGED_FUNDS_SELECTOR, escrowAbi, evmAddress, factoryAbi } from "@repo/settlement/chain/evm/abi";
-import { expirePledgeCalldata, pledgeMonthsCalldata, setMonthlyCommitmentCalldata } from "@repo/settlement/chain/evm/actions";
+import { depositCalldata, expirePledgeCalldata, pledgeMonthsCalldata, setMonthlyCommitmentCalldata } from "@repo/settlement/chain/evm/actions";
 import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions";
 import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
-import { toAmount } from "@repo/settlement/kernels/amounts";
+import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { TestClock } from "effect/testing";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, erc20Abi, pad, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { editorOpen } from "../../gen/frontend__ownerMonthly.ts";
 import type { Route } from "../../gen/app.ts";
 import { actor as actorOf, visitor } from "../../gen/frontend__ownerVault.ts";
@@ -26,6 +27,7 @@ import { Machine as ReadMachine } from "../../gen/frontend__requests.effect.vibe
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { type FundingVault, unreadLocks } from "../../src/kernels/poolFunding.ts";
 import { monthBounds } from "../../src/screens/funding/awards/month.ts";
+import { OwnerAwards } from "../../src/screens/funding/awards/OwnerAwards.tsx";
 import { type PageRuntime, pageRuntime } from "../../src/app/runtime.vibe";
 import { EscrowFunding, publicCoverage } from "../../src/screens/funding/vault/EscrowFunding.tsx";
 import { lockProject, usdcSnapshot } from "../../src/screens/funding/vault/fixtures.ts";
@@ -59,10 +61,19 @@ const owner = account.address.toLowerCase();
 const chainId = 8453;
 const runtimeCode = "0x6080";
 const factory = "0x00000000000000000000000000000000000000fa";
+const factoryImplementation = "0x00000000000000000000000000000000000000f1";
+const registrar = "0x00000000000000000000000000000000000000f2";
 const feeRecipient = "0x00000000000000000000000000000000000000fe";
-const projectWord = `0x${"5".repeat(64)}` as Hex;
+const projectWord: Hex = `0x${"5".repeat(64)}`;
 const codeSha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([0x60, 0x80]))), (byte) => byte.toString(16).padStart(2, "0")).join("");
-const review: VaultReview = { codeSha256, implementation: undefined, factory, feeRecipient, bindingDelaySeconds: 0n, purpose: "OrdinaryPurpose" };
+const review: VaultReview = {
+  codeSha256,
+  implementation: undefined,
+  factory: { address: factory, codeSha256, implementation: { address: factoryImplementation, codeSha256 }, registrar },
+  feeRecipient,
+  bindingDelaySeconds: 0n,
+  purpose: "OrdinaryPurpose",
+};
 const nativeVault: EvmVault = { network: "base-mainnet", chainId: BigInt(chainId), vault: "0x00000000000000000000000000000000000000aa", asset: "0x0000000000000000000000000000000000000000", owner, review };
 const tokenVault: EvmVault = { ...nativeVault, vault: "0x00000000000000000000000000000000000000ab", asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" };
 const keys = { creation: "slop:vault-setup:v1:journey", transfer: `slop:vault-action:v1:base-mainnet:${nativeVault.vault}:${nativeVault.asset}` };
@@ -105,6 +116,7 @@ interface Mined {
   readonly input: string;
   readonly value: string;
   readonly block: bigint;
+  readonly transactionIndex: bigint;
   readonly logs: ReadonlyArray<{ address: string; topics: string[]; data: string }>;
 }
 
@@ -117,22 +129,54 @@ function addressOf(text: string) {
 const vaultKeys = [nativeVault, tokenVault].map((vault) => ({ vault, key: vaultKey({ owner: addressOf(owner), projectId: projectWord as never, asset: addressOf(vault.asset), purpose: "OrdinaryPurpose" }) }));
 
 type Pledges = Map<number, { amount: bigint; open: boolean }>;
+type LockBatchReport =
+  | "multiple" | "sameBlock" | "reversedIndex" | "stale" | "conflictingHead" | "duplicate" | "wrongMembership"
+  | "wrongChain" | "wrongReference" | "wrongDeposit" | "wrongPledge"
+  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton"
+  | "notSentWithReceipt" | "notSentWithMalformedReceipt" | "malformedPledgeBlock";
 
 const monthAfter = (period: number, months: number) => {
   const index = Math.floor(period / 100) * 12 + (period % 100) - 1 + months;
   return Math.floor(index / 12) * 100 + (index % 12) + 1;
 };
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string }) {
+interface FactoryObservation {
+  readonly code?: string;
+  readonly slot?: string;
+  readonly implementationCode?: string;
+  readonly registrar?: `0x${string}`;
+}
+
+function fakeChain(options: {
+  readonly atomic: boolean;
+  readonly send: "mine" | "unclear";
+  readonly approved?: boolean;
+  readonly estimateReverts?: { readonly call: string; readonly error: unknown };
+  readonly pledges?: Pledges;
+  readonly current?: number;
+  readonly failReceipts?: boolean;
+  readonly wallet?: string;
+  readonly factoryObservation?: FactoryObservation;
+  readonly lockBatch?: LockBatchReport;
+  readonly batchRefusal?: () => Error;
+}) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
-  let finalized = 0n;
-  const blockHash = (block: bigint) => hash(block.toString(16).slice(-1));
+  let finalized = options.lockBatch === "conflictingHead" ? 10n : 0n;
+  let lockBatch: { readonly id: string; readonly entries: ReadonlyArray<Mined> } | undefined;
+  const notSentWithReceipt = options.lockBatch === "notSentWithReceipt" || options.lockBatch === "notSentWithMalformedReceipt";
+  const singleton = options.lockBatch === "legacySingleton" || options.lockBatch === "modernSingleton"
+    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton" || notSentWithReceipt;
+  const blockHash = (block: bigint) => options.lockBatch === "malformedPledgeBlock"
+    && mined.some((entry) => entry.block === block && entry.input.startsWith(selector("pledgeMonths")))
+    ? "0x0" : hash(block.toString(16).slice(-1));
   const vaultOf = (to: string) => [nativeVault, tokenVault].find((vault) => vault.vault === to.toLowerCase());
   const read = (to: string, data: string): string => {
     const vault = vaultOf(to);
     if (to.toLowerCase() === factory) {
+      if (data === encodeFunctionData({ abi: factoryAbi, functionName: "registrar" }))
+        return encodeFunctionResult({ abi: factoryAbi, functionName: "registrar", result: options.factoryObservation?.registrar ?? registrar });
       const found = vaultKeys.find((entry) => data.toLowerCase() === encodeFunctionData({ abi: factoryAbi, functionName: "vaults", args: [entry.key] }).toLowerCase());
       return encodeAbiParameters([{ type: "address" }], [(found?.vault.vault ?? "0x0000000000000000000000000000000000000000") as Hex]);
     }
@@ -143,8 +187,8 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     if (name.name === "token") return encodeFunctionResult({ abi: escrowAbi, functionName: "token", result: vault.asset as Hex });
     if (name.name === "decimals") return encodeFunctionResult({ abi: escrowAbi, functionName: "decimals", result: vault === nativeVault ? 18 : 6 });
     if (name.name === "owner") return encodeFunctionResult({ abi: escrowAbi, functionName: "owner", result: owner as Hex });
-    if (name.name === "feeRecipient") return encodeFunctionResult({ abi: escrowAbi, functionName: "feeRecipient", result: feeRecipient as Hex });
-    if (name.name === "factory") return encodeFunctionResult({ abi: escrowAbi, functionName: "factory", result: factory as Hex });
+    if (name.name === "feeRecipient") return encodeFunctionResult({ abi: escrowAbi, functionName: "feeRecipient", result: feeRecipient });
+    if (name.name === "factory") return encodeFunctionResult({ abi: escrowAbi, functionName: "factory", result: factory });
     if (name.name === "bindingDelay") return encodeFunctionResult({ abi: escrowAbi, functionName: "bindingDelay", result: 0n });
     if (name.name === "purpose") return encodeFunctionResult({ abi: escrowAbi, functionName: "purpose", result: 0 });
     if (name.name === "projectId") return encodeFunctionResult({ abi: escrowAbi, functionName: "projectId", result: projectWord });
@@ -159,8 +203,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     if (pledges === undefined && ["currentPeriod", "openPledgedGross", "monthPledges"].includes(name.name)) throw Object.assign(new Error("execution reverted"), { code: 3, data: "0x" });
     throw new Error(`unexpected getter ${name.name}`);
   };
-  const mine = (transaction: { from?: string; to: string; data: string; value?: string }) => {
-    const block = BigInt(mined.length + 10);
+  const mine = (transaction: { from?: string; to: string; data: string; value?: string }, block = BigInt(mined.length + 10), transactionIndex = 0n) => {
     if (options.pledges !== undefined && options.failReceipts !== true && (transaction.data.startsWith(selector("pledgeMonths")) || transaction.data.startsWith(selector("expirePledge")))) {
       const decoded = decodeFunctionData({ abi: escrowAbi, data: transaction.data as Hex });
       const args = decoded.args as unknown as ReadonlyArray<number | bigint>;
@@ -173,55 +216,138 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     const logs = vault === undefined ? []
       : setting !== undefined ? [{ address: vault.vault, topics: [EVENT_TOPICS.MonthlyCommitmentSet], data: encodeAbiParameters([{ type: "uint128" }, { type: "bool" }], [setting[0], setting[1]]) }]
       : amount === 0n ? [] : [{ address: vault.vault, topics: [EVENT_TOPICS.Deposited, pad(owner as Hex)], data: encodeAbiParameters([{ type: "uint128" }], [amount]) }];
-    const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, logs };
+    const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, transactionIndex, logs };
     mined.push(entry);
     return entry;
   };
+  const previousLock = options.lockBatch === "stale" ? [
+    mine({ to: tokenVault.vault, data: depositCalldata(3_000_000n) }),
+    mine({ to: tokenVault.vault, data: pledgeMonthsCalldata(options.current ?? 0, 1, 2_000_000n) }),
+  ] : undefined;
   const receipt = (entry: Mined) => ({
     status: options.failReceipts === true ? "0x0" : "0x1",
     transactionHash: entry.hash,
     blockNumber: quantity(entry.block),
     blockHash: blockHash(entry.block),
-    logs: entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })),
+    transactionIndex: quantity(entry.transactionIndex),
+    logs: options.failReceipts === true ? [] : entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })),
   });
   const provider = {
-    async request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
+    request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
       seen.push(method);
       const [first] = params as ReadonlyArray<Record<string, string>>;
-      if (method === "eth_requestAccounts" || method === "eth_accounts") return [options.wallet ?? account.address];
-      if (method === "eth_chainId") return quantity(BigInt(chainId));
-      if (method === "eth_call") return read(String(first?.to), String(first?.data));
-      if (method === "eth_getBalance") return quantity(free);
-      if (method === "eth_estimateGas") {
-        if (options.estimateReverts !== undefined && String(first?.data).startsWith(options.estimateReverts.call)) throw options.estimateReverts.error;
-        return "0x5208";
+      if (method === "eth_requestAccounts" || method === "eth_accounts") return Promise.resolve([options.wallet ?? account.address]);
+      if (method === "eth_chainId") return Promise.resolve(quantity(BigInt(chainId)));
+      if (method === "eth_call") {
+        try {
+          return Promise.resolve(read(String(first?.to), String(first?.data)));
+        } catch (error) {
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
       }
-      if (method === "wallet_getCapabilities") return options.atomic ? { [quantity(BigInt(chainId))]: { atomic: { status: "supported" } } } : {};
+      if (method === "eth_getBalance") return Promise.resolve(quantity(free));
+      if (method === "eth_estimateGas") {
+        if (options.estimateReverts !== undefined && String(first?.data).startsWith(options.estimateReverts.call)) return Promise.reject(options.estimateReverts.error instanceof Error ? options.estimateReverts.error : new Error(String(options.estimateReverts.error)));
+        return Promise.resolve("0x5208");
+      }
+      if (method === "wallet_getCapabilities") return Promise.resolve(options.atomic ? { [quantity(BigInt(chainId))]: { atomic: { status: "supported" } } } : {});
       if (method === "eth_sendTransaction") {
-        if (options.send === "unclear") throw new Error("RPC timeout");
-        return mine(first as unknown as { to: string; data: string; value?: string }).hash;
+        if (options.send === "unclear") return Promise.reject(new Error("RPC timeout"));
+        return Promise.resolve(mine(first as unknown as { to: string; data: string; value?: string }).hash);
       }
       if (method === "wallet_sendCalls") {
-        const calls = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls;
-        const last = calls.map(mine).at(-1);
-        return { id: `batch-${last?.hash ?? ""}` };
+        if (options.batchRefusal !== undefined) return Promise.reject(options.batchRefusal());
+        const calls = (first as unknown as { calls: ReadonlyArray<{ to: string; data: string; value?: string }> }).calls;
+        const sharedBlock = options.lockBatch === "sameBlock" || options.lockBatch === "reversedIndex" ? BigInt(mined.length + 10) : undefined;
+        const entries = previousLock ?? calls.map((call, index) => {
+          const submitted = options.lockBatch === "wrongPledge" && call.data.startsWith(selector("pledgeMonths"))
+            ? { ...call, data: pledgeMonthsCalldata(options.current ?? 0, 1, 2_000_001n) }
+            : call;
+          return sharedBlock === undefined ? mine(submitted) : mine(submitted, sharedBlock, BigInt(index));
+        });
+        const last = entries.at(-1);
+        if (last === undefined || options.lockBatch === undefined) {
+          if (last !== undefined) {
+            mined[mined.length - 1] = { ...last, logs: [...last.logs, ...entries.slice(0, -1).flatMap((entry) => entry.logs)] };
+          }
+          return Promise.resolve({ id: `batch-${last?.hash ?? ""}` });
+        }
+        const id = previousLock === undefined ? `0x${last.hash.slice(2).padStart(128, "0")}` : `0x${"b".repeat(128)}`;
+        if (singleton) {
+          const single = { ...last, logs: entries.flatMap((entry) => entry.logs) };
+          mined.splice(mined.length - entries.length, entries.length, single);
+          lockBatch = { id, entries: [single] };
+        } else {
+          lockBatch = { id, entries };
+        }
+        return Promise.resolve({ id });
       }
-      if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
+      if (method === "wallet_getCallsStatus") {
+        const reference = String(params[0]);
+        if (lockBatch === undefined) return Promise.resolve({ status: 200, receipts: [{ transactionHash: reference.slice(6) }] });
+        if (reference !== lockBatch.id) return Promise.resolve({ status: 400 });
+        if (options.lockBatch === "legacySingleton") return Promise.resolve({ status: 200, receipts: lockBatch.entries.map((entry) => ({ transactionHash: entry.hash })) });
+        const [firstEntry, secondEntry, ...remaining] = lockBatch.entries;
+        let entries = lockBatch.entries;
+        if (options.lockBatch === "duplicate" && secondEntry !== undefined) entries = [secondEntry, secondEntry, ...remaining];
+        if (options.lockBatch === "reversedIndex" && firstEntry !== undefined && secondEntry !== undefined) entries = [secondEntry, firstEntry, ...remaining];
+        const reportChain = options.lockBatch === "sameBlock" ? `0x0${chainId.toString(16)}` : quantity(BigInt(chainId));
+        const receipts = entries.map((entry) => ({
+          transactionHash: entry.hash,
+          blockNumber: quantity(entry.block),
+          blockHash: blockHash(entry.block),
+          status: options.failReceipts === true ? "0x0" : "0x1",
+          gasUsed: "0x5208",
+          logs: options.failReceipts === true ? [] : entry.logs,
+        }));
+        return Promise.resolve({
+          version: "2.0.0",
+          id: options.lockBatch === "wrongReference" ? `0x${"f".repeat(128)}` : lockBatch.id,
+          chainId: options.lockBatch === "wrongChain" || options.lockBatch === "wrongSingletonChain" ? "0x1" : reportChain,
+          status: notSentWithReceipt ? 400 : options.failReceipts === true ? 500 : 200,
+          atomic: options.lockBatch !== "nonAtomicSingleton",
+          receipts: options.lockBatch === "notSentWithMalformedReceipt" ? receipts[0] : receipts,
+        });
+      }
       if (method === "eth_getTransactionReceipt") {
         const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : receipt(entry);
+        return Promise.resolve(entry === undefined ? null : receipt(entry));
       }
       if (method === "eth_getTransactionByHash") {
         const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: entry.value };
+        if (entry === undefined) return Promise.resolve(null);
+        const wrongDeposit = options.lockBatch === "wrongDeposit" && entry.input.startsWith(selector("deposit"));
+        return Promise.resolve({
+          hash: entry.hash,
+          from: entry.from,
+          to: entry.to,
+          input: wrongDeposit ? depositCalldata(3_000_001n) : entry.input,
+          value: entry.value,
+          blockNumber: quantity(entry.block),
+          blockHash: blockHash(entry.block),
+          transactionIndex: quantity(entry.transactionIndex),
+        });
       }
-      if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
-      if (method === "eth_getCode") return runtimeCode;
-      if (method === "eth_getStorageAt") return `0x${"0".repeat(64)}`;
-      throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+      if (method === "eth_getBlockByNumber") {
+        if (params[0] === "latest" && options.lockBatch === "legacySingleton") return Promise.resolve(null);
+        const block = params[0] === "latest" ? mined.at(-1)?.block ?? 9n : params[0] === "finalized" ? finalized : BigInt(String(params[0]));
+        const transactions = mined.filter((entry) => entry.block === block).map((entry) =>
+          options.lockBatch === "wrongMembership" && entry.input.startsWith(selector("deposit")) ? hash("f") : entry.hash);
+        return Promise.resolve({ number: quantity(block), hash: blockHash(block), transactions });
+      }
+      if (method === "eth_getCode") {
+        if (params[0] === factory) return Promise.resolve(options.factoryObservation?.code ?? runtimeCode);
+        if (params[0] === factoryImplementation) return Promise.resolve(options.factoryObservation?.implementationCode ?? runtimeCode);
+        return Promise.resolve(runtimeCode);
+      }
+      if (method === "eth_getStorageAt") {
+        const implementation = encodeAbiParameters([{ type: "address" }], [factoryImplementation]);
+        return Promise.resolve(params[0] === factory ? options.factoryObservation?.slot ?? implementation : `0x${"0".repeat(64)}`);
+      }
+      return Promise.reject(Object.assign(new Error(`unsupported ${method}`), { code: 4200 }));
     },
   };
-  return { provider, seen, mined, mineCreation: () => mine({ to: factory, data: "0x" }).hash, mineCall: (call: { to: string; data: string }) => mine(call).hash, finalize: () => { finalized = BigInt(mined.length + 100); } };
+  return { provider, seen, mined, mineCreation: () => mine({ to: factory, data: "0x" }).hash, mineCall: (call: { to: string; data: string }) => mine(call).hash, finalize: (through = BigInt(mined.length + 100)) => { finalized = through; } };
 }
 
 function selector(name: string): string {
@@ -243,9 +369,9 @@ function announce(uuid: string, provider: unknown) {
 type Requested = { readonly method: string; readonly params?: ReadonlyArray<unknown> };
 
 function storageFailsOnSend(provider: { readonly request: (asked: Requested) => Promise<unknown> }) {
-  const write = Storage.prototype.setItem;
+  const descriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
   cleanups.push(() => {
-    Storage.prototype.setItem = write;
+    if (descriptor !== undefined) Object.defineProperty(Storage.prototype, "setItem", descriptor);
   });
   return {
     request: (asked: Requested) => {
@@ -265,7 +391,7 @@ function Follower({ runtime, page, account }: { runtime: ReturnType<typeof start
   return null;
 }
 
-async function followAs(runtime: ReturnType<typeof started>, page: OwnerVaultPage) {
+function followAs(runtime: ReturnType<typeof started>, page: OwnerVaultPage) {
   const root = createRoot(document.body.appendChild(document.createElement("div")));
   cleanups.push(() => root.unmount());
   return async (account: number) => {
@@ -281,8 +407,10 @@ const connected = Effect.gen(function* () {
   return yield* connectEvm(id, false);
 });
 
-describe('Create and register the vault without asking the wallet twice (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => {
-  it('the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing, a sign-out and the same account signing in again on the page bring back the request and its automatic check, and only the finalized exact deposit clears the slot (spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
+// spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+describe("Owner vault registration", () => {
+  // spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"
+  it("owner deposits once, sign-out/sign-in resumes check, finalized clears slot", async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
     const { page, check, ...result } = await runtime.runPromise(Effect.gen(function* () {
@@ -298,14 +426,14 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const included = yield* page.ask("Transfer", "OwnerCheck", check);
       return { page, check, sent, savedBeforePrompt, included: [included.notice, included.transfer.phase], kept: sessionStorage.getItem(keys.transfer) !== null };
     }));
-    const follow = await followAs(runtime, page);
+    const follow = followAs(runtime, page);
     const shown = await follow(actor);
     const signedOut = await follow(0);
     const back = await follow(actor);
     chain.finalize();
     const final = await runtime.runPromise(page.autoCheck("Transfer", () => 0, check));
     expect(result.sent).toBe(chain.mined[0]?.hash);
-    const savedRecord = JSON.parse(String(result.savedBeforePrompt));
+    const savedRecord = JSON.parse(String(result.savedBeforePrompt)) as { account?: number; request?: string; plan: string };
     expect(savedRecord).toMatchObject({ account: actor, request: "transfer" });
     expect(JSON.parse(savedRecord.plan)).toEqual({ kind: "evmCall", from: owner, chainId: quantity(BigInt(chainId)), to: nativeVault.vault, data: chain.mined[0]?.input, value: quantity(5n * 10n ** 18n) });
     expect({
@@ -346,7 +474,8 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
     expect(result).toEqual({ unclear: "VaultUncertain", otherPhase: "Idle", nonePhase: "Idle", samePhase: "Unclear", resend: "VaultRefused", afterConfirm: ["Reviewed", null], sends: 1 });
   });
 
-  it(`a withdrawal whose gas estimate the vault refuses as locked funds says so in plain words, saves nothing and asks the wallet nothing (spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them")`, async () => {
+  // spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
+  it("a withdrawal whose gas estimate the vault refuses as locked funds says so in plain words, saves nothing and asks the wallet nothing", async () => {
     const refusal = Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: { code: 3, message: "execution reverted", data: PLEDGED_FUNDS_SELECTOR } });
     const chain = fakeChain({ atomic: false, send: "mine", estimateReverts: { call: selector("withdrawUnused"), error: refusal } });
     const runtime = started();
@@ -361,10 +490,32 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
     }));
     expect(result).toEqual({ refused: lockedFundsText, saved: null, phase: "Reviewed", prompts: 0 });
   });
+
+  // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+  it.each([
+    ["runtime", { code: "0x6081" }, "Escrow factory code does not match reviewed deployment"],
+    ["implementation slot", { slot: `0x${"0".repeat(64)}` }, "Escrow implementation does not match reviewed deployment"],
+    ["implementation runtime", { implementationCode: "0x6081" }, "Escrow implementation does not match reviewed deployment"],
+    ["registrar", { registrar: factoryImplementation }, "Escrow asset, factory or registrar does not match reviewed deployment"],
+  ] as const)("a changed factory %s refuses before saving or asking the owner wallet", async (_name, factoryObservation, message) => {
+    const chain = fakeChain({ atomic: false, send: "mine", factoryObservation });
+    const result = await started().runPromise(Effect.gen(function* () {
+      announce("f327a18b-2e62-4beb-9c1d-c4a94c6aab21", chain.provider);
+      const connection = yield* connected;
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
+      const refused = yield* Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt)), { onFailure: (error) => error.message, onSuccess: () => "sent" });
+      return { refused, saved: sessionStorage.getItem(keys.transfer) !== null, phase: (yield* page.machine.get()).transfer.phase };
+    }));
+    expect({ ...result, prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length })
+      .toEqual({ refused: message, saved: false, phase: "Reviewed", prompts: 0 });
+  });
 });
 
-describe('Offer one atomic request only on a wallet that already supports it (spec/frontend/batchedDeposit.md, "Story: Offer one atomic request only on a wallet that already supports it"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")', () => {
-  it("an atomic wallet approves and deposits in one request, a reload resumes the saved reference without a second request, and only the finalized deposit event verifies it", async () => {
+// spec/frontend/batchedDeposit.md, "Story: Offer one atomic request only on a wallet that already supports it"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"
+describe("Atomic batch deposit", () => {
+  it("atomic wallet approves and deposits once and reload resumes until finalized", async () => {
     const chain = fakeChain({ atomic: true, send: "mine" });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -395,7 +546,36 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
     expect(result).toEqual({ capability: true, phases: ["WalletReference", "WalletReference", "HashKnown", "HashKnown", "Verified"], sameReference: true, again: "BatchStopped", savedIntent: true, cleared: null, batches: 1 });
   });
 
-  it('a separate approval included in a canonical block that is not final lets the owner review the deposit against the live allowance, and the deposit counts only at its finalized event (spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', async () => {
+  it.each([
+    { reply: "direct capability refusal", error: Object.assign(new Error("Wallet capability unavailable"), { code: 5700 }), phase: "Separate", resumed: "Unreviewed", failure: "BatchStopped", retained: false },
+    { reply: "nested capability code", error: Object.assign(new Error("The reply was lost"), { code: -32603, cause: { code: 5700 } }), phase: "Uncertain", resumed: "Uncertain", failure: "BatchStopped", retained: true },
+    { reply: "user decline", error: Object.assign(new Error("Declined"), { code: 4001 }), phase: "Declined", resumed: "Unreviewed", failure: "WalletDeclined", retained: false },
+  ])("registered vault batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, phase, resumed, failure, retained }) => {
+    let savedAtPrompt: string | null = null;
+    const chain = fakeChain({ atomic: true, send: "mine", batchRefusal: () => {
+      savedAtPrompt = sessionStorage.getItem(batchKey);
+      return error;
+    } });
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce(crypto.randomUUID(), chain.provider);
+      const connection = yield* connected;
+      const flow = yield* batchFlow(sessionSlots(), batchKey);
+      yield* flow.review(actor, yield* reviewTransfer(connection, tokenVault, "deposit", "2", "finalized"));
+      const outcome = yield* Effect.match(flow.send(connection, tokenVault, "2", "finalized"), { onFailure: (stopped) => stopped._tag, onSuccess: (state) => state.phase });
+      const after = (yield* flow.machine.get()).phase;
+      const reloaded = yield* batchFlow(sessionSlots(), batchKey);
+      const recovered = (yield* reloaded.machine.get()).phase;
+      const again = yield* Effect.exit(reloaded.send(connection, tokenVault, "2", "finalized"));
+      return { outcome, after, recovered, blocked: Exit.isFailure(again), slot: sessionStorage.getItem(batchKey) };
+    }));
+    expect(savedAtPrompt).not.toBeNull();
+    expect(result).toEqual({ outcome: failure, after: phase, recovered: resumed, blocked: true, slot: retained ? savedAtPrompt : null });
+    expect(chain.seen.filter((method) => method === "wallet_sendCalls" || method === "eth_sendTransaction")).toEqual(["wallet_sendCalls"]);
+  });
+
+  // spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+  it("separate approval proceeds at inclusion and deposit counts at finality", async () => {
     const options = { atomic: false, send: "mine" as const, approved: false };
     const chain = fakeChain(options);
     const runtime = started();
@@ -440,7 +620,8 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
     expect(result).toEqual({ approvalNeeded: false, batch: false, sent: true, calls: [[tokenVault.vault, selector("deposit")]], batches: 0 });
   });
 
-  it('a signed-out visitor\'s atomic wallet gets one approve-and-deposit request saved under the tab\'s slot for no account, and each review before sending decides the capability again (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt")', async () => {
+  // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"
+  it("signed-out visitor atomic batch saves under tab slot and re-checks capability", async () => {
     const options = { atomic: true, send: "mine" as const, approved: false, wallet: otherAccount.address };
     const chain = fakeChain(options);
     const deployment: FundingDeployment = { network: "base-mainnet", vault: tokenVault.vault, asset: tokenVault.asset, owner };
@@ -463,7 +644,7 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
         by,
         reviews: [atomic, covered, again].map((state) => [state.phase, state.capability]),
         sent: [sent.phase, sent.owner, sent.requests],
-        account: JSON.parse(String(sessionStorage.getItem(slots.batch))).account,
+        account: (JSON.parse(String(sessionStorage.getItem(slots.batch))) as { account?: number }).account,
         transfer: sessionStorage.getItem(slots.transfer),
       };
     }));
@@ -482,8 +663,9 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
   });
 });
 
-describe('Retain an uncertain deposit through replacement and finality (spec/frontend/provisionalVault.md, "Story: Retain an uncertain deposit through replacement and finality"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', () => {
-  it("the owner deposits into a provisional vault once, a reload resumes the saved transaction without a new prompt, and the deposit counts only once creation and deposit are final", async () => {
+// spec/frontend/provisionalVault.md, "Story: Retain an uncertain deposit through replacement and finality"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+describe("Provisional deposit recovery", () => {
+  it("provisional deposit reloads without re-prompt and counts at finality", async () => {
     const chain = fakeChain({ atomic: false, send: "mine", approved: true });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -494,7 +676,8 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       yield* first.reviewCreation("OrdinaryEvmToken", true);
       const opened = yield* first.followCreation(connection, creation);
       const sent = yield* first.deposit(connection, "2");
-      const savedHash = JSON.parse(JSON.parse(String(sessionStorage.getItem(provisionalKey))).plan).hash;
+      const storedPlan = (JSON.parse(String(sessionStorage.getItem(provisionalKey))) as { plan: string }).plan;
+      const savedHash = (JSON.parse(storedPlan) as { hash?: string }).hash;
       const reloaded = yield* provisionalVault(sessionSlots(), provisionalKey, tokenVault, owner, actor);
       const resumed = yield* reloaded.machine.get();
       const again = yield* Effect.match(reloaded.deposit(connection, "2"), { onFailure: (error) => error._tag, onSuccess: ({ state }) => state.phase });
@@ -534,13 +717,13 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       return page;
     });
 
-  it("a token deposit with no allowance on a wallet that cannot batch opens the exact approval first, saved under the provisional key before the wallet is asked, and opens the deposit prompt only once the approval read settles", async () => {
+  it("non-batch token deposit approves first under provisional key before deposit", async () => {
     const options = { atomic: false, send: "mine" as const, approved: false };
     const chain = fakeChain(options);
     const savedAtPrompt: unknown[] = [];
     const provider = {
       request: (asked: Requested) => {
-        if (asked.method === "eth_sendTransaction") savedAtPrompt.push(JSON.parse(JSON.parse(String(sessionStorage.getItem(provisionalKey))).plan));
+        if (asked.method === "eth_sendTransaction") savedAtPrompt.push(JSON.parse((JSON.parse(String(sessionStorage.getItem(provisionalKey))) as { plan: string }).plan));
         return chain.provider.request(asked);
       },
     };
@@ -572,7 +755,8 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
     });
   });
 
-  it(`an atomic wallet approves and deposits into the provisional vault with one request, a reload resumes it without a second request, and the deposit counts only once creation and deposit are final (spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent")`, async () => {
+  // spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"
+  it("atomic provisional deposit resumes on reload and counts at finality", async () => {
     const chain = fakeChain({ atomic: true, send: "mine" });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -637,7 +821,8 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
     });
   });
 
-  it(`a provisional deposit the wallet sent moves to the registered vault's own request slot when that vault's page loads, and the provisional slot is removed (spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner")`, async () => {
+  // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"
+  it("sent provisional deposit moves to registered vault slot on page load", async () => {
     const chain = fakeChain({ atomic: false, send: "mine", approved: true });
     const runtime = started();
     const sent = await runtime.runPromise(Effect.gen(function* () {
@@ -654,7 +839,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       const followed = yield* followVault(actor);
       return { phase: followed.transfer.phase, hash: followed.transfer.slot.hash, label: yield* savedAction(), held: savedRequestHeld(project, deployment, "2026-11") };
     }));
-    expect({ ...moved, account: JSON.parse(String(sessionStorage.getItem(batchKey))).account, provisional: sessionStorage.getItem(provisionalKey), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length }).toEqual({
+    expect({ ...moved, account: (JSON.parse(String(sessionStorage.getItem(batchKey))) as { account?: number }).account, provisional: sessionStorage.getItem(provisionalKey), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length }).toEqual({
       phase: "Sent",
       hash: sent.hash,
       label: "Deposit",
@@ -692,8 +877,9 @@ const cardState = Effect.flatMap(lockMachine(), (lock) => lock.get());
 const evmCard = Effect.map(connected, (evm): LockConnection => ({ family: "evm", address: evm.address, evm }));
 const tagOf = <A, E extends { readonly _tag: string }, R>(work: Effect.Effect<A, E, R>) => Effect.match(work, { onFailure: (error) => error._tag, onSuccess: () => "done" });
 
-describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Story: Lock months from the owner\'s wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card\'s own read, and only the owner\'s accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault\'s current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it")', () => {
-  it("a vault without pledge support shows no card, and the owner locks three months from the vault's month with one exact pledgeMonths transaction that shows only after the reloaded finalized read", async () => {
+// spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
+describe("Month locks", () => {
+  it("unsupported vault hides card and owner locks three months until finalized", async () => {
     const pledges: Pledges = new Map();
     const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
     const unsupported = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -726,7 +912,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   }, 20_000);
 
-  it(`a count other than 1, 3, 6 or 12, an amount below the monthly amount, a lowered month, short free funds and a deposit the wallet cannot batch are refused in that order and nothing is sent (spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount")`, async () => {
+  // spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"
+  it("invalid count, low amount, lowered month, short funds, and unbatchable deposit refused in order", async () => {
     const pledges: Pledges = new Map([[current, { amount: 3n * ether, open: true }]]);
     const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
     const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -748,31 +935,83 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   });
 
-  it(`a deposit and lock go to the wallet as one request, an included batch keeps checking until its finalized deposit, and a failed receipt locks nothing (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
-    const batched = async (failReceipts: boolean, uuid: string) => {
-      const pledges: Pledges = new Map();
-      const chain = fakeChain({ atomic: true, send: "mine", pledges, current, failReceipts });
-      const runtime = cardRuntime({ owner, evm: tokenVault, solana: undefined });
-      let reloads = 0;
-      const result = await runtime.runPromise(Effect.gen(function* () {
-        announce(uuid, chain.provider);
-        const connection = yield* evmCard;
-        yield* readCard(rowOf(tokenVault, pledges, 10_000_000n), 10_000_000n, nowSeconds());
-        yield* connectCard(connection);
-        const review = yield* reviewCard(connection, 1, "2", "3", 1_000_000n);
-        yield* sendCard(connection);
-        const included = failReceipts ? undefined : (yield* Effect.timeoutOption(watchCard(connection, Effect.void), "6 seconds"), (yield* cardState).phase);
+  const batched = async (lockBatch: LockBatchReport, failReceipts = false) => {
+    const pledges: Pledges = new Map();
+    const chain = fakeChain({ atomic: true, send: "mine", pledges, current, lockBatch, failReceipts });
+    const runtime = cardRuntime({ owner, evm: tokenVault, solana: undefined });
+    let reloads = 0;
+    const journey = Effect.gen(function* () {
+      announce("4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a", chain.provider);
+      const connection = yield* evmCard;
+      yield* readCard(rowOf(tokenVault, pledges, 10_000_000n), 10_000_000n, nowSeconds());
+      yield* connectCard(connection);
+      const review = yield* reviewCard(connection, 1, "2", "3", 1_000_000n);
+      yield* sendCard(connection);
+      const lock = yield* lockMachine();
+      const watcher = yield* Effect.forkChild(watchCard(connection, Effect.sync(() => { reloads += 1; })), { startImmediately: true });
+      const nextCheck = (checks: number) => Effect.gen(function* () {
+        yield* TestClock.adjust("5 seconds");
+        return Option.getOrThrow(yield* Stream.runHead(Stream.filter(lock.changes, (state) => state.checks === checks)));
+      });
+      let partial;
+      if (lockBatch === "multiple" && !failReceipts) {
+        const deposit = chain.mined.find((entry) => entry.input.startsWith(selector("deposit")));
+        if (deposit === undefined) throw new Error("Missing deposit transaction in the batch fixture.");
+        chain.finalize(deposit.block);
+        partial = (yield* nextCheck(1)).phase;
+      }
+      let state = yield* cardState;
+      if (state.phase === "LockChecking") {
         chain.finalize();
-        yield* watchCard(connection, Effect.sync(() => { reloads += 1; }));
-        const state = yield* cardState;
-        return { deposit: review.depositGross, included, phase: state.phase, notice: state.notice, withDeposit: sendsDeposit(state), last: chain.mined.at(-1)?.input };
-      }));
-      return { ...result, reloads, locked: [...pledges.values()], batches: chain.seen.filter((method) => method === "wallet_sendCalls").length, transactions: chain.seen.filter((method) => method === "eth_sendTransaction").length };
-    };
-    const shared = { deposit: 3_000_000n, last: pledgeMonthsCalldata(current, 1, 2_000_000n), batches: 1, transactions: 0 };
-    expect(await batched(false, "4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a")).toMatchObject({ ...shared, included: "LockChecking", phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }] });
-    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockFailed", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
-  }, 40_000);
+        state = yield* nextCheck(state.checks + 1);
+      }
+      if (state.phase === "LockChecking") yield* Fiber.interrupt(watcher);
+      else yield* Fiber.join(watcher);
+      return { deposit: review.depositGross, partial, phase: state.phase, notice: state.notice, withDeposit: sendsDeposit(state), last: chain.mined.at(-1)?.input };
+    });
+    const result = await runtime.runPromise(Effect.provide(journey, TestClock.layer()));
+    return { ...result, reloads, locked: [...pledges.values()], batches: chain.seen.filter((method) => method === "wallet_sendCalls").length, transactions: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+  };
+
+  it(`a deposit and lock use one request and the lock waits for both finalized receipts (spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
+    expect(await batched("multiple")).toMatchObject({
+      deposit: 3_000_000n,
+      partial: "LockChecking",
+      phase: "LockIncluded",
+      last: pledgeMonthsCalldata(current, 1, 2_000_000n),
+      reloads: 1,
+      locked: [{ amount: 2_000_000n, open: true }],
+      batches: 1,
+      transactions: 0,
+    });
+  });
+
+  it("a lock batch verifies finalized receipts ordered within one block with a padded report chain ID", async () => {
+    expect(await batched("sameBlock")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a legacy singleton lock batch still completes when the pre-prompt chain head is unavailable", async () => {
+    expect(await batched("legacySingleton")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a modern singleton lock batch verifies its bound finalized receipt", async () => {
+    expect(await batched("modernSingleton")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a fully reverted atomic lock batch locks nothing", async () => {
+    expect(await batched("multiple", true)).toMatchObject({ phase: "LockIdle", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [], batches: 1, transactions: 0 });
+  });
+
+  it("a reverted atomic lock batch with different deposit calldata stays pending", async () => {
+    expect(await batched("wrongDeposit", true)).toMatchObject({ phase: "LockChecking", reloads: 0, locked: [], batches: 1, transactions: 0 });
+  });
+
+  it.each([
+    "conflictingHead", "duplicate", "reversedIndex", "stale", "wrongChain", "wrongReference", "wrongDeposit", "wrongPledge", "wrongMembership",
+    "wrongSingletonChain", "nonAtomicSingleton", "notSentWithReceipt", "notSentWithMalformedReceipt", "malformedPledgeBlock",
+  ] as const)("a lock batch with %s evidence stays pending", async (shape) => {
+    expect(await batched(shape)).toMatchObject({ phase: "LockChecking", reloads: 0, batches: 1, transactions: 0 });
+  });
 
   it("a lapsed month is released with expirePledge by a connected wallet that is not the owner's, whose own lock review is refused", async () => {
     const lapsed = monthAfter(current, -3);
@@ -801,9 +1040,9 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   }, 20_000);
 
-  it("the Solana lock review rebuilds the prepared message from the reviewed months and sends it through the wallet, and a prepared transaction that differs is refused before the wallet is asked", async () => {
+  it("Solana lock review rebuilds prepared message and refuses mismatched transaction", async () => {
     const pair = async () => {
-      const keys = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+      const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
       return { address: base58Encode(raw), raw, sign: async (message: Uint8Array) => new Uint8Array(await crypto.subtle.sign("Ed25519", keys.privateKey, Uint8Array.from(message))) };
     };
@@ -817,7 +1056,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     const unsigned = new Uint8Array(65 + compiled.bytes.length);
     unsigned[0] = 1;
     unsigned.set(compiled.bytes, 65);
-    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction"] };
+    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction", "solana:signMessage"] };
     const signed: Uint8Array[] = [];
     const solanaWallet = {
       version: "1.0.0",
@@ -826,7 +1065,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
       chains: ["solana:devnet"],
       accounts: [account],
       features: {
-        "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+        "standard:connect": { version: "1.0.0", connect: () => Promise.resolve({ accounts: [account] }) },
+        "solana:signMessage": { version: "1.0.0", signMessage: async ({ message }: { message: Uint8Array }) => [{ signedMessage: message, signature: await wallet.sign(message) }] },
         "solana:signAndSendTransaction": {
           version: "1.0.0",
           supportedTransactionVersions: ["legacy"],
@@ -839,17 +1079,17 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     } as unknown as Wallet;
     cleanups.push(getWallets().register(solanaWallet));
     const run = async (wire: Uint8Array) => {
-      const asked: unknown[] = [];
-      const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
-        asked.push(body);
-        const answer = body.step === "check"
+      const steps: string[] = [];
+      const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { step } = await new Request(input, init).json() as { readonly step: string };
+        steps.push(step);
+        const answer = step === "check"
           ? { status: "finalized" }
           : { plan: { wallet: wallet.address, periods, requested: periods, amountMinor: "2000000", decimals: 6, current: periods.map((period) => ({ period, amountMinor: "0", open: false })), transaction: { blockhash, lastValidBlockHeight: 100, transaction: base64Encode(wire), networkFeeLamports: "5000" } } };
         return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
       };
       const solana = { projectId: "slop", network: "solana-devnet", vault: project.address, terms: { program: program.address, project: project.address, owner: wallet.address, mint: null, tokenProgram: null } };
-      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch as typeof globalThis.fetch);
+      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch);
       const outcome = await runtime.runPromise(Effect.gen(function* () {
         const choice = yield* WalletChoice;
         const id = (yield* choice.current()).find((offer) => offer.name === "Lock Solana")?.id ?? 0;
@@ -863,7 +1103,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
         yield* watchCard(connection, Effect.void);
         return { reviewed, phase: (yield* cardState).phase };
       }));
-      return { ...outcome, steps: asked.map((body) => (body as { step: string }).step) };
+      return { ...outcome, steps };
     };
     const altered = Uint8Array.from(unsigned);
     altered[altered.length - 1] = (altered[altered.length - 1] ?? 0) ^ 1;
@@ -880,8 +1120,9 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
   }, 20_000);
 });
 
-describe('Withdraw only funds the month\'s promise or locks leave free (spec/frontend/vaultLocks.md, "Story: Withdraw only funds the month\'s promise or locks leave free"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop\'s own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "A withdrawal that would break the month\'s promise is refused on Slop\'s pages"; spec/frontend/projections.md, "Slop\'s pages refuse a withdrawal below the promised amount"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold")', () => {
-  it("an upgraded vault with 700 free and 500 locked lets a 200 withdrawal through, refuses 201 with the locked-funds text before the wallet is asked, and skips the page's promise guard", async () => {
+// spec/frontend/vaultLocks.md, "Story: Withdraw only funds the month's promise or locks leave free"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"
+describe("Withdrawal guards", () => {
+  it("upgraded vault allows free withdrawal, refuses locked funds, skips promise guard", async () => {
     const promisePool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(700n) };
     const locks = { cachedSupport: true, walletRead: true, freeKnown: true, free: toAmount(700n), locked: toAmount(500n) };
     const runtime = started();
@@ -895,7 +1136,7 @@ describe('Withdraw only funds the month\'s promise or locks leave free (spec/fro
     expect(result).toEqual({ allowed: ["Quiet", "Reviewed"], refused: lockedFundsText, saved: null });
   });
 
-  it("with two vaults, a withdrawal that would leave this vault's freshly reviewed free balance below the owed amount is refused before the wallet is asked although the pool's cached total covers it, and a review without a free balance skips the page's guard", async () => {
+  it("two vaults check per-vault free balance and skip guard when balance unread", async () => {
     const pool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(5000n) };
     const reviewed = { cachedSupport: false, walletRead: false, freeKnown: true, free: toAmount(1100n), locked: toAmount(0n) };
     const runtime = started();
@@ -915,7 +1156,8 @@ describe('Withdraw only funds the month\'s promise or locks leave free (spec/fro
   });
 });
 
-describe('Check registration and transfers automatically without retiring the owner (spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', () => {
+// spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+describe("Automatic registration and transfer checks", () => {
   it("in a hidden tab a saved transfer is not checked automatically and spends none of its automatic asks", async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
@@ -980,8 +1222,9 @@ describe('Check registration and transfers automatically without retiring the ow
   });
 });
 
-describe('Close ASI\'s November month early from its owner awards (spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change")', () => {
-  it("after the cutoff November is the closeout project's last reachable month and other projects stop at October, its fixed allocations are never edited or saved, and Finalize sends the sequence it read and freezes the month", async () => {
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
+describe("ASI November closeout", () => {
+  it("November closeout stops other projects at October and freezes fixed allocations", async () => {
     const monthPath = "/api/v1/payments/projects/asi/monthly/2026-11";
     const allocation = { githubUserId: "1", login: "fixture-contributor", grossBase: "150000000", proposedGrossBase: "150000000", sourceDigest: "c".repeat(64) };
     const view = {
@@ -998,15 +1241,16 @@ describe('Close ASI\'s November month early from its owner awards (spec/frontend
     };
     const run = { trigger: "owner", frozenAt: "2026-11-19T12:00:00.000Z", snapshotSha256: "d".repeat(64), totalGrossBase: "150000000", network: "robinhood-mainnet", vault: `0x${"2".repeat(40)}`, funded: true, awards: [{ githubUserId: "1", login: "fixture-contributor", grossBase: "150000000", feeBase: "1500000", netBase: "148500000", state: "awaiting-reservation" }] };
     const asked: Array<readonly [string, string, unknown]> = [];
-    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(input instanceof Request ? input.url : String(input), location.origin).pathname;
       const method = init?.method ?? "GET";
       const body = init?.body;
-      asked.push([method, path, body === undefined || body === null ? null : JSON.parse(body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body))]);
+      const text = typeof body === "string" ? body : body instanceof Uint8Array ? new TextDecoder().decode(body) : "";
+      asked.push([method, path, text === "" ? null : JSON.parse(text)]);
       const answer = path === `${monthPath}/finalize` ? { ...view, run } : view;
-      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+      return Promise.resolve(new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } }));
     };
-    const runtime = ManagedRuntime.make(Layer.mergeAll(webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch)));
+    const runtime = ManagedRuntime.make(Layer.mergeAll(webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch)));
     cleanups.push(() => void runtime.dispose());
     const viewedAt = Date.parse("2026-11-22T00:00:00.000Z");
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -1032,7 +1276,54 @@ describe('Close ASI\'s November month early from its owner awards (spec/frontend
   });
 });
 
-describe('Let anyone fund a project from its public page and see who funded (spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration")', () => {
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"
+describe("Monthly award navigation", () => {
+  it("keeps Eliza October reachable in December", async () => {
+    const december = Date.parse("2026-12-01T00:00:00.000Z");
+    const octoberEntry = [{ cycleId: "2026-10", monthlyCapMinor: "0" }];
+    const project: FundingProject = { ...lockProject, id: "eliza", slug: "eliza", reward: { ...lockProject.reward, cycleCaps: octoberEntry } };
+    const route: Route = { kind: "Project", projectId: project.id, cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" };
+    const runtime = pageRuntime(route);
+    const container = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(container);
+    const hostedClock = vi.spyOn(Date, "now").mockReturnValue(december);
+    answering = (path) => path === "/api/v1/project-session"
+      ? new Response(JSON.stringify({ session: null }), { headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
+    cleanups.push(() => {
+      hostedClock.mockRestore();
+      answering = undefined;
+      void act(() => root.unmount());
+      void runtime.dispose();
+    });
+    await act(() => Promise.resolve(root.render(<OwnerAwards runtime={runtime} project={project} awardMonths={[]} networkPays={() => true} />)));
+    const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Open");
+    expect(open).toBeDefined();
+    await act(() => Promise.resolve(open?.click()));
+    const nav = container.querySelector('[aria-label="Contribution month"]');
+    const previous = nav?.querySelector<HTMLButtonElement>('[aria-label="Previous award month"]');
+    expect({ month: nav?.textContent?.trim(), disabled: previous?.disabled }).toEqual({ month: "November 2026", disabled: false });
+    await act(() => Promise.resolve(previous?.click()));
+    expect({ month: nav?.textContent?.trim(), disabled: previous?.disabled }).toEqual({ month: "October 2026", disabled: true });
+    const decemberBounds = { first: "2026-11", last: "2026-11", start: "2026-11" };
+    expect({
+      eliza: monthBounds("eliza", [], december, octoberEntry),
+      beforeClose: monthBounds("eliza", [], Date.parse("2026-10-31T23:59:59.999Z"), octoberEntry),
+      withoutRecord: monthBounds("eliza", [], december),
+      unrelatedProject: monthBounds("slopdotcash", [], december, octoberEntry),
+      earlierPublicCycle: monthBounds("eliza", ["2026-09"], december, octoberEntry),
+    }).toEqual({
+      eliza: { ...decemberBounds, first: "2026-10" },
+      beforeClose: { first: "2026-11", last: "2026-09", start: "2026-09" },
+      withoutRecord: decemberBounds,
+      unrelatedProject: decemberBounds,
+      earlierPublicCycle: { ...decemberBounds, first: "2026-09" },
+    });
+  });
+});
+
+// spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
+describe("Public project funding", () => {
   const period = "2026-11";
   const deployment: FundingDeployment = { network: "base-mainnet", vault: nativeVault.vault, asset: nativeVault.asset, owner };
   const project: FundingProject = { id: "public-funding", slug: "public-funding", reward: { kind: "monthly-pool", monthlyCapMinor: "250000000" }, escrow: { chain: "base", deployments: [deployment] } };
@@ -1101,8 +1392,9 @@ describe('Let anyone fund a project from its public page and see who funded (spe
 
   it("free funds of 253 USDC against 250 a month cover one month, less than 250 covers less than one, and a vault with no free balance on record shows nothing", () => {
     const now = periodContaining(nowSeconds());
-    const covered = (freeBalance: string | null) => publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance }], () => true, now);
-    expect([covered("253000000"), covered("249999999"), covered(null), publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now)]).toEqual([
+    const normalize = (coverage: ReturnType<typeof publicCoverage>) => (coverage.tag === "Covers" ? { tag: coverage.tag, months: toAmount(fromAmount(coverage.months)) } : coverage);
+    const covered = (freeBalance: string | null) => normalize(publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance }], () => true, now));
+    expect([covered("253000000"), covered("249999999"), covered(null), normalize(publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now))]).toEqual([
       { tag: "Covers", months: toAmount(1n) },
       { tag: "Covers", months: toAmount(0n) },
       { tag: "NoCoverage" },
@@ -1118,11 +1410,11 @@ describe('Let anyone fund a project from its public page and see who funded (spe
       new Response(JSON.stringify({ projectId: "slop", deposits: [row], total: 3, servedAt: "2026-11-20T12:00:00.000Z" }), { status: 200, headers: { "content-type": "application/json" } }),
     ];
     const asked: string[] = [];
-    const fetch = async (input: RequestInfo | URL) => {
+    const fetch = (input: RequestInfo | URL) => {
       asked.push(new URL(input instanceof Request ? input.url : String(input), location.origin).pathname);
-      return replies.shift() ?? new Response("{}", { status: 500 });
+      return Promise.resolve(replies.shift() ?? new Response("{}", { status: 500 }));
     };
-    const runtime = ManagedRuntime.make(Layer.provide(fundersServicesOf(), Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch)));
+    const runtime = ManagedRuntime.make(Layer.provide(fundersServicesOf(), Layer.succeed(FetchHttpClient.Fetch, fetch)));
     cleanups.push(() => void runtime.dispose());
     const views = await runtime.runPromise(Effect.gen(function* () {
       const read = yield* ReadMachine;
@@ -1173,7 +1465,8 @@ describe('Let anyone fund a project from its public page and see who funded (spe
     }).toEqual({ fund: 0, disclosure: false, form: null, deposits: true });
   });
 
-  it(`a batched deposit and lock into a native-ETH vault sends the deposit with a value equal to its gross amount (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path")`, async () => {
+  // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"
+  it("a batched deposit and lock into a native-ETH vault sends the deposit with a value equal to its gross amount", async () => {
     const pledges: Pledges = new Map();
     const chain = fakeChain({ atomic: true, send: "mine", pledges, current });
     const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -1201,16 +1494,18 @@ interface Asked {
 function replying(replies: Array<{ readonly status?: number; readonly body: unknown }>) {
   const asked: Asked[] = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    const text = input instanceof Request ? await input.clone().text() : typeof init?.body === "string" ? init.body : "";
-    asked.push({ method: (input instanceof Request ? input.method : init?.method) ?? "GET", path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    const text = await request.text();
+    asked.push({ method: request.method, path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
     const reply = replies.shift() ?? { status: 500, body: { error: "unexpected", message: "Unexpected" } };
     return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
   };
-  return { asked, fetch: Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch) };
+  return { asked, fetch: Layer.succeed(FetchHttpClient.Fetch, fetch) };
 }
 
-describe('Sign the owner\'s monthly transactions from a saved attempt (spec/frontend/ownerMonthly.md, "Story: Sign the owner\'s monthly transactions from a saved attempt"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve")', () => {
+// spec/frontend/ownerMonthly.md, "Story: Sign the owner's monthly transactions from a saved attempt"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+describe("Owner monthly transactions", () => {
   it("a held reserve says why and opens nothing, an approved one is reviewed, and its saved release clears only when the server finds it finalized", async () => {
     const vault = "0x5e1f0000000000000000000000000000000000aa";
     const ready = {
@@ -1234,9 +1529,10 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       const plan = { kind: "evmRelease" as const, planId: ready.planId, call: { kind: "evmCall" as const, from: "0x0000000000000000000000000000000000000b0b", chainId: quantity(BigInt(chainId)), to: vault, data: "0x01", value: "0x0" } };
       yield* monthly.submit("Release", (beforePrompt) => Effect.as(beforePrompt(plan), hash("e")));
       const pending = yield* checkSavedRelease();
+      const pendingPhase = (yield* monthly.machine.get()).release.phase;
       const kept = sessionStorage.length > 0;
       const finalized = yield* checkSavedRelease();
-      return { held, approved: approved.kind, pending: [pending.status, (yield* monthly.machine.get()).release.phase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
+      return { held, approved: approved.kind, pending: [pending.status, pendingPhase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
     }));
     expect({ ...result, checks: asked.slice(3).map((entry) => entry.body) }).toEqual({
       held: { kind: "held", message: "Total correct. Nothing to release." },
@@ -1247,7 +1543,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
     });
   });
 
-  it('a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept (spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt")', async () => {
+  // spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
+  it("a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept", async () => {
     const deployment = deploymentOf(frozenMonth.deployment);
     const period = parsePeriod(frozenMonth.period);
     if (deployment === undefined || period === undefined) throw new Error("the frozen month names its vault and period");
@@ -1283,7 +1580,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
     });
   });
 
-  it('a reserve release and an EVM automatic-payment setting development saved before the cut-over resume as the signed-in owner\'s saved attempts and clear once their own hash is found finalized, without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', async () => {
+  // spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+  it("pre-cutover reserve release and autopay resume as owner attempts and clear finalized", async () => {
     const deployment = deploymentOf(frozenMonth.deployment);
     if (deployment === undefined) throw new Error("the frozen month names its vault");
     const releaseKey = `slop:monthly-release:v1:${lockProject.id}:${frozenMonth.period}:${deployment.network}`;
@@ -1339,7 +1637,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
   });
 });
 
-describe('Read the private bounty vault\'s funds under current authority (spec/frontend/ownerMonthly.md, "Story: Read the private bounty vault\'s funds under current authority"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot")', () => {
+// spec/frontend/ownerMonthly.md, "Story: Read the private bounty vault's funds under current authority"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+describe("Read the private bounty vault's funds under current authority", () => {
   it("a failed private read shows an error and no balance, and the next read shows the finalized snapshot's funds to the current owner", async () => {
     const funds = { currency: "USDC", decimals: 6, network: "base", freeMinor: "5000000", snapshotAt: "2026-11-20T12:00:00.000Z", availableMinor: "5000000", assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", deploymentNetwork: "base-mainnet" };
     const { asked, fetch } = replying([{ status: 503, body: { error: "unavailable", message: "Unavailable" } }, { body: { revision: 3, canSetup: true, networks: ["base-mainnet"], funds } }]);
@@ -1359,8 +1658,9 @@ describe('Read the private bounty vault\'s funds under current authority (spec/f
   });
 });
 
-describe('Create and register the vault from the setup review (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', () => {
-  it("a review whose factory call differs from the project's terms is refused, the matching one is saved before the wallet, and the creation registers only on the server's registered answer", async () => {
+// spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+describe("Vault setup review", () => {
+  it("mismatched factory call refused, matching saved before wallet, registers finalized", async () => {
     const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
     const creation = creationOf({ owner, projectDigest: registryProjectDigest("slop"), asset: usdc, bounty: false, monthlyCap: 250_000_000n, automatic: true });
     if (creation === undefined) throw new Error("no creation");
@@ -1402,7 +1702,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
   const developmentCreation = (transaction: string) => JSON.stringify({ version: 1, input: { network: "base-mainnet", claimId: "c1", automatic: true, expectedRevision: 7 }, review: { owner, asset: usdc, capDisplay: "250 USDC", payoutPolicy: "ordinary" }, hash: transaction });
   const registerBody = { step: "register", expectedRevision: 7, network: "base-mainnet", claimId: "c1", automatic: true, payoutPolicy: "ordinary", transactionId: hash("c") };
 
-  it('a creation request development saved before the cut-over resumes as the signed-in owner\'s pending creation and registers from its hash without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+  // spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+  it("a creation request development saved before the cut-over resumes as the signed-in owner's pending creation and registers from its hash without asking the wallet", async () => {
     const terms = setupTerms("legacy-setup");
     const key = setupKey(terms.projectId, terms.purpose);
     sessionStorage.setItem(key, developmentCreation(hash("c")));
@@ -1424,7 +1725,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
     });
   });
 
-  it('a creation the wallet sends while browser storage refuses to record its hash is reported as sent but not kept in storage (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+  // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+  it("a creation the wallet sends while browser storage refuses to record its hash is reported as sent but not kept in storage", async () => {
     const creation = creationOf({ owner, projectDigest: registryProjectDigest("kept-setup"), asset: usdc, bounty: false, monthlyCap: 250_000_000n, automatic: true });
     if (creation === undefined) throw new Error("no creation");
     const review = { payoutPolicy: "ordinary", family: "evm", network: "base-mainnet", owner, asset: usdc, cap: "250000000", capDisplay: "250 USDC", automatic: true, chainId: "8453", existingVault: null, transaction: { from: owner, to: factory, data: createVaultCalldata(creation), value: "0x0" } };
@@ -1444,7 +1746,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
     expect({ ...sent, mined: chain.mined.map((entry) => [entry.to, entry.input]) }).toEqual({ hash: chain.mined[0]?.hash, kept: "storage", mined: [[factory, createVaultCalldata(creation)]] });
   });
 
-  it('a pending creation whose registration answer names the included vault shows the provisional deposit form under it (spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt")', async () => {
+  // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"
+  it("a pending creation whose registration answer names the included vault shows the provisional deposit form under it", async () => {
     const terms = setupTerms("provisional-setup");
     sessionStorage.setItem(setupKey(terms.projectId, terms.purpose), developmentCreation(hash("c")));
     const provisional = { network: "base-mainnet", vault: tokenVault.vault, owner, asset: usdc, deploymentTransaction: hash("c") };

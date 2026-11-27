@@ -15,7 +15,7 @@ import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
 import { IntakeCounts, IntakePause, ProjectParticipation, type SlopRate, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
 import { Request, Response } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
-import { submissionFeeOptions } from "../src/client/submissionFee.vibe"
+import { submissionFeeOptions, submissionFeeSettingOf } from "../src/client/submissionFee.vibe"
 import { IntakePauseLive, SubmissionFeeSettingLive } from "../src/projects/feeGateReads.vibe"
 import { IntakeCountsLive } from "../src/projects/mergeActivity/intakeCounts.vibe"
 import { refreshMergeActivity } from "../src/projects/mergeActivity/job.vibe"
@@ -216,15 +216,15 @@ const Built = Layer.effect(World, effect {
 })
 
 const localOrigin = "http://localhost:8787"
+let backendRoutesScript: Promise<string> | undefined
 
 function backendAt(site: { readonly origin?: string; readonly vars?: Readonly<Record<string, string>> }) {
   return Layer.provideMerge(Layer.unwrap(effect {
     const world = try World
     const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+    const script = try promise(() => backendRoutesScript ??= bundle(new URL("../../points", import.meta.url).pathname, { config: "test/support/backendRoutes/vite.config.ts", entry: "backendRoutes" }))
     return areaLayer({
-      root: new URL("../../points", import.meta.url).pathname,
-      config: "test/support/backendRoutes/vite.config.ts",
-      entry: "backendRoutes",
+      script,
       ...site.origin === undefined ? {} : { origin: site.origin },
       d1: { SLOP_DB: "slop-private" },
       vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl, ...site.vars },
@@ -420,7 +420,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const afterWanted = try stored(id)
     const feeHigh = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "20000000" } }), expectedRevision: 3 })
     const feeShape = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amount: "2000000" } }), expectedRevision: 3 })
-    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000" } }), expectedRevision: 3 })
+    const feeStandingBad = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, standingDeposits: "false" } }), expectedRevision: 3 })
+    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000", standingDeposits: false } }), expectedRevision: 3 })
     const after = try stored(id)
     const slopbot = (field(after.manifest, "slopbot") ?? {}) as Record<string, unknown>
     const changes = { presentation: ["slopbot"], executable: [], financial: [] }
@@ -435,7 +436,13 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       wanted: [wanted.status, field(wanted.body, "changes"), afterWanted.revision],
       feeHigh: refusedNaming(feeHigh, "submissionFee"),
       feeShape: refusedNaming(feeShape, "submissionFee"),
+      feeStandingBad: refusedNaming(feeStandingBad, "submissionFee"),
       fee: [fee.status, field(fee.body, "changes"), after.revision],
+      feeParsed: [
+        submissionFeeSettingOf({ enabled: true, amountMinor: "2500000", standingDeposits: false }),
+        submissionFeeSettingOf({ enabled: true, standingDeposits: true }),
+        submissionFeeSettingOf({ enabled: false, standingDeposits: false }),
+      ],
       slopbot: [slopbot.intakeCap, slopbot.wantedIssues, slopbot.submissionFee, typeof slopbot.automaticClosure],
       unexpected: world.net.unexpected,
       outboundErrors: area.outboundErrors,
@@ -450,8 +457,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       wanted: [200, changes, 3],
       feeHigh: [422, "invalid_manifest", true],
       feeShape: [422, "invalid_manifest", true],
+      feeStandingBad: [422, "invalid_manifest", true],
       fee: [200, changes, 4],
-      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "undefined"],
+      feeParsed: [{ amountMinor: "2500000" }, { amountMinor: "2000000" }, null],
+      slopbot: [25, true, { enabled: true, amountMinor: "2500000", standingDeposits: false }, "undefined"],
       unexpected: [],
       outboundErrors: [],
     })
@@ -998,6 +1007,29 @@ layer(feeStarted("backend-catchup5-fee"), { excludeTestServices: true, timeout: 
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-19T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "250000000000000000000", keptTo: burn })
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-21T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "300000000000000000000", keptTo: burn })
       assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-17T11:59:59.999Z"), null)
+      const defaultOptions = submissionFeeOptions("2000000", stored, "2026-11-19T00:00:00.000Z")
+      assert.deepStrictEqual(defaultOptions.map((option) => [option.network, option.symbol, option.chainId]), [
+        ["base-mainnet", "USDC", 8453],
+        ["robinhood-mainnet", "USDG", 4663],
+        ["robinhood-mainnet", "SLOP", 4663],
+        ["solana-mainnet", "USDC", null],
+      ])
+      assert.deepStrictEqual(defaultOptions.filter((option) => option.network === "solana-mainnet"), [{
+        network: "solana-mainnet",
+        chainId: null,
+        contract: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        symbol: "USDC",
+        decimals: 6,
+        amount: "2000000",
+        minimumAccepted: "2000000",
+        keptTo: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+      }])
+      assert.deepStrictEqual(submissionFeeOptions("2000000", [], day(19), { solanaOn: false }).map((option) => [option.network, option.symbol]), [
+        ["base-mainnet", "USDC"],
+        ["robinhood-mainnet", "USDG"],
+      ])
+      assert.deepStrictEqual(submissionFeeOptions("2000000", [], day(19), { solanaProgramId: null }).some((option) => option.network === "solana-mainnet"), false)
     }
   })
 

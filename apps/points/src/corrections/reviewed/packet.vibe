@@ -81,6 +81,7 @@ export schema IdenticalAcceptedChange {
   readonly diffSha256: string
   readonly carriedAcceptance?: boolean
   readonly emptySquash?: boolean
+  readonly emptyMerge?: true
   readonly survivingCarrier?: boolean
 }
 export schema RewardedUnit { readonly recordDigest: string; readonly recordJson: string; readonly claimId: string; readonly workUnitId: string; readonly awardSourceId: string }
@@ -137,8 +138,6 @@ export schema HistoricalPacket {
   readonly recipientCorrections: ReadonlyArray<PacketRecipientCorrection>
   readonly duplicateRetirements?: ReadonlyArray<PacketRetirement>
 }
-
-export type Author = CorrectionActor | null
 
 export const historicalFrom = "2026-09-27T00:00:00.000Z"
 export const historicalThrough = "2026-11-01T00:00:00.000Z"

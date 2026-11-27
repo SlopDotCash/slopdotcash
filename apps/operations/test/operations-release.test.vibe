@@ -79,6 +79,25 @@ module stagedGitHub {
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
+
+  /** @throws {never} */
+  export function recordFetch(
+    answers: ReadonlyMap<string, () => { readonly status?: number; readonly body: unknown }>,
+    mode: "offline" | "hang" = "offline",
+  ): { readonly fetchImpl: typeof globalThis.fetch; readonly seen: string[] } {
+    const seen: string[] = []
+    const fetchImpl: typeof globalThis.fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input)
+      seen.push(url)
+      const answer = answers.get(url)
+      if (answer !== undefined) {
+        const { status = 200, body } = answer()
+        return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))
+      }
+      return mode === "hang" ? new Promise<Response>(() => undefined) : Promise.reject(new Error("offline"))
+    }
+    return { fetchImpl, seen }
+  }
 }
 module actionsSimulation {
   import { Clock, Duration, Effect } from "effect"
@@ -280,7 +299,7 @@ module actionsSimulation {
 }
 module workflowShape {
   import { spawnSync } from "node:child_process"
-  import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+  import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { join } from "node:path"
   import { parse } from "yaml"
@@ -335,6 +354,7 @@ module workflowShape {
     return {
       github: {
         ref: `refs/heads/${run.ref ?? "main"}`,
+        sha: "a".repeat(40),
         event_name: run.event ?? "push",
         run_attempt: 2,
         event: { repository: { id: 100 }, workflow_run: { head_repository: {}, ...run.workflowRun } },
@@ -403,15 +423,18 @@ mkdir -p "$BUNDLE/github"
 `
 
   /** @throws {Error} */
-  function deadline(prepare: Job, scenario: DeadlineScenario): Ran {
+  function deadline(prepare: Job, scenario: DeadlineScenario) {
     const context = contextOf({ ref: scenario.ref, collectorRunner: scenario.hosted ? "" : "slop-collector", hosted: scenario.hosted })
     const reserve = stepOf(prepare, "Reserve checked bundle time for hosted main collection")
     const collect = stepOf(prepare, "Generate live contribution data")
     const reserved = runs(reserve.if, context) ? `${reserve.run ?? ""}\nsource "$GITHUB_ENV"` : ""
     const script = [collectionStubs, reserved, "clock=$((clock + SETUP_TIME))", collect.run ?? ""].join("\n")
     const directory = mkdtempSync(join(tmpdir(), "slop-collection-deadline-"))
+    const output = join(directory, "github-output")
+    writeFileSync(output, "")
     const ran = bash(script, {
       GITHUB_ENV: join(directory, "github-env"),
+      GITHUB_OUTPUT: output,
       GITHUB_REF: `refs/heads/${scenario.ref}`,
       RUNNER_TEMP: directory,
       BUNDLE: join(directory, "bundle"),
@@ -422,8 +445,9 @@ mkdir -p "$BUNDLE/github"
       SETUP_TIME: String(scenario.setupTime),
       FIRST_RUN_TIME: String(scenario.firstRunTime),
     }, directory)
+    const freshDigest = readFileSync(output, "utf8").trim()
     rmSync(directory, { recursive: true, force: true })
-    return ran
+    return { ...ran, freshDigest }
   }
 
   /** @throws {Error} */
@@ -447,11 +471,14 @@ mkdir -p "$BUNDLE/github"
     const start = jobOf(daily, "start")
     const followUp = jobOf(daily, "follow-up")
     const followUpStep = stepOf(followUp, "Publish a superseded collection or resume a failed one")
+    const checkout = (job: Job, run: Run) => evaluated(String(job.steps[0]?.with?.ref ?? ""), contextOf(run))
     const dispatch = (run: Run) => {
       const context = contextOf(run)
       return { start: runs(start.if, context), followUp: runs(followUp.if, context) }
     }
-    const completedRelease: Run = { event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const completedRelease: Run = { ref: "develop", event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const scheduled: Run = { ref: "develop", event: "schedule" }
+    const manualStart: Run = { event: "workflow_dispatch", inputs: { release_run_id: "" } }
     const manualFollowUp: Run = { event: "workflow_dispatch", inputs: { release_run_id: "900" } }
     const followUpCommand = (run: Run) => recorded(followUpStep, { RELEASE_RUN_ID: evaluated(followUpStep.env?.RELEASE_RUN_ID, contextOf(run)) })
     const deadlines: Readonly<Record<string, DeadlineScenario>> = {
@@ -473,13 +500,16 @@ mkdir -p "$BUNDLE/github"
       },
       deadlines: Object.fromEntries(Object.entries(deadlines).map(([name, scenario]) => [name, deadline(prepare, scenario)])),
       daily: {
-        schedule: dispatch({ event: "schedule" }),
-        manualStart: dispatch({ event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        schedule: dispatch(scheduled),
+        scheduleOnMain: dispatch({ event: "schedule" }),
+        manualStart: dispatch(manualStart),
         manualFollowUp: dispatch(manualFollowUp),
         completedRelease: dispatch(completedRelease),
         forkRelease: dispatch({ event: "workflow_run", workflowRun: { id: 901, head_branch: "main", head_repository: { id: 7 }, event: "push" } }),
         pullRequestRelease: dispatch({ event: "workflow_run", workflowRun: { id: 902, head_branch: "main", head_repository: { id: 100 }, event: "pull_request" } }),
+        manualOnDevelop: dispatch({ ref: "develop", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
         development: dispatch({ ref: "development", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        checkouts: { schedule: checkout(start, scheduled), manualStart: checkout(start, manualStart), followUp: checkout(followUp, completedRelease), manualFollowUp: checkout(followUp, manualFollowUp) },
         startCommand: recorded(stepOf(start, "Dispatch a fresh collection unless one is running"), {}),
         followUpCommands: [followUpCommand(completedRelease), followUpCommand(manualFollowUp)],
       },
@@ -495,9 +525,10 @@ mkdir -p "$BUNDLE/github"
     const packet = "a".repeat(64)
     const audit = { operation: "audit-assessments", audit_project: "slop", audit_source_sha256: "b".repeat(64), audit_baseline_sha256: "c".repeat(64) }
     const replay = { ...audit, operation: "replay-assessments" }
+    const catalogReplay = { ...replay, require_no_active_assessments: true }
     const publication = { reviewed_packet_sha256: packet }
     const dispatched = (inputs: Readonly<Record<string, unknown>>) => contextOf({ event: "workflow_dispatch", inputs: {
-      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, reviewed_packet_sha256: "", apply: false, ...inputs,
+      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, require_no_active_assessments: false, reviewed_packet_sha256: "", apply: false, ...inputs,
     } })
     const accepts = (inputs: Readonly<Record<string, unknown>>) => {
       const context = dispatched(inputs)
@@ -514,6 +545,10 @@ mkdir -p "$BUNDLE/github"
       validation: {
         audit: accepts(audit),
         replay: accepts(replay),
+        catalogReplay: accepts(catalogReplay),
+        catalogApplying: accepts({ ...catalogReplay, apply: true }),
+        catalogAudit: accepts({ ...audit, require_no_active_assessments: true }),
+        catalogPublication: accepts({ ...publication, require_no_active_assessments: true }),
         stagedReplay: accepts({ ...replay, stage_review_handoff: true }),
         preview: accepts(publication),
         applied: accepts({ ...publication, apply: true }),
@@ -529,12 +564,14 @@ mkdir -p "$BUNDLE/github"
       },
       lanes: {
         replay: { group: evaluated(reviewed.concurrency?.group, dispatched(replay)), timeout: evaluated(publish["timeout-minutes"], dispatched(replay)) },
+        catalogReplay: { group: evaluated(reviewed.concurrency?.group, dispatched(catalogReplay)), timeout: evaluated(publish["timeout-minutes"], dispatched(catalogReplay)) },
         audit: { group: evaluated(reviewed.concurrency?.group, dispatched(audit)), timeout: evaluated(publish["timeout-minutes"], dispatched(audit)) },
         publication: { group: evaluated(reviewed.concurrency?.group, dispatched(publication)), timeout: evaluated(publish["timeout-minutes"], dispatched(publication)) },
         freshCollection: evaluated(jobOf(deploy, "prepare").concurrency?.group, contextOf({ ref: "main", event: "push" })),
       },
       steps: { audit: steps(audit), replay: steps(replay), publication: steps(publication) },
-      receipts: { audit: receipt(audit), replay: receipt(replay) },
+      receipts: { audit: receipt(audit), replay: receipt(replay), catalogReplay: receipt(catalogReplay) },
+      catalogInput: evaluated(catalog.env?.HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE, dispatched(catalogReplay)),
       commands: {
         registry: recorded(stepOf(publish, "Snapshot the current project registry for verification"), {}),
         audit: recorded(catalog, { OPERATION: "audit-assessments" }),
@@ -547,7 +584,7 @@ mkdir -p "$BUNDLE/github"
 }
 import { collectionWorkflows, reviewedWorkflow } from workflowShape
 import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsSimulation
-import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
+import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, recordFetch, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -566,6 +603,9 @@ import { type Service, reviewedSubmissionFee } from "../gen/operations__release.
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
 import { runFacts } from "../src/release/run/facts.vibe"
 import { ReleaseRefused } from "../src/release/run/run.vibe"
+import { aggregateLeaderboard, aggregateModels } from "../src/release/record/agg.ts"
+import { describeRecordBuild, isRecord, keepPublished, previousRecords, recordFile, runRecordBuild } from "../src/release/record/build.vibe"
+import { amount, feeOn, payment, receiptsFrom } from "../src/release/record/receipts.ts"
 
 const repository = "SlopDotCash/slopdotcash"
 const workflowRef = `${repository}/.github/workflows/deploy.yml@refs/heads/main`
@@ -1193,21 +1233,24 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
           staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/development-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
         },
         deadlines: {
-          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"] },
-          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"] },
-          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"] },
-          setupExhaustsBudget: { code: 1, lines: [] },
-          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"] },
-          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"] },
+          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"], freshDigest: "" },
+          setupExhaustsBudget: { code: 1, lines: [], freshDigest: "" },
+          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
         },
         daily: {
           schedule: { start: true, followUp: false },
+          scheduleOnMain: { start: true, followUp: false },
           manualStart: { start: true, followUp: false },
           manualFollowUp: { start: false, followUp: true },
           completedRelease: { start: false, followUp: true },
           forkRelease: { start: false, followUp: false },
           pullRequestRelease: { start: false, followUp: false },
+          manualOnDevelop: { start: false, followUp: false },
           development: { start: false, followUp: false },
+          checkouts: { schedule: "refs/heads/main", manualStart: "a".repeat(40), followUp: "refs/heads/main", manualFollowUp: "a".repeat(40) },
           startCommand: ["apps/operations/dist/programs/main.js release daily start"],
           followUpCommands: [["apps/operations/dist/programs/main.js release daily follow-up 900"], ["apps/operations/dist/programs/main.js release daily follow-up 900"]],
         },
@@ -1220,6 +1263,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const audited = "Reject known production dependency vulnerabilities"
     const snapshot = "Snapshot the current project registry for verification"
     const gitBuild = ["Install canonical Git build dependencies", "Install canonical merge Git"]
+    const collectorToken = "Mint the read-only collector token for assessment source reads"
     const catalog = "Read and verify the complete historical assessment catalog"
     const receipt = "Preserve the assessment audit receipt"
     const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
@@ -1228,6 +1272,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       validation: {
         audit: true,
         replay: true,
+        catalogReplay: true,
+        catalogApplying: false,
+        catalogAudit: false,
+        catalogPublication: false,
         stagedReplay: true,
         preview: true,
         applied: true,
@@ -1243,16 +1291,18 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
       lanes: {
         replay: { group: "slop-quality-refs/heads/main-collect", timeout: "360" },
+        catalogReplay: { group: "slop-historical-catalog-replay", timeout: "90" },
         audit: { group: "slop-production", timeout: "90" },
         publication: { group: "slop-production", timeout: "90" },
         freshCollection: "slop-quality-refs/heads/main-collect",
       },
       steps: {
-        audit: [checked, audited, snapshot, catalog, receipt],
-        replay: [checked, audited, snapshot, ...gitBuild, "Mint the read-only collector token for replay", catalog, receipt],
+        audit: [checked, audited, snapshot, collectorToken, catalog, receipt],
+        replay: [checked, audited, snapshot, ...gitBuild, collectorToken, catalog, receipt],
         publication: [checked, audited, snapshot, ...gitBuild, "Rebuild and verify owner-reviewed historical Points"],
       },
-      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2" },
+      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2", catalogReplay: "historical-assessment-replay-2" },
+      catalogInput: "true",
       commands: {
         registry: [
           "apps/operations/dist/programs/main.js release registry production /runner/slop-release",
@@ -1265,4 +1315,152 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
     })
   })
+
+  it.effect('Rebuild /data/record.json on release without failing the release and preserving prior records and receipts (spec/operations/recordPublication.md, "Story: Rebuild /data/record.json on every release while preserving prior records and receipts"; spec/operations/recordPublication.md, "Every release rebuilds /data/record.json without failing the release and never drops a published receipt")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const previous = {
+      builtAt: "2026-11-23T08:12:00.000Z",
+      sources: { projects: ["feed"], disclosures: [], cycles: [] },
+      money: { pools: [], settlements: [] },
+      months: [],
+      projects: [],
+      receipts: {
+        builtAt: "2026-11-23T08:12:00.000Z",
+        items: [
+          {
+            anchor: "feed-2026-10",
+            url: "https://old.example/#feed-2026-10",
+            projectId: "feed",
+            project: "Feed",
+            month: "2026-10",
+            network: "base-mainnet",
+            networkName: "Base",
+            asset: "USDC",
+            assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            stable: true,
+            contributors: 1,
+            total: "100",
+            fee: "2.05",
+            feeExact: true,
+            recipients: [],
+            own: null,
+            privateRecords: false,
+            reserved: null,
+            firstSentAt: "2026-11-02T00:00:00.000Z",
+            lastSentAt: "2026-11-02T00:00:00.000Z",
+            publishedAt: "2026-11-02T01:00:00.000Z",
+            merges: null,
+          },
+        ],
+        confirmed: [],
+      },
+    }
+    const [firstPrev = "", secondPrev = ""] = previousRecords
+    const readJson = (path: string) => effect {
+      const text = try fs.readFileString(path)
+      return try Effect.try(() => JSON.parse(text) as unknown)
+    }
+    const runWithFetch = (fetchImpl: typeof fetch, options: Parameters<typeof runRecordBuild>[0]) => effect {
+      provide Layer.succeed(FetchHttpClient.Fetch, fetchImpl) {
+        return try runRecordBuild(options)
+      }
+    }
+    const skippedDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-skip-" })
+    const skippedNet = recordFetch(new Map())
+    const skipped = try runWithFetch(skippedNet.fetchImpl, { siteDir: skippedDir, enabled: false })
+    const skippedExists = try fs.exists(files.join(skippedDir, recordFile))
+
+    const prevDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-prev-" })
+    const prevNet = recordFetch(new Map([[firstPrev, () => ({ body: previous })]]))
+    const prevResult = try runWithFetch(prevNet.fetchImpl, { siteDir: prevDir, enabled: true })
+    const prevWritten = try readJson(files.join(prevDir, recordFile))
+
+    const retiredDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-retired-" })
+    const retiredNet = recordFetch(new Map<string, () => { readonly status?: number; readonly body: unknown }>([
+      [firstPrev, () => ({ status: 404, body: { error: "not found" } })],
+      [secondPrev, () => ({ body: previous })],
+    ]))
+    const retiredResult = try runWithFetch(retiredNet.fetchImpl, { siteDir: retiredDir, enabled: true })
+    const retiredWritten = try readJson(files.join(retiredDir, recordFile))
+
+    const noneDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-none-" })
+    const noneNet = recordFetch(new Map())
+    const noneResult = try runWithFetch(noneNet.fetchImpl, { siteDir: noneDir, enabled: true })
+    const noneExists = try fs.exists(files.join(noneDir, recordFile))
+
+    const deadlineDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-deadline-" })
+    const deadlineNet = recordFetch(new Map([[firstPrev, () => ({ body: previous })]]), "hang")
+    const deadlineResult = try runWithFetch(deadlineNet.fetchImpl, { siteDir: deadlineDir, enabled: true, deadlineMs: 50 })
+    const deadlineWritten = try readJson(files.join(deadlineDir, recordFile))
+
+    const keptReceipts = keepPublished(
+      [
+        previous.receipts.items[0],
+        { ...previous.receipts.items[0], anchor: "gone-2026-10", url: "https://old.example/#gone-2026-10" },
+      ],
+      [{ ...previous.receipts.items[0], total: "107.56", url: "x" }],
+      "https://slop.cash/receipts",
+    )
+    const txHash = `0x${"ab".repeat(32)}`
+    const parsedPayment = try Effect.try(() => payment({
+      id: "pay-1",
+      projectId: "feed",
+      network: "base-mainnet",
+      contributionMonth: "2026-10",
+      assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      assetDecimals: 6,
+      netBase: "100000000",
+      transactionId: txHash,
+      indexedAt: "2026-11-02T00:00:00.000Z",
+    }))
+    const fee = try Effect.try(() => feeOn(100000000n))
+    const computedReceipts = parsedPayment === null ? [] : try Effect.try(() => receiptsFrom({
+      payments: [parsedPayment],
+      recipients: new Map([["pay-1", { actor: "55555", login: "alice" }]]),
+      projects: new Map([["feed", { id: "feed", name: "Feed", steward: { github: { type: "User", actorId: "99999" } } }]]),
+      totals: new Map([["feed|base-mainnet|0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", { paid: 100000000n, fees: fee, reserved: 0n }]]),
+      confirmed: new Set([`base-mainnet:${txHash}`]),
+      now: new Date("2026-11-02T01:00:00.000Z"),
+    }))
+    const lbSample = {
+      generatedAt: "2026-11-23T00:00:00.000Z",
+      ruleVersion: "v2",
+      window: { days: 35 },
+      repositories: [{ id: "o/r", displayName: "r", githubUrl: "https://github.com/o/r", projectId: "feed" }],
+      leaders: [{ actorId: "1" }],
+      ledger: [{ category: "merged-pull-request", source: { id: "pr-1" }, actor: { id: "1" } }],
+      attributions: [{ provider: "anthropic", model: "claude-sonnet-4-5", sourceId: "pr-1", artifactId: "pr-1", actor: { id: "1" }, run: { client: "claude-code" } }],
+    }
+    const models = try Effect.try(() => aggregateModels(lbSample))
+    const leaderboard = try Effect.try(() => aggregateLeaderboard(lbSample))
+    const amountFormatting = try Effect.try(() => [amount(245000000n, 6), amount(382440000n, 6), amount(500000n, 6)])
+
+    assert.deepStrictEqual({
+      skipped: [skipped.outcome, skippedNet.seen.length, skippedExists, describeRecordBuild(skipped)],
+      prev: [prevResult.outcome, prevWritten],
+      retired: [retiredResult.outcome, retiredWritten],
+      none: [noneResult.outcome, noneExists],
+      deadline: [deadlineResult.outcome, deadlineResult.outcome === "previous" && deadlineResult.reason.includes("deadline"), deadlineWritten],
+      kept: keptReceipts.map((item) => [item.anchor, item.total, item.url]),
+      isRecordChecks: [isRecord(previous), isRecord({ builtAt: "x" }), isRecord(null), isRecord([])],
+      receipts: computedReceipts.map((r) => [r.anchor, r.total, r.fee, r.feeExact, r.contributors, r.url]),
+      amountFormatting,
+      leaderboardCounts: [leaderboard.contributors, leaderboard.mergedPullRequests, models.totals.mergedPullRequestsWithModel, models.top[0]?.key],
+    }, {
+      skipped: ["skipped", 0, false, "record: skipped (SLOP_RECORD_BUILD is not 1)"],
+      prev: ["previous", previous],
+      retired: ["previous", previous],
+      none: ["none", false],
+      deadline: ["previous", true, previous],
+      kept: [
+        ["feed-2026-10", "107.56", "https://slop.cash/receipts#feed-2026-10"],
+        ["gone-2026-10", "100", "https://slop.cash/receipts#gone-2026-10"],
+      ],
+      isRecordChecks: [true, false, false, false],
+      receipts: [["feed-2026-10", "100", "2.04", true, 1, "https://slop.cash/receipts#feed-2026-10"]],
+      amountFormatting: ["245", "382.44", "0.50"],
+      leaderboardCounts: [1, 1, 1, "anthropic/claude-sonnet-4.5"],
+    })
+  }))
 })

@@ -1,0 +1,309 @@
+// spec/operations/recordPublication.md, "Every release rebuilds /data/record.json without failing the release and never drops a published receipt"
+import { type CycleSnapshotCounts, type JsonFetcher, type RecordSources, SOURCES, assembleLeaderboardManifest, discover, loadAll } from "./agg.ts"
+import { RECEIPTS_PAGE, type ReceiptItem, type ReceiptsBundle, type RpcCaller, loadReceipts } from "./receipts.ts"
+
+export const recordFile = "data/record.json"
+export const leaderboardFile = "data/leaderboard.json"
+export const previousRecords: ReadonlyArray<string> = [
+  "https://slop.cash/data/record.json",
+  "https://record.slop.cash/data/snapshot.json",
+]
+
+const userAgent = "slop-record-build"
+const fetchTimeoutMs = 30_000
+const bytesTimeoutMs = 120_000
+export const runDeadlineMs = 8 * 60_000
+
+export interface StoredRecord {
+  readonly builtAt: string
+  readonly sources: RecordSources
+  readonly money: Readonly<Record<string, unknown>>
+  readonly months: ReadonlyArray<unknown>
+  readonly projects: ReadonlyArray<unknown>
+  readonly cycleSnapshots?: Readonly<Record<string, CycleSnapshotCounts>>
+  readonly receipts?: ReceiptsBundle
+  readonly [key: string]: unknown
+}
+
+export function isRecord(value: unknown): value is StoredRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Readonly<Record<string, unknown>>
+  const sources = record.sources
+  if (typeof record.builtAt !== "string") return false
+  if (sources === null || typeof sources !== "object" || Array.isArray(sources)) return false
+  const src = sources as Readonly<Record<string, unknown>>
+  if (!Array.isArray(src.disclosures) || !Array.isArray(src.cycles)) return false
+  if (record.money === null || typeof record.money !== "object" || Array.isArray(record.money)) return false
+  return Array.isArray(record.months) && Array.isArray(record.projects)
+}
+
+export function keepPublished(
+  previousItems: ReadonlyArray<ReceiptItem> | undefined,
+  items: ReadonlyArray<ReceiptItem>,
+  page = RECEIPTS_PAGE,
+): ReadonlyArray<ReceiptItem> {
+  const anchors = new Set(items.map((item) => item.anchor))
+  const kept = (Array.isArray(previousItems) ? previousItems : []).filter(
+    (item) => typeof item.anchor === "string" && !anchors.has(item.anchor),
+  )
+  return [...items, ...kept].map((item) => ({
+    ...item,
+    url: `${page}#${item.anchor}`,
+  }))
+}
+
+error RecordBuildError {
+  message: string
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") return error.message
+  return String(error)
+}
+
+export effect function readPrevious(fetchJson: JsonFetcher, sources: ReadonlyArray<string> = previousRecords) {
+  for (const url of sources) {
+    const candidate = Effect.tryPromise({
+      try: () => fetchJson(url),
+      catch: (error) => new RecordBuildError({ message: errorMessage(error) }),
+    }) catch () => undefined
+    if (isRecord(candidate)) return candidate
+  }
+  return null
+}
+
+async function discoverOrReuse(
+  fetchGitHub: JsonFetcher,
+  fetchJson: JsonFetcher,
+  previous: StoredRecord | null,
+): Promise<RecordSources> {
+  try {
+    return await discover(fetchGitHub)
+  } catch (error) {
+    if (previous?.sources === undefined) throw error
+    const registry = await fetchJson(SOURCES.registry)
+    const projects = registry !== null && typeof registry === "object" && "projects" in registry && Array.isArray(registry.projects)
+      ? registry.projects
+        .map((project: unknown) => (project !== null && typeof project === "object" && "id" in project && typeof project.id === "string" ? project.id : null))
+        .filter((id): id is string => id !== null)
+        .sort()
+      : []
+    return projects.length > 0
+      ? { ...previous.sources, projects, projectSource: "registry" }
+      : previous.sources
+  }
+}
+
+export effect function localLeaderboard(siteDir: string, leaderboardPath: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const run = Effect.runPromiseWith(try Effect.context<never>())
+  const rawBytes = fs.readFile(leaderboardPath) catch () => undefined
+  if (rawBytes === undefined) return null
+  const decoded = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes)) as unknown) catch () => undefined
+  if (decoded === undefined) return null
+  const assembled = Effect.tryPromise({
+    try: () => assembleLeaderboardManifest(decoded, async (partPath) => {
+      const clean = partPath.startsWith("/") ? partPath.slice(1) : partPath
+      const target = files.join(siteDir, clean)
+      return new Uint8Array(await run(fs.readFile(target)))
+    }),
+    catch: (error) => new RecordBuildError({ message: errorMessage(error) }),
+  }) catch () => undefined
+  if (assembled === undefined || assembled === null || typeof assembled !== "object" || !("ledger" in assembled) || !Array.isArray(assembled.ledger) || assembled.ledger.length === 0) {
+    return null
+  }
+  return assembled
+}
+
+export interface BuildRecordInput {
+  readonly fetchJson: JsonFetcher
+  readonly fetchGitHub?: JsonFetcher
+  readonly fetchBytes: (url: string) => Promise<Uint8Array>
+  readonly rpcCall: RpcCaller
+  readonly previous: StoredRecord | null
+  readonly leaderboard?: unknown
+  readonly now?: Date
+}
+
+export async function buildRecord(input: BuildRecordInput): Promise<StoredRecord> {
+  const fetchGitHub = input.fetchGitHub ?? input.fetchJson
+  const now = input.now ?? new Date()
+  const sources = await discoverOrReuse(fetchGitHub, input.fetchJson, input.previous)
+  const record = await loadAll(input.fetchJson, sources, {
+    cycleSnapshots: input.previous?.cycleSnapshots ?? {},
+    fetchCycleSnapshots: true,
+    fetchBytes: input.fetchBytes,
+    leaderboard: input.leaderboard ?? null,
+    now,
+  })
+  if (record.months.some((month) => month.counts === null)) {
+    throw new Error("cycle snapshot counts missing")
+  }
+  let receipts: ReceiptsBundle
+  try {
+    receipts = await loadReceipts(input.fetchJson, input.rpcCall, {
+      previous: input.previous?.receipts ?? null,
+      now,
+    })
+  } catch {
+    receipts = input.previous?.receipts ?? { builtAt: null, items: [], confirmed: [] }
+  }
+  return {
+    ...record,
+    receipts: {
+      ...receipts,
+      items: keepPublished(input.previous?.receipts?.items, receipts.items),
+    },
+  }
+}
+
+effect function writeRecord(outputPath: string, record: StoredRecord) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.makeDirectory(files.dirname(outputPath), { recursive: true })
+  const temporary = `${outputPath}.${Date.now()}.tmp`
+  try Effect.ensuring(
+    effect {
+      try fs.writeFileString(temporary, `${JSON.stringify(record, null, 2)}\n`)
+      try fs.rename(temporary, outputPath)
+    },
+    Effect.ignore(fs.remove(temporary, { force: true })),
+  )
+}
+
+function httpFetchers(
+  http: HttpClient.HttpClient,
+  run: <A, E>(program: A!E) => Promise<A>,
+  token: string,
+) {
+  const read = async (url: string, timeoutMs: number) => {
+    const headers: Record<string, string> = { "user-agent": userAgent }
+    if (token !== "" && url.startsWith("https://api.github.com/")) {
+      headers.authorization = `Bearer ${token}`
+    }
+    const request = HttpClientRequest.get(url, { headers })
+    const response = await run(
+      Effect.timeoutOrElse(http.execute(request), {
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(new RecordBuildError({ message: `timeout reading ${url}` })),
+      }),
+    )
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`${response.status} ${url}`)
+    }
+    return response
+  }
+  return {
+    fetchJson: async (url: string): Promise<unknown> => {
+      const response = await read(url, fetchTimeoutMs)
+      return run(response.json)
+    },
+    fetchBytes: async (url: string): Promise<Uint8Array> => {
+      const response = await read(url, bytesTimeoutMs)
+      return new Uint8Array(await run(response.arrayBuffer))
+    },
+    rpcCall: async (url: string, method: string, params: ReadonlyArray<unknown>): Promise<unknown> => {
+      const request = HttpClientRequest.bodyJsonUnsafe(
+        HttpClientRequest.post(url, { headers: { "user-agent": userAgent } }),
+        { jsonrpc: "2.0", id: 1, method, params },
+      )
+      const response = await run(
+        Effect.timeoutOrElse(http.execute(request), {
+          duration: Duration.millis(fetchTimeoutMs),
+          orElse: () => Effect.fail(new RecordBuildError({ message: `timeout calling ${url}` })),
+        }),
+      )
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`${response.status} ${url}`)
+      }
+      const body = await run(response.json)
+      return body !== null && typeof body === "object" && "result" in body ? body.result : undefined
+    },
+  }
+}
+
+export type RecordBuildResult =
+  | { readonly outcome: "skipped"; readonly reason: string }
+  | { readonly outcome: "built"; readonly builtAt: string; readonly receipts: number; readonly leaderboard: "local" | "live" }
+  | { readonly outcome: "previous"; readonly builtAt: string; readonly reason: string }
+  | { readonly outcome: "none"; readonly reason: string }
+
+export interface RunRecordBuildOptions {
+  readonly siteDir: string
+  readonly leaderboardPath?: string
+  readonly enabled: boolean
+  readonly token?: string
+  readonly previousUrls?: ReadonlyArray<string>
+  readonly deadlineMs?: number
+  readonly now?: Date
+}
+
+export effect function runRecordBuild(options: RunRecordBuildOptions) {
+  const files = try Path.Path
+  const output = files.resolve(options.siteDir, recordFile)
+  if (!options.enabled) {
+    return { outcome: "skipped", reason: "SLOP_RECORD_BUILD is not 1" } satisfies RecordBuildResult
+  }
+  const http = try HttpClient.HttpClient
+  const run = Effect.runPromiseWith(try Effect.context<never>())
+  const io = httpFetchers(http, run, options.token ?? "")
+  const previous = try readPrevious(io.fetchJson, options.previousUrls ?? previousRecords)
+  const leaderboardPath = options.leaderboardPath ?? files.resolve(options.siteDir, leaderboardFile)
+  const leaderboard = try localLeaderboard(options.siteDir, leaderboardPath)
+  const deadlineMs = options.deadlineMs ?? runDeadlineMs
+  const now = options.now ?? new Date(try Clock.currentTimeMillis)
+  const built = try exit(
+    Effect.timeoutOrElse(
+      Effect.tryPromise({
+        try: () => buildRecord({
+          fetchJson: io.fetchJson,
+          fetchGitHub: io.fetchJson,
+          fetchBytes: io.fetchBytes,
+          rpcCall: io.rpcCall,
+          previous,
+          leaderboard,
+          now,
+        }),
+        catch: (error) => new RecordBuildError({ message: errorMessage(error) }),
+      }),
+      {
+        duration: Duration.millis(deadlineMs),
+        orElse: () => Effect.fail(new RecordBuildError({ message: `deadline of ${deadlineMs} ms passed` })),
+      },
+    ),
+  )
+  if (Exit.isSuccess(built)) {
+    const written = try exit(writeRecord(output, built.value))
+    if (Exit.isSuccess(written)) {
+      return {
+        outcome: "built",
+        builtAt: built.value.builtAt,
+        receipts: built.value.receipts?.items.length ?? 0,
+        leaderboard: leaderboard !== null ? "local" : "live",
+      } satisfies RecordBuildResult
+    }
+    return { outcome: "none", reason: errorMessage(Cause.squash(written.cause)) } satisfies RecordBuildResult
+  }
+  const reason = errorMessage(Cause.squash(built.cause))
+  if (previous === null) return { outcome: "none", reason } satisfies RecordBuildResult
+  const kept = try exit(writeRecord(output, previous))
+  if (Exit.isFailure(kept)) {
+    return { outcome: "none", reason: errorMessage(Cause.squash(kept.cause)) } satisfies RecordBuildResult
+  }
+  return { outcome: "previous", builtAt: previous.builtAt, reason } satisfies RecordBuildResult
+}
+
+export function describeRecordBuild(result: RecordBuildResult): string {
+  switch (result.outcome) {
+    case "built":
+      return `record: built ${result.builtAt}, ${result.receipts} receipts, ${result.leaderboard} leaderboard`
+    case "previous":
+      return `record: not rebuilt (${result.reason}); kept the previous record of ${result.builtAt}`
+    case "none":
+      return `record: not rebuilt (${result.reason}); no previous record, nothing written`
+    case "skipped":
+      return `record: skipped (${result.reason})`
+  }
+}

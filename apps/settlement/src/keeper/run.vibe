@@ -1,7 +1,7 @@
 // spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"
 import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
 import { jsonRpc } from "@repo/platform/chain/rpc"
-import { D1 } from "@repo/platform/d1"
+import { type D1 } from "@repo/platform/d1"
 import type { Journal } from "@repo/platform/journal"
 import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
 import type { KeeperMode } from "../../gen/settlement__keeperLifecycle.effect.vibe"
@@ -15,10 +15,11 @@ import { scanSolanaPayments } from "../scan/solana.vibe"
 import { IndexUnavailable, PaymentIndexer } from "../scan/index.vibe"
 import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
 import { type EvmDeployment, type ReviewedDeployment, type SolanaDeployment, reviewedPolicy } from "../vault/policy.vibe"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
 import { PaymentRpc } from "../vault/rpc.vibe"
 import { type KeeperScope, type SendContext, reasonOf } from "./attempts.vibe"
 import { reconcileGas, reconcileSolanaGas } from "./budget.vibe"
-import { type EvmKeeperConfig, type KeeperConfig, KeeperConfigInvalid, chainOfId, identityOf, modeLabel } from "./config.vibe"
+import { type EvmKeeperConfig, type KeeperConfig, KeeperConfigInvalid, chainOfId, modeLabel } from "./config.vibe"
 import { DEPLOYMENT_MISSING, type KeeperResult, PROJECT_MISSING, causeLabel, classifyFailure, hasFailures, stageLabel } from "./diagnostics.vibe"
 import type { KeeperCore } from "./lifecycle.vibe"
 import { type Authorization, evmMonths, serveMonths } from "./monthly.vibe"
@@ -27,7 +28,7 @@ import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
 import { rpcSession, scanSession } from "./sessions.vibe"
 import { type SolanaContext, type SolanaPayOutcome, type SolanaScope, observedSolanaChain, onKeeperSolana, readSolanaPayment, solanaCause, solanaRoles, solanaUrls, submitSolanaPayment, verifiedSolana } from "./solana.vibe"
 import { submitSolanaMonthly } from "./solanaMonthly.vibe"
-import { bindIdentity, indexPaid, indexReserved, keeperD1, markChecked, reservedSource, unpaidAwards } from "./store.vibe"
+import { bindIdentity, indexPaid, indexReserved, indexedAward, keeperD1, markChecked, reservedSource, unpaidAwards } from "./store.vibe"
 import { quantityOf } from "./units.ts"
 
 export interface KeeperRun {
@@ -63,6 +64,12 @@ export interface RunScope {
   readonly mode: KeeperMode
   readonly core: KeeperCore
   readonly runId: number
+  readonly award?: SelectedAward
+}
+
+export interface SelectedAward {
+  readonly id: string
+  readonly reservation?: Pick<EventReference, "transactionId" | "eventIndex">
 }
 
 effect function registry(config: KeeperConfig) {
@@ -80,6 +87,12 @@ effect function deploymentsOf(project: RegistryProject, network: string) {
   const bounty = project.securityBounty?.settlement
   if (bounty !== undefined) found.push(...try reviewedPolicy(project.id, bounty, "security-bounty"))
   return found.filter((deployment) => deployment.network === network)
+}
+
+effect function indexSelectedReservation(award: SelectedAward | undefined, deployment: RegisteredDeployment) {
+  if (award?.reservation !== undefined) try (try PaymentIndexer).index({
+    projectId: deployment.projectId, network: deployment.network, kind: "reserved", obligationId: award.id, ...award.reservation,
+  }, deployment)
 }
 
 function evidenceText(event: FinalizedPaymentEvent) {
@@ -153,9 +166,16 @@ interface Item {
   readonly vault: string
 }
 
-effect function awards<E, R>(scope: string, perRun: number, item: Item, attempt: (obligationId: string, actor: string) => (PayOutcome | SolanaPayOutcome)!E!R) {
+effect function awards<E, R>(scope: string, perRun: number, item: Item, awardId: string | undefined, attempt: (obligationId: string, actor: string) => (PayOutcome | SolanaPayOutcome)!E!R) {
+  const selected = awardId === undefined ? undefined : try indexedAward(scope, awardId)
+  if (awardId !== undefined && selected === undefined) {
+    return [{ ...item, operation: `award:${awardId}`, state: "unavailable", error: "Award has no indexed finalized reservation in this vault" }] satisfies KeeperResult[]
+  }
+  if (selected !== undefined && selected.paid === 1) {
+    return [{ ...item, operation: `award:${selected.id}`, state: "paid" }] satisfies KeeperResult[]
+  }
   const results: KeeperResult[] = []
-  for (const award of try unpaidAwards(scope, perRun)) {
+  for (const award of selected === undefined ? try unpaidAwards(scope, perRun) : [selected]) {
     try markChecked(scope, award.id, try Clock.currentTimeMillis)
     const outcome = attempt(award.id, award.actor) catch effect (error) => {
       results.push({ ...item, operation: `award:${award.id}`, state: "waiting", error: reasonOf(error) })
@@ -191,7 +211,7 @@ effect function failedDeployment(scan: ScanMachine.Shape, item: Item, error: unk
   }] satisfies KeeperResult[]
 }
 
-effect function serveDeployment(scope: KeeperScope, deployment: EvmDeployment, listing: Listing, run: RunState) {
+effect function serveDeployment(scope: KeeperScope & Pick<RunScope, "award">, deployment: EvmDeployment, listing: Listing, run: RunState) {
   const { config, mode } = scope
   const awardScope = `${deployment.projectId}:${deployment.vault}`
   const item = { projectId: deployment.projectId, vault: deployment.vault }
@@ -217,14 +237,16 @@ effect function serveDeployment(scope: KeeperScope, deployment: EvmDeployment, l
       try scan.send({ type: "advance", checkPassed: true })
       const target = { projectId: deployment.projectId, network: deployment.network, vault: deployment.vault, owner: deployment.owner, feeRecipient: deployment.feeRecipient, scope: deployment.scope === "security-bounty" ? "PrivateBounty" as const : "Ordinary" as const, rpc: rpcUrls, family: "evm" as const, chain: deployment.chain, chainId: deployment.chainId, review: deployment } satisfies EvmPaymentDeployment
       provide Layer.mergeAll(Layer.succeed(PaymentIndexer, keeperIndexer(target, awardScope, scan, services, classifyFailure)), Layer.succeed(PaymentRpc, { urls: { [deployment.network]: rpcUrls }, genesis: {} })) {
-        try scanEvmPayments({ ...deployment, projectId: awardScope, revision: 0 })
+        const registered = { ...deployment, projectId: awardScope, revision: 0 }
+        try indexSelectedReservation(scope.award, registered)
+        try scanEvmPayments(registered)
       }
       try scan.send({ type: "advance", checkPassed: true })
-      const months = deployment.scope === "ordinary"
+      const months = scope.award === undefined && deployment.scope === "ordinary"
         ? try serveMonths({ config, deployment, projectActive: listing.active, restricted: listing.restricted, execute, submit: evmMonths(context) }, awardScope, item)
         : []
       try scan.send({ type: "advance", checkPassed: true })
-      const found = try awards(awardScope, config.perRun, item, (id) => effect {
+      const found = try awards(awardScope, config.perRun, item, scope.award?.id, (id) => effect {
         if (execute) return try submitPermissionlessPayment(context, id)
         return try readPermissionlessPayment(context, id)
       })
@@ -235,7 +257,7 @@ effect function serveDeployment(scope: KeeperScope, deployment: EvmDeployment, l
   return work catch effect (error) => try failedDeployment(scan, item, error, classifyFailure)
 }
 
-effect function serveSolanaDeployment(scope: SolanaScope, deployment: SolanaDeployment, listing: Listing, run: RunState) {
+effect function serveSolanaDeployment(scope: SolanaScope & Pick<RunScope, "award">, deployment: SolanaDeployment, listing: Listing, run: RunState) {
   const { config, mode } = scope
   const awardScope = `${deployment.projectId}:${deployment.vault}`
   const item = { projectId: deployment.projectId, vault: deployment.vault }
@@ -261,15 +283,17 @@ effect function serveSolanaDeployment(scope: SolanaScope, deployment: SolanaDepl
       try scan.send({ type: "advance", checkPassed: true })
       const target = { projectId: deployment.projectId, network: deployment.network, vault: deployment.vault, owner: deployment.owner, feeRecipient: deployment.feeRecipient, scope: deployment.scope === "security-bounty" ? "PrivateBounty" as const : "Ordinary" as const, rpc: rpcUrls, family: "solana" as const, chain: "solana" as const, program: deployment.programId, project: deployment.projectPda, mint: deployment.asset, genesis: config.genesis } satisfies SolanaPaymentDeployment
       provide Layer.mergeAll(Layer.succeed(PaymentIndexer, keeperIndexer(target, awardScope, scan, services, solanaCause)), Layer.succeed(PaymentRpc, { urls: { [deployment.network]: rpcUrls }, genesis: { [deployment.network]: config.genesis } })) {
-        try scanSolanaPayments({ ...deployment, projectId: awardScope, revision: 0 })
+        const registered = { ...deployment, projectId: awardScope, revision: 0 }
+        try indexSelectedReservation(scope.award, registered)
+        try scanSolanaPayments(registered)
       }
       try scan.send({ type: "advance", checkPassed: true })
       const submit = (authorization: Authorization, admit: boolean, perRun: number) => submitSolanaMonthly(context, authorization, admit, perRun)
-      const months = deployment.scope === "ordinary"
+      const months = scope.award === undefined && deployment.scope === "ordinary"
         ? try serveMonths({ config, deployment, projectActive: listing.active, restricted: listing.restricted, execute, submit }, awardScope, item)
         : []
       try scan.send({ type: "advance", checkPassed: true })
-      const found = try awards(awardScope, config.perRun, item, (id, actor) => effect {
+      const found = try awards(awardScope, config.perRun, item, scope.award?.id, (id, actor) => effect {
         if (execute) return try submitSolanaPayment(context, id, actor)
         return try readSolanaPayment(context, id, actor)
       })
@@ -291,7 +315,8 @@ function listingOf(body: RegistryBody, project: RegistryProject): Listing {
 }
 
 export effect function runKeeper(scope: RunScope) {
-  const { config, mode } = scope
+  const { config, mode, award } = scope
+  if (award !== undefined && config.projectIds.length !== 1) throw new KeeperRefused({ message: "Select one configured project for an exact award" })
   const body = try registry(config)
   const results: KeeperResult[] = []
   const selected: RegistryProject[] = []
@@ -303,7 +328,9 @@ export effect function runKeeper(scope: RunScope) {
   }
   const run: RunState = { gasReconciled: false }
   for (const project of selected) {
-    const found = try Effect.mapError(deploymentsOf(project, config.network), (error) => new KeeperRefused({ message: error.message }))
+    const reviewed = try Effect.mapError(deploymentsOf(project, config.network), (error) => new KeeperRefused({ message: error.message }))
+    const found = award === undefined ? reviewed : reviewed.filter((entry) => entry.scope === "ordinary")
+    if (award !== undefined && found.length !== 1) throw new KeeperRefused({ message: "An exact award requires one reviewed ordinary vault on this network" })
     if (found.length === 0) {
       results.push({ projectId: project.id, vault: "", operation: "registry", state: "unavailable", error: DEPLOYMENT_MISSING })
       continue
@@ -319,16 +346,16 @@ function publicFailure(error: unknown) {
   return new KeeperRefused({ message: RUN_FAILED })
 }
 
-export effect function keeperTick(core: KeeperCore, runId: number, config: KeeperConfig | undefined, mode: KeeperMode) {
+export effect function keeperTick(core: KeeperCore, runId: number, config: KeeperConfig | undefined, mode: KeeperMode, award?: SelectedAward) {
   const work = effect {
     if (config === undefined) throw new KeeperRefused({ message: "Operator configuration unavailable" })
-    const bound = bindIdentity(identityOf(config)) catch () => undefined
+    const bound = bindIdentity(config) catch () => undefined
     const state = try core.checked(runId, bound !== undefined)
     if (bound === undefined) throw new KeeperRefused({ message: "Keeper journal unavailable" })
     if (state.liveRun.phase !== "Working" || bound === "Other") throw new KeeperRefused({ message: "Journal belongs to another registry, network or signer" })
     try core.send({ type: "indexReads", runId })
     provide keeperD1 {
-      return try runKeeper({ config, mode, core, runId })
+      return try runKeeper({ config, mode, core, runId, ...award === undefined ? {} : { award } })
     }
   }
   const outcome = try exit(Effect.mapError(work, publicFailure))
