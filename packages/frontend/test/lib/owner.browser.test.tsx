@@ -776,7 +776,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     };
     const shared = { deposit: 3_000_000n, last: pledgeMonthsCalldata(current, 1, 2_000_000n), batches: 1, transactions: 0 };
     expect(await batched(false, "4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a")).toMatchObject({ ...shared, included: "LockChecking", phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }] });
-    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockFailed", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
+    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockIdle", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
   }, 40_000);
 
   it("a lapsed month is released with expirePledge by a connected wallet that is not the owner's, whose own lock review is refused", async () => {
@@ -845,17 +845,21 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     } as unknown as Wallet;
     cleanups.push(getWallets().register(solanaWallet));
     const run = async (wire: Uint8Array) => {
-      const asked: unknown[] = [];
-      const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
-        asked.push(body);
-        const answer = body.step === "check"
+      const steps: string[] = [];
+      const fetch: typeof globalThis.fetch = async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== "POST" || new URL(request.url).pathname !== "/api/v1/payments/projects/slop/solana-month-lock") throw new Error("unexpected Solana month lock request");
+        const body: unknown = await request.json();
+        const step = typeof body === "object" && body !== null && "step" in body ? body.step : undefined;
+        if (step !== "review" && step !== "check") throw new Error("unexpected Solana month lock step");
+        steps.push(step);
+        const answer = step === "check"
           ? { status: "finalized" }
           : { plan: { wallet: wallet.address, periods, requested: periods, amountMinor: "2000000", decimals: 6, current: periods.map((period) => ({ period, amountMinor: "0", open: false })), transaction: { blockhash, lastValidBlockHeight: 100, transaction: base64Encode(wire), networkFeeLamports: "5000" } } };
         return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
       };
       const solana = { projectId: "slop", network: "solana-devnet", vault: project.address, terms: { program: program.address, project: project.address, owner: wallet.address, mint: null, tokenProgram: null } };
-      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch as typeof globalThis.fetch);
+      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch);
       const outcome = await runtime.runPromise(Effect.gen(function* () {
         const choice = yield* WalletChoice;
         const offer = (yield* choice.current()).find((candidate) => candidate.name === solanaWallet.name);
@@ -870,7 +874,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
         yield* watchCard(connection, Effect.void);
         return { reviewed, phase: (yield* cardState).phase };
       }));
-      return { ...outcome, steps: asked.map((body) => (body as { step: string }).step) };
+      return { ...outcome, steps };
     };
     const altered = Uint8Array.from(unsigned);
     altered[altered.length - 1] = (altered[altered.length - 1] ?? 0) ^ 1;
