@@ -338,7 +338,7 @@ pure val registrationValues = Set(activeRegistry, { ...activeRegistry, rowActive
 pure val writeRegistrationValues = Set(activeRegistry, { ...activeRegistry, observedId: 2 })
 pure val committedValues = Set(true, false)
 pure def alwaysInstallationFlagMatchesChange(w: Webhook): bool =
-  w.installationProcessed implies (w.firstEvent == Installation and w.install.processed.includes(w.installDelivery)
+  w.installationProcessed implies (w.exists and w.firstEvent == Installation and w.install.processed.includes(w.installDelivery)
     and w.installDelivery > 0)
 pure val weight_receive = 4
 pure val weight_authenticate = 4

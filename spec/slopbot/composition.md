@@ -201,6 +201,7 @@ pure def confirmReopen(c: Slopbot, by: int, evidence: W::ReopenObservation): Slo
     appeal: if (A::canMaintainerReopen(c.appeal, decision)) A::maintainerReopen(c.appeal, decision) else c.appeal }
 pure def alwaysConfirmedReopenRecorded(c: Slopbot): bool = c.confirmedReopen implies
   (c.attempt.maintainerReopened and c.retained.node == subjectItem(c).itemNode and
+   c.retained.revision == subjectItem(c).revision and
    P::reopenedRevision(c.penalties, subjectItem(c).itemNode, c.retained.revision))
 pure def alwaysRetainedSourceIsTheItem(c: Slopbot): bool = c.retained != W::noReopen implies
   (W::validReopen(c.retained) and c.retained.node == subjectItem(c).itemNode and c.retained.repository == subjectItem(c).repository)
@@ -215,7 +216,8 @@ further reservation or request in the same write. Triage reads the
 appellant's ban and the item's sibling appeals before it escalates. A Scam
 finding always escalates to a moderator, who decides it. An upheld appeal reverses the
 debit of the revision once and lets Slopbot reopen the item only while a
-fresh read shows Slopbot's own close.
+fresh read shows Slopbot's own close. The observed clock stays positive so
+reversal timestamps are always valid.
 
 ```quint
 pure def currentDebit(c: Slopbot): int =
@@ -249,7 +251,8 @@ pure def decideAppeal(c: Slopbot, by: int, uphold: bool): Slopbot =
     penalties: reverseIfDue(c.penalties, authority(c, c.now, P::AppealUpheld)),
     attempt: if (CA::canObserveAppealOutcome(c.attempt, upheldOutcome)) CA::observeAppealOutcome(c.attempt, upheldOutcome) else c.attempt }
 pure def alwaysUpheldOrReopenedLeavesNoDebit(c: Slopbot): bool =
-  (c.appeal.resolution == A::Upheld or c.confirmedReopen) implies c.penalties.rows.every(r => r.reversed)
+  c.now > 0 and
+  ((c.appeal.resolution == A::Upheld or c.confirmedReopen) implies c.penalties.rows.every(r => r.reversed))
 pure def alwaysAppealOnTheRevision(c: Slopbot): bool = c.appeal.opened implies
   (c.appeal.subject.item == subjectItem(c).itemNode and c.appeal.subject.revision == subjectItem(c).revision and
    c.attempt.authorAppealed)

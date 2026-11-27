@@ -241,7 +241,7 @@ It changes only with a release of the reviewed `main` branch through the
 production release workflow, bound to the reviewed pull request and the
 tested source commit. A release reporting the switch on activates closure
 only when some category is qualified; a release reporting it off deactivates
-it. Releases are taken in order; an older release never overrides a newer
+it. Releases are taken in order from sequence 0; an older release never overrides a newer
 one.
 
 ```quint
@@ -268,9 +268,9 @@ pure def lawUnreviewedReleaseNeverActivates(a: Activation, release: ReleaseEvide
   (release.branch != MainBranch or release.workflow != ProductionRelease or release.reviewedPullRequest <= 0) implies
     not(canActivate(a, release))
 pure def alwaysJournalByDecidedActors(a: Activation): bool = a.journal.every(e =>
-  e.kind == Decided or e.kind == Activated or e.kind == Deactivated or e.by == a.qualifier)
+  e.kind == Decided or e.kind == Activated or e.kind == Deactivated or (a.qualifier > 0 and e.by == a.qualifier))
 pure def alwaysEnabledWasActivated(a: Activation): bool =
-  a.enabled implies a.journal.some(e => e.kind == Activated) and a.lastRelease > 0
+  a.lastRelease >= 0 and (a.enabled implies a.journal.some(e => e.kind == Activated) and a.lastRelease > 0)
 pure def stepJournalAppendOnly(before: Activation, after: Activation): bool =
   after.journal.length() >= before.journal.length() and before.journal.every(e => after.journal.includes(e))
 pure def stepReleasesInOrder(before: Activation, after: Activation): bool = after.lastRelease >= before.lastRelease
@@ -314,8 +314,9 @@ pure def lawUnreviewedReleaseNeverActivatesEvidence(a: Activation, release: Rele
   (release.branch != MainBranch or release.workflow != ProductionRelease or release.reviewedPullRequest <= 0) implies
     not(canActivateEvidence(a, release))
 pure def alwaysEvidenceEnabledWasActivated(a: Activation): bool =
-  a.evidenceEnabled implies
-    (a.journal.some(e => e.kind == Activated and e.category == F::MissingEvidence) and a.lastEvidenceRelease > 0)
+  a.lastEvidenceRelease >= 0 and
+  (a.evidenceEnabled implies
+    (a.journal.some(e => e.kind == Activated and e.category == F::MissingEvidence) and a.lastEvidenceRelease > 0))
 pure def stepEvidenceReleasesInOrder(before: Activation, after: Activation): bool =
   after.lastEvidenceRelease >= before.lastEvidenceRelease
 pure def sometimesOnlyEvidenceClosureOn(a: Activation): bool = a.evidenceEnabled and not(a.enabled)
