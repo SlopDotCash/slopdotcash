@@ -188,6 +188,8 @@ pure val allowanceReadValues = Set(AllowanceZero, AllowanceNonzero, AllowanceEno
 pure val atomicValues = Set(true, false)
 pure val approvalReadValues = Set(BD::ApprovalIncluded, BD::ApprovalFinal, BD::ApprovalFailed)
 pure val weight_readAllowance = 5
+pure val eval_witness_sometimesApprovalSaved = (("includeCreation", 1, "owner"), ("checkCreation", true, "owner"),
+  ("readAllowance", AllowanceZero, false, "chain"), ("openApproval", "owner", true), ("signApproval", "owner"))
 pure val eval_witness_sometimesDepositAfterApproval = (("includeCreation", 1, "owner"), ("checkCreation", true, "owner"),
   ("readAllowance", AllowanceZero, false, "chain"), ("openApproval", "owner", true), ("signApproval", "owner"),
   ("readApproval", BD::ApprovalIncluded, "chain"), ("readAllowance", AllowanceEnough, false, "chain"),

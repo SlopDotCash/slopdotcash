@@ -864,4 +864,29 @@ pure val legacyValues = Set({ period: 202611, vault: "vault", root: "v1", signer
   entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(4) }, { source: sampleKey(202611, 2), actor: 2, gross: List(1) }) },
   { period: 202611, vault: "vault", root: "v1", signer: "attester",
   entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(50) }) })
+pure val eval_witness_sometimesLegacyMonthCountsExistingOnce = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("commitAward", sampleKey(202611, 1), 1, List(4), { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"),
+  ("admitLegacyMonth", { period: 202611, vault: "vault", root: "v1", signer: "attester",
+    entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(4) }, { source: sampleKey(202611, 2), actor: 2, gross: List(1) }) },
+    { block: 3, index: 0, time: 1796428800, transaction: "t4" }, "owner"))
+pure val eval_witness_sometimesPledgedAdmittedWhileOff = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(0), false, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("pledgeMonths", 202611, 1, List(5), { block: 0, index: 2, time: 1795000100, transaction: "t0b" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"))
+pure val eval_witness_sometimesManualAfterRelease = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("upgradeToRelease", { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 2, time: 1795000100, transaction: "t0b" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("releaseReserve", { period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "attester" }, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"),
+  ("commitAward", sampleKey(202611, 1), 1, List(4), { block: 3, index: 0, time: 1796428800, transaction: "t4" }, "owner"))
+pure val eval_witness_sometimesWithdrawWhilePoolPending = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 2, time: 1795000100, transaction: "t0b" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("withdraw", List(4), { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
 ```

@@ -278,6 +278,55 @@ pure def sometimesRevertParksNothing(s: Sends): bool = s.result == BatchReverted
 pure def sometimesParkedReleased(s: Sends): bool = s.parks >= 1 and not(s.parked)
 pure val refusedValues = Set(true, false)
 pure val brokenValues = Set(true, false)
+pure val eval_witness_sometimesSettled = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesFailedThenSentAgain = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("recordFailed", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesSecondBatchSettled = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker),
+  ("planNextBatch", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
+pure val eval_witness_sometimesOverBudget = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker),
+  ("planNextBatch", Worker),
+  ("refuseOverBudget", { maximum: 200000000000001 }, Worker))
+pure val eval_witness_sometimesParkedAndRestSent = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("refusePayout", true, Chain),
+  ("park", Worker),
+  ("sign", { maximum: 1 }, Worker),
+  ("journal", Worker),
+  ("broadcast", true, Worker),
+  ("mine", Chain),
+  ("recordFinalized", Worker))
 ```
 
 ## Story: Isolate Solana failed sends and configuration errors

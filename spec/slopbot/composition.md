@@ -334,4 +334,34 @@ pure val weight_escalateAppeal = 8
 pure val weight_decideAppeal = 8
 pure val weight_observeItem = 6
 pure val weight_reopenOwnClose = 8
+pure val eval_witness_sometimesDeniedAppealKeepsDebit = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("claimReview", slopbotWorker, 1, 4, R::initial, R::AdvisoryReview),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: CA::currentFence, leaseToken: 1, observedSeq: 2 }),
+  ("requestClose", slopbotWorker),
+  ("confirmClose", githubWebhook, { itemNode: "pr", revision: "head", closedBy: CA::SlopbotApp, closedAt: 100 }),
+  ("openAppeal", 5),
+  ("draftAppeal", slopbotWorker, false, 95),
+  ("observeBan", slopbotWorker, A::NotBanned),
+  ("observeSibling", slopbotWorker, A::NoSiblingHold),
+  ("escalateAppeal", slopbotWorker),
+  ("decideAppeal", 18633264, false))
+pure val eval_witness_sometimesUpheldAppealReopened = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("claimReview", slopbotWorker, 1, 4, R::initial, R::AdvisoryReview),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: CA::currentFence, leaseToken: 1, observedSeq: 2 }),
+  ("requestClose", slopbotWorker),
+  ("confirmClose", githubWebhook, { itemNode: "pr", revision: "head", closedBy: CA::SlopbotApp, closedAt: 100 }),
+  ("openAppeal", 5),
+  ("draftAppeal", slopbotWorker, true, 95),
+  ("observeBan", slopbotWorker, A::NotBanned),
+  ("observeSibling", slopbotWorker, A::NoSiblingHold),
+  ("escalateAppeal", slopbotWorker),
+  ("decideAppeal", 18633264, true),
+  ("observeItem", githubWebhook, { seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot, installation: C::InstallationActive }),
+  ("reopenOwnClose", slopbotWorker))
 ```

@@ -958,4 +958,96 @@ pure val weight_reinstate = 3
 pure val weight_reinstateFlagPause = 3
 pure val weight_grantExemption = 3
 pure val eValues = Set(initial)
+pure val eval_witness_sometimesReinstatedAfterMalice = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, RevisionAppended),
+  ("requestAppeal", 1),
+  ("requestAssessment", 5, 1, AdminInvestigation, 2),
+  ("recordResult", vettingService, { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("observePins", platform, List({ repository: 1, assessment: 1, pin: PinMatches }, { repository: 1, assessment: 2, pin: PinMatches })),
+  ("reinstate", 5, { revision: 1, sequence: 3 }))
+pure val eval_witness_sometimesBannedAccountAppealed = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, RevisionAppended),
+  ("decideMalice", 5, { revision: 1, sequence: 2 }, List(2)),
+  ("journalAccountAppeal", 2))
+pure val eval_witness_sometimesAccountReinstatementJournaled = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, RevisionAppended),
+  ("decideMalice", 5, { revision: 1, sequence: 2 }, List(2)),
+  ("journalAccountAppeal", 2),
+  ("journalAccountDenial", 6, { revision: 1, sequence: 4 }),
+  ("journalAccountAppeal", 2),
+  ("journalAccountReinstatement", 6, { revision: 1, sequence: 6 }, List(2)))
+pure val eval_witness_sometimesReleasedAccountCannotAppeal = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, RevisionAppended),
+  ("decideMalice", 5, { revision: 1, sequence: 2 }, List(2)),
+  ("journalAccountAppeal", 2),
+  ("journalAccountReinstatement", 6, { revision: 1, sequence: 4 }, List(2)))
+pure val eval_witness_sometimesFlagPauseLifted = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("flag", 2, 1, goodStanding),
+  ("flag", 3, 2, { ...goodStanding, actor: 3 }),
+  ("requestAssessment", vettingService, 1, FlagRecovery, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("reinstateFlagPause", vettingService, List({ repository: 1, assessment: 1, pin: PinMatches })))
+pure val eval_witness_sometimesFlagPauseLiftablePastPendingInvestigation = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("flag", 2, 1, goodStanding),
+  ("flag", 3, 2, { ...goodStanding, actor: 3 }),
+  ("requestAssessment", vettingService, 1, FlagRecovery, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("requestAssessment", 5, 1, AdminInvestigation, 2))
+pure val eval_witness_sometimesFlagPauseLiftedPastPendingInvestigation = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("flag", 2, 1, goodStanding),
+  ("flag", 3, 2, { ...goodStanding, actor: 3 }),
+  ("requestAssessment", vettingService, 1, FlagRecovery, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("requestAssessment", 5, 1, AdminInvestigation, 2),
+  ("reinstateFlagPause", vettingService, List({ repository: 1, assessment: 1, pin: PinMatches })))
+pure val eval_witness_sometimesFlagPauseLiftableAtOtherPin = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("flag", 2, 1, goodStanding),
+  ("flag", 3, 2, { ...goodStanding, actor: 3 }),
+  ("requestAssessment", vettingService, 1, FlagRecovery, 2),
+  ("recordResult", vettingService, { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("requestAssessment", 5, 1, AdminInvestigation, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, confirmation: A::NoConfirmation, reused: false, retained: false }, RevisionNotNeeded))
+pure val eval_witness_sometimesFlagPauseLiftedPastOtherPin = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("flag", 2, 1, goodStanding),
+  ("flag", 3, 2, { ...goodStanding, actor: 3 }),
+  ("requestAssessment", vettingService, 1, FlagRecovery, 2),
+  ("recordResult", vettingService, { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, RevisionNotNeeded),
+  ("requestAssessment", 5, 1, AdminInvestigation, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, confirmation: A::NoConfirmation, reused: false, retained: false }, RevisionNotNeeded),
+  ("reinstateFlagPause", vettingService, List({ repository: 1, assessment: 2, pin: PinMatches }, { repository: 1, assessment: 1, pin: PinChanged })))
+pure val eval_witness_sometimesGrantKeepsEarlierAssessment = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, confirmation: A::NoConfirmation, reused: false, retained: false }, RevisionNotNeeded),
+  ("advanceDay", platform, 89),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, goodGrant))
+pure val eval_witness_sometimesRequeuedStaysCovered = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("advanceDay", platform, 89),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, goodGrant),
+  ("requeueTemplate", vettingService, 1, 2))
+pure val eval_witness_sometimesRequeueAfterGrantStaysCovered = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("advanceDay", platform, 89),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, goodGrant),
+  ("requeueTemplate", vettingService, 1, 2))
+pure val eval_witness_sometimesQuarantinedByIncomplete = (
+  ("observeRevision", platform, 1, 1, 1),
+  ("requestAssessment", 1, 1, SetupCheck, 1),
+  ("recordResult", vettingService, { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, confirmation: A::NoConfirmation, reused: false, retained: false }, RevisionNotNeeded))
 ```

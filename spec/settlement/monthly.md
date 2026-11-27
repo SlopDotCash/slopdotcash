@@ -753,4 +753,113 @@ pure val weight_createObligations = 2
 pure val weight_recordReserved = 2
 pure val weight_recordPaid = 2
 pure val weight_recordConflict = 1
+pure val eval_witness_sometimesPledgedFrozenWithinCutNotice = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observeSettings", false, 1),
+  ("observeClock", 1796256100),
+  ("cut", 2, List(2), 20, 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }),
+  ("observePledge", "vault"),
+  ("observeClock", 1796342400),
+  "autoFreeze")
+pure val eval_witness_sometimesPledgedMonthFrozen = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observePledge", "vault"),
+  ("observeEligibility", { ...eligible, paused: true }),
+  ("observeClock", 1796342400),
+  "autoFreeze")
+pure val eval_witness_sometimesCloseoutFinalizedEarly = (
+  ("openMonth", "asi", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1795046500),
+  ("proposeCloseout", { ...snapshotSample, project: "asi" }, List(), revisionSample),
+  ("finalize", 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }))
+pure val eval_witness_sometimesMaintainerWithoutPointsPaid = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 2000, { period: 202611, repositories: List(1), deciders: List(1, 4), digest: "m1",
+    decisions: List(decisionSample, { ...decisionSample, pull: 2, decider: 4 }) }))
+pure val eval_witness_sometimesUnderfundedThenFunded = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1796342400),
+  "autoFreeze",
+  ("noteUnderfunded", { observedAt: 1796342400, free: List(5), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List()),
+  ("createObligations", { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List()))
+pure val eval_witness_sometimesCompleted = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", { ...snapshotSample, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) }, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1796342400),
+  "autoFreeze",
+  ("createObligations", { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List()),
+  ("recordReserved", awardFact(1, List(10), false)),
+  ("recordPaid", awardFact(1, List(10), true)))
+pure val eval_witness_sometimesOwnerAdjustedAndFinalized = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("adjust", 1, List(2), 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }),
+  ("finalize", 1, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }))
+pure val eval_witness_sometimesWalletlessReserve = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", { ...snapshotSample, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) }, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1796342400),
+  "autoFreeze",
+  ("createObligations", { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List()),
+  ("recordReserved", awardFact(1, List(10), false)))
+pure val eval_witness_sometimesBanExcluded = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1796342400),
+  "autoFreeze",
+  ("createObligations", { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List({ actor: 2, ban: 7 })))
+pure val eval_witness_sometimesLateCutHoldsDefaultOff = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observeSettings", false, 1),
+  ("observeClock", 1796256100),
+  ("cut", 2, List(2), 20, 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }))
+pure val eval_witness_sometimesEarlierMonthNotAutomatic = (
+  ("openMonth", "eliza", 202610),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1793491300),
+  ("propose", { ...snapshotSample, period: 202610 }, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1793750400))
+pure val eval_witness_sometimesCutThenOwnerFinalized = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("cut", 2, List(2), 20, 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }),
+  ("observeClock", 1796169700),
+  ("finalize", 1, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }))
 ```

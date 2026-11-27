@@ -1106,4 +1106,26 @@ pure val actorValues = Set(0, 1)
 pure val creditValues = Set(0, 10, 30)
 pure val requestedValues = Set(0, 30, 240)
 pure val totalValues = Set(10, 30)
+pure val eval_witness_sometimesRetainedOmissionZeroed = (
+  ("advance", 2432005),
+  ("credit", { key: keyReview, amount: 30, occurredAt: 2432005, rule: ScoreV2, provisional: false, digest: "r1" }, goodEvidence, noDecision),
+  ("zeroRetainedOmission", keyReview, { digest: "b1", supplied: List(), listedProjects: Set("p") }))
+pure val eval_witness_sometimesIncidentRecovered = (
+  ("advance", 2432005),
+  ("admitManifest", manifest),
+  ("creditEvaluation", manifest),
+  ("advance", E::retirementZeroedAt),
+  ("recordRetirementBatch", keyEval),
+  ("recoverIncident", keyEval, "checked"))
+pure val eval_witness_sometimesJointAbsorbedOwnRecord = (
+  ("advance", 2432005),
+  ("formUnit", { project: "p", sources: Set(1), commits: Set(11), band: -1, hashesVerified: true, digest: "a", promotion: W::NotPromotion }),
+  ("acceptUnit", 1, 2432005),
+  ("creditUnit", { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision }),
+  ("formUnit", { project: "p", sources: Set(1, 2), commits: Set(11, 12), band: 2, hashesVerified: true, digest: "c", promotion: W::NotPromotion }),
+  ("acceptUnit", 2, 2432005),
+  ("zeroSuperseded", unitKey("p", 1), supersedingSample),
+  ("creditUnit", { project: "p", unit: 2, recipients: List({ actor: 1, lines: 0 }), completeLines: true, occurredAt: 2432005,
+    repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2", decision: noDecision }))
 ```

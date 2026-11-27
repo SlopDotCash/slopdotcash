@@ -216,4 +216,13 @@ pure val weight_verify = 4
 pure val weight_verifyReply = 8
 pure val weight_checkHistory = 8
 pure val weight_historyReply = 12
+pure val eval_witness_sometimesFreshPlanAfterExpiry = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Signed, "sig1", true, adapter),
+  ("observeHeight", 4, heightReader),
+  ("checkHistory", 1, 1),
+  ("historyReply", 1, 1, NoPaymentFound, server),
+  ("receivePlan", 1, 2, 5, server))
 ```

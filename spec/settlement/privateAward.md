@@ -512,4 +512,41 @@ pure val weight_prepareDirect = 100
 pure val weight_recordPair = 40
 pure val weight_recordTransfer = 40
 pure val weight_recoverDirect = 100
+pure val eval_witness_sometimesVaultAwardPaid = (
+  ("deposit", List(4), "asset", 1, true, 1),
+  ("observeFunds", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("receive", 1, C::SlopReceived, awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("updateDelivery", SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }), 1),
+  ("reconcile", awardReceipt(1), 1))
+pure val eval_witness_sometimesDirectAwardPaid = (
+  ("observeAuthority", C::staff, 1),
+  ("observeRoute", { asset: "asset", qualified: true, observedAt: 2 }, 1),
+  ("receive", 1, C::SlopReceived, awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("admitDirect", 1, 5, 1, { ...journalTerms, caseId: 1, finding: 1 }, { network: FR::Base, asset: "asset", feeWallet: "fees" }),
+  ("observeWallets", DB::payerOne, DB::reporterOne, true, 1),
+  ("consent", DB::reporterOne, 3, true, 1),
+  ("showAmounts", 1, 5, 1, List(4)),
+  ("prepareDirect", 5, 1, DB::evmIntent, 4, true, true),
+  ("recordPair", { researcher: awardResearcher, fee: awardFee }, 5, 0, 1))
+pure val eval_witness_sometimesPaidAfterPayerRevoked = (
+  ("observeAuthority", C::staff, 1),
+  ("observeRoute", { asset: "asset", qualified: true, observedAt: 2 }, 1),
+  ("receive", 1, C::SlopReceived, awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("admitDirect", 1, 5, 1, { ...journalTerms, caseId: 1, finding: 1 }, { network: FR::Base, asset: "asset", feeWallet: "fees" }),
+  ("observeWallets", DB::payerOne, DB::reporterOne, true, 1),
+  ("consent", DB::reporterOne, 3, true, 1),
+  ("showAmounts", 1, 5, 1, List(4)),
+  ("prepareDirect", 5, 1, DB::evmIntent, 4, true, true),
+  ("observeAuthority", { ...C::staff, epoch: 2, banned: List(5) }, 1),
+  ("recordPair", { researcher: awardResearcher, fee: awardFee }, 5, 0, 1))
 ```

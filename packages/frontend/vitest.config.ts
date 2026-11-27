@@ -15,14 +15,14 @@ const siteCommands = {
     resolve: { dedupe: ["react", "react-dom"] },
     optimizeDeps: {
       include: [
+        "@storybook/addon-a11y/preview",
+        "@storybook/react-vite",
+        "effect/Deferred",
+        "lucide-react",
         "react",
         "react-dom",
         "react-dom/client",
         "react/jsx-dev-runtime",
-        "lucide-react",
-        "@storybook/addon-a11y/preview",
-        "@storybook/react-vite",
-        "effect/Deferred",
         "storybook/test",
       ],
     },

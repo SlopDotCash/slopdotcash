@@ -119,4 +119,15 @@ pure val nextCursorValues = Set(-1, 1, 2)
 pure val lifetimeValues = Set(1, 2)
 pure val weight_requestPage = 4
 pure val weight_receivePage = 8
+pure val eval_witness_sometimesMultiPageComplete = (
+  "requestPage",
+  ("receivePage", 1, List(1), 2, 2, 1, true),
+  "requestPage",
+  ("receivePage", 1, List(2), 2, 2, -1, true))
+pure val eval_witness_sometimesRetriedComplete = (
+  "requestPage",
+  ("failTransport", 1),
+  "retry",
+  "requestPage",
+  ("receivePage", 1, List(), 2, 0, -1, true))
 ```
