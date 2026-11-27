@@ -135,9 +135,10 @@ no source is credited by a current single-source record and a current
 joint record at once. The installation must be active and the fence that the
 [value inference](./valueInference.md) captured before collection must
 still be the current one; any registry, manifest or enforcement change
-advances it. After a source enters the
-joint journal, the single-source journal refuses any further record for
-it.
+advances it. The journal sequence counter starts at zero and never becomes
+negative, incrementing by one on each appended joint record. After a source
+enters the joint journal, the single-source journal refuses any further
+record for it.
 
 ```quint
 import installation as I from "./installation"
@@ -202,7 +203,7 @@ pure def alwaysCurrentRecordsAreDisjoint(j: Journal): bool =
   liveRecords(j).every(a => liveRecords(j).every(b => a.digest == b.digest
     or (a.sources.intersect(b.sources).size() == 0 and a.claims.intersect(b.claims).size() == 0)))
 pure def alwaysRecordsAreUnique(j: Journal): bool =
-  j.records.every(r => r.digest > 0 and r.assessmentKey > 0 and r.sequence > 0 and r.sequence <= j.lastSequence
+  j.lastSequence >= 0 and j.records.every(r => r.digest > 0 and r.assessmentKey > 0 and r.sequence > 0 and r.sequence <= j.lastSequence
     and j.records.select(o => o.digest == r.digest).length() == 1
     and j.records.select(o => o.assessmentKey == r.assessmentKey).length() == 1 and reasonMatches(r)
     and (r.claims.size() > 0 implies r.units.length() > 0) and r.units.every(u => u.size() > 0 and u.subseteq(r.claims)))

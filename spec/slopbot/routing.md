@@ -114,7 +114,8 @@ installation token by the shell, and it must name this unit's repository
 and author. A skipped routing decision is not limited. A failed review frees its slot unless a close attempt remains
 pending. An expired claim frees its slot unless a close attempt remains
 pending. A definitive close refusal frees it. Elapsed time never frees a
-pending close.
+pending close. The author-slot clock stays positive, so every recorded
+lease, completion and confirmed-close timestamp is positive.
 
 ```quint
 type SlotStatus = SlotRunning | SlotCompleted | SlotFailed | SlotSkipped
@@ -167,7 +168,7 @@ pure def settleClose(a: AuthorSlots, key: int, confirmed: bool): AuthorSlots =
 pure def alwaysLimitedClaimsWithinCap(a: AuthorSlots): bool =
   a.slots.select(s => s.limited and occupies(s, a.now)).length() <= authorDailyCap
 pure def alwaysSlotsWellFormed(a: AuthorSlots): bool =
-  a.slots.every(s => s.key > 0 and a.slots.select(o => o.key == s.key).length() == 1
+  a.now > 0 and a.slots.every(s => s.key > 0 and a.slots.select(o => o.key == s.key).length() == 1
     and (s.status == SlotRunning implies s.leaseUntil > 0) and (s.status != SlotRunning implies s.leaseUntil == 0)
     and (s.status == SlotCompleted implies s.completedAt > 0) and (s.close == CloseConfirmed implies s.closedAt > 0))
 pure def stepPendingCloseNeverExpires(before: AuthorSlots, after: AuthorSlots): bool =

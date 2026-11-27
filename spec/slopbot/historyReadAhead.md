@@ -35,7 +35,7 @@ records published or replaced during the loop are read live.
 The concurrency is `SLOP_VALUE_FEED_CONCURRENCY`: one or two digits, from
 1 to 16, 1 when unset (the release sets 6); any other value stops the
 collection before it reads any history. With 1, or with no outcomes, nothing is read
-ahead. Otherwise, after each outcome's repository is resolved once, in
+ahead and read-ahead stays disabled once the run begins. Otherwise, after each outcome's repository is resolved once, in
 order (one that cannot be resolved is left to the in-order reader, as is
 every outcome of a repository that failed before), read-ahead runs beside
 the loop, staying at most `2 * concurrency` outcomes in front of the loop's
@@ -86,8 +86,9 @@ pure def alwaysSetsDisjoint(r: ReadAhead): bool =
   r.reading.intersect(r.warmed).size() == 0 and r.reading.intersect(r.dropped).size() == 0 and
     r.warmed.intersect(r.dropped).size() == 0 and r.empty.subseteq(r.warmed)
 pure def alwaysNoReadAheadWithoutConcurrency(r: ReadAhead): bool =
-  (r.phase == Unconfigured or not(readsAhead(r.concurrency, r.outcomeCount))) implies
-    (r.reading.size() == 0 and r.warmed.size() == 0 and r.empty.size() == 0 and r.dropped.size() == 0)
+  ((r.phase == Unconfigured or not(readsAhead(r.concurrency, r.outcomeCount))) implies
+    (r.reading.size() == 0 and r.warmed.size() == 0 and r.empty.size() == 0 and r.dropped.size() == 0)) and
+    ((r.phase != Unconfigured and not(readsAhead(r.concurrency, r.outcomeCount))) implies r.aheadOff)
 pure def stepNoReadStartsAfterADrop(before: ReadAhead, via: str, after: ReadAhead): bool =
   via == "startRead" implies before.dropped.size() == 0
 pure def lawInvalidConcurrencyReadsNothing(concurrency: int, outcomeCount: int): bool =
@@ -98,11 +99,16 @@ pure def sometimesReadAheadDropped(r: ReadAhead): bool = r.phase == Running and 
 
 ### The in-order reader takes each empty warmed page once and reads every other page itself
 
-The in-order reader advances through the outcomes in order and decides them as
+The in-order reader advances through the outcomes in order (starting at position
+0 before a run begins, recording only outcomes from `1` to its current position
+so every earlier outcome is decided before moving on, leaving `at` decided once
+the current outcome finishes and `at - 1` while it is still undecided) and
+decides them as
 the reader without read-ahead does: for an outcome whose first pages were
 warmed and empty it takes them, once; for any other outcome — one with records,
 a dropped one, or one not read ahead — it waits for any in-flight read of that
-outcome to finish and reads it live under the same concurrency limit.
+outcome to finish and reads it live under the same concurrency limit, so no
+outcome has an active read-ahead while already read live.
 A failure is reported only by the in-order reader, for its own read of its
 current outcome, so it is the first failure in outcome order, as without
 read-ahead. A read-ahead records nothing, decides nothing and reports
@@ -129,11 +135,14 @@ pure def canFinishAll(r: ReadAhead): bool =
   r.phase == Running and r.at == r.outcomeCount and decidedOutcomes(r).size() == r.outcomeCount and r.reading.size() == 0
 pure def finishAll(r: ReadAhead): ReadAhead = { ...r, phase: AllRead }
 pure def alwaysDecidedInOrder(r: ReadAhead): bool =
-  r.at >= 0 and r.at <= r.outcomeCount and decidedOutcomes(r).forall(p => p >= 1 and p <= r.at) and
+  r.at >= 0 and r.at <= r.outcomeCount and (r.phase == Unconfigured implies r.at == 0) and
+    r.taken.forall(p => p >= 1 and p <= r.at) and r.live.forall(p => p >= 1 and p <= r.at) and
+    decidedOutcomes(r).forall(p => p >= 1 and p <= r.at) and
     (r.at == 0 implies decidedOutcomes(r).size() == 0) and
-    (r.at > 0 implies (decidedOutcomes(r).size() == r.at - 1 or decidedOutcomes(r).size() == r.at))
+    (r.at > 0 implies (if (decidedOutcomes(r).contains(r.at)) decidedOutcomes(r).size() == r.at else decidedOutcomes(r).size() == r.at - 1))
 pure def alwaysEachPageReadOnce(r: ReadAhead): bool =
-  r.taken.intersect(r.live).size() == 0 and r.taken.subseteq(r.empty) and r.live.intersect(r.empty).size() == 0
+  r.taken.intersect(r.live).size() == 0 and r.taken.subseteq(r.empty) and r.live.intersect(r.empty).size() == 0 and
+    r.reading.intersect(r.live).size() == 0
 pure def alwaysOnlyTheLoopReportsAFailure(r: ReadAhead): bool =
   (r.failedAt != 0 iff r.phase == ReadFailed) and
     (r.failedAt != 0 implies (r.failedAt == r.at and r.live.contains(r.failedAt)))
