@@ -126,6 +126,7 @@ const monthAfter = (period: number, months: number) => {
 function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
+  const transactions = new Map<string, Mined>();
   const seen: string[] = [];
   let finalized = 0n;
   const blockHash = (block: bigint) => hash(block.toString(16).slice(-1));
@@ -159,7 +160,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     if (pledges === undefined && ["currentPeriod", "openPledgedGross", "monthPledges"].includes(name.name)) throw Object.assign(new Error("execution reverted"), { code: 3, data: "0x" });
     throw new Error(`unexpected getter ${name.name}`);
   };
-  const mine = (transaction: { from?: string; to: string; data: string; value?: string }) => {
+  const mine = (transaction: { from?: string; to: string; data: string; value?: string }, inBatch = false) => {
     const block = BigInt(mined.length + 10);
     if (options.pledges !== undefined && options.failReceipts !== true && (transaction.data.startsWith(selector("pledgeMonths")) || transaction.data.startsWith(selector("expirePledge")))) {
       const decoded = decodeFunctionData({ abi: escrowAbi, data: transaction.data as Hex });
@@ -175,6 +176,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
       : amount === 0n ? [] : [{ address: vault.vault, topics: [EVENT_TOPICS.Deposited, pad(owner as Hex)], data: encodeAbiParameters([{ type: "uint128" }], [amount]) }];
     const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, logs };
     mined.push(entry);
+    if (!inBatch) transactions.set(entry.hash, entry);
     return entry;
   };
   const receipt = (entry: Mined) => ({
@@ -203,16 +205,19 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
       }
       if (method === "wallet_sendCalls") {
         const calls = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls;
-        const last = calls.map(mine).at(-1);
-        return { id: `batch-${last?.hash ?? ""}` };
+        const batch = calls.map((call) => mine(call, true));
+        const last = batch.at(-1);
+        if (last === undefined) throw new Error("wallet batch has no calls");
+        transactions.set(last.hash, { ...last, logs: options.failReceipts === true ? [] : batch.flatMap((entry) => entry.logs) });
+        return { id: `batch-${last.hash}` };
       }
-      if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
+      if (method === "wallet_getCallsStatus") return { status: options.failReceipts === true ? 500 : 200, atomic: true, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
       if (method === "eth_getTransactionReceipt") {
-        const entry = mined.find((item) => item.hash === params[0]);
+        const entry = typeof params[0] === "string" ? transactions.get(params[0]) : undefined;
         return entry === undefined ? null : receipt(entry);
       }
       if (method === "eth_getTransactionByHash") {
-        const entry = mined.find((item) => item.hash === params[0]);
+        const entry = typeof params[0] === "string" ? transactions.get(params[0]) : undefined;
         return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: entry.value };
       }
       if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
@@ -817,7 +822,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     const unsigned = new Uint8Array(65 + compiled.bytes.length);
     unsigned[0] = 1;
     unsigned.set(compiled.bytes, 65);
-    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction"] };
+    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signMessage", "solana:signAndSendTransaction"] };
     const signed: Uint8Array[] = [];
     const solanaWallet = {
       version: "1.0.0",
@@ -827,6 +832,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
       accounts: [account],
       features: {
         "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+        "solana:signMessage": { version: "1.0.0", signMessage: async ({ message }: { message: Uint8Array }) => [{ signedMessage: message, signature: await wallet.sign(message) }] },
         "solana:signAndSendTransaction": {
           version: "1.0.0",
           supportedTransactionVersions: ["legacy"],
@@ -852,8 +858,9 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
       const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch as typeof globalThis.fetch);
       const outcome = await runtime.runPromise(Effect.gen(function* () {
         const choice = yield* WalletChoice;
-        const id = (yield* choice.current()).find((offer) => offer.name === "Lock Solana")?.id ?? 0;
-        const solanaConnection = yield* connectSolana(id);
+        const offer = (yield* choice.current()).find((candidate) => candidate.name === solanaWallet.name);
+        if (offer?.family !== "solana" || !offer.solanaFunding) throw new Error("the Solana lock wallet was not offered for funding");
+        const solanaConnection = yield* connectSolana(offer.id);
         const connection: LockConnection = { family: "solana", address: solanaConnection.address, solana: solanaConnection };
         yield* readCard({ network: "solana-devnet", vault: project.address, freeBalance: 10_000_000n, openPledgedGross: 0n, pledges: [] }, 10_000_000n, nowSeconds());
         yield* connectCard(connection);
