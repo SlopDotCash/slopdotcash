@@ -2,6 +2,7 @@
 import { defaultMinor, keepFeeLabel, keptAfterClosedDays, refundUndecidedDays, stableDecimals } from "@repo/backend/client";
 import { REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS, REPORT_DEPOSIT_REFUND_SILENT_DAYS, REPORT_DEPOSIT_SWITCHED_ON, REPORT_DEPOSIT_USD_MINOR } from "@repo/security/client";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
+import { PAYOUT_FEE_BASIS_POINTS } from "@repo/settlement/kernels/networks";
 import { cn, ExternalLink, PageHeader, shell } from "@repo/ui";
 import { Ban, BookOpen, CalendarCheck, CircleSlash, FolderPlus, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
@@ -221,6 +222,20 @@ export function HowItWorksPage() {
                 </li>
               </ul>
             </Answer>
+            <Answer question="What is a Point worth?">
+              <p>
+                No fixed amount. Your share of a month is the funded pool times your Points divided by all Points on that project in that UTC month, so it moves as more work is merged and scored until the month locks, 72 hours after it ends. The {PAYOUT_FEE_BASIS_POINTS / 100}% fee comes off the share. A pool paid in a project&apos;s own token pays in that token; Slop does not convert it or give it a dollar value.
+              </p>
+            </Answer>
+            <Answer question="Who decides how big my work is?">
+              <p>
+                Slopbot sizes each merged pull request into a{" "}
+                <a className={link} href="#points">
+                  tier
+                </a>
+                . The project&apos;s maintainers decide what is merged, and the owner can lower a contributor&apos;s amount for the month before it locks, with a public reason.
+              </p>
+            </Answer>
             <Answer question="When are payouts sent?">
               <Milestones label="Monthly payout timeline" milestones={payoutTimeline} />
             </Answer>
@@ -250,15 +265,15 @@ export function HowItWorksPage() {
             </Answer>
             <Answer question="How do I receive an award?">
               <p>
-                Add a wallet in{" "}
+                Two steps. Add a wallet for the project&apos;s network in{" "}
                 <a className={link} href="/account#wallets">
                   Settings
                 </a>
-                . Track it in{" "}
+                , then press Authorize on the award in{" "}
                 <a className={link} href="/earnings">
                   Payouts
                 </a>
-                .
+                . Until both are done a funded award stays reserved; it never lapses for a missing wallet.
               </p>
             </Answer>
             <Answer question="What does projected mean? Is the pool funded?">
