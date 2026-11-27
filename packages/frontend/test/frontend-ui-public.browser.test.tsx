@@ -1055,7 +1055,7 @@ interface Mined {
   readonly logs: ReadonlyArray<{ address: string; topics: string[]; data: string }>;
 }
 
-function fakeChain(options: { atomic: boolean; unclear?: boolean }) {
+function fakeChain(options: { atomic: boolean; unclear?: boolean; batchError?: object }) {
   let chain = 1n;
   let finalized = 0n;
   const allowances = new Map<string, bigint>();
@@ -1103,6 +1103,7 @@ function fakeChain(options: { atomic: boolean; unclear?: boolean }) {
         }
         if (method === "wallet_sendCalls") {
           savedAtPrompt.push(sessionStorage.getItem(watchedKey));
+          if (options.batchError !== undefined) throw options.batchError;
           const last = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls.map(mine).at(-1);
           return { id: `batch-${last?.hash ?? ""}` };
         }
@@ -1293,6 +1294,35 @@ describe("Pay from a wallet and follow the deposit to final", () => {
       sends: 1,
       calls: 0,
     });
+  });
+
+  it.each([
+    { reply: "direct capability refusal", error: { code: 5700, message: "Wallet capability unavailable" }, fallback: true, retained: false, retry: true },
+    { reply: "nested capability code", error: { code: -32603, message: "The reply was lost", cause: { code: 5700 } }, fallback: false, retained: true, retry: true },
+    { reply: "user decline", error: { code: 4001, message: "Declined" }, fallback: false, retained: false, retry: false },
+  ])("fee deposit batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, fallback, retained, retry }) => {
+    const key = feeDepositKey(pullItem);
+    const chain = fakeChain({ atomic: true, batchError: error });
+    chain.watch(key);
+    const { fetch } = api({ item: pullRecord([stableWay()]) });
+    const runtime = started(fetch);
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce(crypto.randomUUID(), chain.provider);
+      const pay = yield* openPayPage(pullAddress, sessionSlots());
+      yield* pay.connect(yield* walletId);
+      yield* pay.review();
+      const denied = yield* Effect.exit(pay.pay());
+      const phase = (yield* pay.machine.get()).phase;
+      const batched = (yield* pay.shown()).reviewed?.facts.batch;
+      const saved = sessionStorage.getItem(key);
+      const again = retry ? Exit.isSuccess(yield* Effect.exit(pay.pay())) : false;
+      const recovered = retained ? (yield* (yield* openPayPage(pullAddress, sessionSlots())).machine.get()).phase : undefined;
+      return { denied: Exit.isFailure(denied), phase, batched, saved, again, recovered, kept: sessionStorage.getItem(key) === saved };
+    }));
+    expect(chain.savedAtPrompt[0]).toEqual(expect.any(String));
+    expect(result).toEqual({ denied: true, phase: retained ? "Unclear" : "Reviewed", batched: !fallback, saved: retained ? chain.savedAtPrompt[0] : null, again: fallback, recovered: retained ? "Unclear" : undefined, kept: !fallback });
+    expect(chain.seen.filter((method) => method === "wallet_sendCalls" || method === "eth_sendTransaction")).toEqual(fallback ? ["wallet_sendCalls", "eth_sendTransaction"] : ["wallet_sendCalls"]);
+    expect(chain.mined.map((call) => decodeFunctionData({ abi: depositAbi, data: call.input as Hex }).functionName)).toEqual(fallback ? ["approve"] : []);
   });
 
   it("a batching wallet pays SLOP in one request, and a", async () => {

@@ -10,7 +10,7 @@ import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { Effect, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { TestClock } from "effect/testing";
 import { act } from "react";
@@ -147,7 +147,19 @@ interface FactoryObservation {
   readonly registrar?: `0x${string}`;
 }
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string; readonly factoryObservation?: FactoryObservation; readonly lockBatch?: LockBatchReport }) {
+function fakeChain(options: {
+  readonly atomic: boolean;
+  readonly send: "mine" | "unclear";
+  readonly approved?: boolean;
+  readonly estimateReverts?: { readonly call: string; readonly error: unknown };
+  readonly pledges?: Pledges;
+  readonly current?: number;
+  readonly failReceipts?: boolean;
+  readonly wallet?: string;
+  readonly factoryObservation?: FactoryObservation;
+  readonly lockBatch?: LockBatchReport;
+  readonly batchRefusal?: () => unknown;
+}) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
@@ -244,6 +256,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
         return Promise.resolve(mine(first as unknown as { to: string; data: string; value?: string }).hash);
       }
       if (method === "wallet_sendCalls") {
+        if (options.batchRefusal !== undefined) return Promise.reject(options.batchRefusal());
         const calls = (first as unknown as { calls: ReadonlyArray<{ to: string; data: string; value?: string }> }).calls;
         const sharedBlock = options.lockBatch === "sameBlock" || options.lockBatch === "reversedIndex" ? BigInt(mined.length + 10) : undefined;
         const entries = previousLock ?? calls.map((call, index) => {
@@ -530,6 +543,34 @@ describe("Atomic batch deposit", () => {
       };
     }));
     expect(result).toEqual({ capability: true, phases: ["WalletReference", "WalletReference", "HashKnown", "HashKnown", "Verified"], sameReference: true, again: "BatchStopped", savedIntent: true, cleared: null, batches: 1 });
+  });
+
+  it.each([
+    { reply: "direct capability refusal", error: { code: 5700, message: "Wallet capability unavailable" }, phase: "Separate", resumed: "Unreviewed", failure: "BatchStopped", retained: false },
+    { reply: "nested capability code", error: { code: -32603, message: "The reply was lost", cause: { code: 5700 } }, phase: "Uncertain", resumed: "Uncertain", failure: "BatchStopped", retained: true },
+    { reply: "user decline", error: { code: 4001, message: "Declined" }, phase: "Declined", resumed: "Unreviewed", failure: "WalletDeclined", retained: false },
+  ])("registered vault batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, phase, resumed, failure, retained }) => {
+    let savedAtPrompt: string | null = null;
+    const chain = fakeChain({ atomic: true, send: "mine", batchRefusal: () => {
+      savedAtPrompt = sessionStorage.getItem(batchKey);
+      return error;
+    } });
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce(crypto.randomUUID(), chain.provider);
+      const connection = yield* connected;
+      const flow = yield* batchFlow(sessionSlots(), batchKey);
+      yield* flow.review(actor, yield* reviewTransfer(connection, tokenVault, "deposit", "2", "finalized"));
+      const outcome = yield* Effect.match(flow.send(connection, tokenVault, "2", "finalized"), { onFailure: (stopped) => stopped._tag, onSuccess: (state) => state.phase });
+      const after = (yield* flow.machine.get()).phase;
+      const reloaded = yield* batchFlow(sessionSlots(), batchKey);
+      const recovered = (yield* reloaded.machine.get()).phase;
+      const again = yield* Effect.exit(reloaded.send(connection, tokenVault, "2", "finalized"));
+      return { outcome, after, recovered, blocked: Exit.isFailure(again), slot: sessionStorage.getItem(batchKey) };
+    }));
+    expect(savedAtPrompt).not.toBeNull();
+    expect(result).toEqual({ outcome: failure, after: phase, recovered: resumed, blocked: true, slot: retained ? savedAtPrompt : null });
+    expect(chain.seen.filter((method) => method === "wallet_sendCalls" || method === "eth_sendTransaction")).toEqual(["wallet_sendCalls"]);
   });
 
   // spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
