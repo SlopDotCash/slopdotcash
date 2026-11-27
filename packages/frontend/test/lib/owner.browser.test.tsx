@@ -966,17 +966,17 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     } as unknown as Wallet;
     cleanups.push(getWallets().register(solanaWallet));
     const run = async (wire: Uint8Array) => {
-      const asked: unknown[] = [];
+      const steps: string[] = [];
       const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-        const body = await new Request(input, init).json();
-        asked.push(body);
-        const answer = body.step === "check"
+        const { step } = await new Request(input, init).json() as { readonly step: string };
+        steps.push(step);
+        const answer = step === "check"
           ? { status: "finalized" }
           : { plan: { wallet: wallet.address, periods, requested: periods, amountMinor: "2000000", decimals: 6, current: periods.map((period) => ({ period, amountMinor: "0", open: false })), transaction: { blockhash, lastValidBlockHeight: 100, transaction: base64Encode(wire), networkFeeLamports: "5000" } } };
         return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
       };
       const solana = { projectId: "slop", network: "solana-devnet", vault: project.address, terms: { program: program.address, project: project.address, owner: wallet.address, mint: null, tokenProgram: null } };
-      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch as typeof globalThis.fetch);
+      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch);
       const outcome = await runtime.runPromise(Effect.gen(function* () {
         const choice = yield* WalletChoice;
         const id = (yield* choice.current()).find((offer) => offer.name === "Lock Solana")?.id ?? 0;
@@ -990,7 +990,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
         yield* watchCard(connection, Effect.void);
         return { reviewed, phase: (yield* cardState).phase };
       }));
-      return { ...outcome, steps: asked.map((body) => (body as { step: string }).step) };
+      return { ...outcome, steps };
     };
     const altered = Uint8Array.from(unsigned);
     altered[altered.length - 1] = (altered[altered.length - 1] ?? 0) ^ 1;
