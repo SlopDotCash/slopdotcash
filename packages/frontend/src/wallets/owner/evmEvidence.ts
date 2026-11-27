@@ -157,12 +157,6 @@ export function batchReport(reported: unknown): BatchReport {
 }
 
 /** @throws {never} */
-export function failureCode(error: object): number | undefined {
-  const code: unknown = "code" in error ? error.code : undefined;
-  return typeof code === "number" ? code : undefined;
-}
-
-/** @throws {never} */
 export function blockIndex(block: bigint): number {
   return block > 0n && block <= 9007199254740991n ? Number(block) : 0;
 }

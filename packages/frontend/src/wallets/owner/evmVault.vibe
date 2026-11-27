@@ -10,8 +10,9 @@ import { type ApprovalEvidence, approvalSettled } from "../../../gen/frontend__b
 import { networkLabel } from "../../kernels/assetText.ts"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransaction } from "../core/evm.vibe"
+import { failureOf } from "../core/injected.ts"
 import { type Call, type Operation, type Step, type VaultCallTerms, type VaultReview, allowanceData, balanceOfData, batchCalls, batchPlan, callPlan, codeBytes, hexQuantity, quantityValue, samePlannedCall, transferCall, wordValue } from "./evmCalls.ts"
-import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, expectedOf, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
+import { type BatchReport, type ExpectedCall, type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, expectedOf, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf, vaultEvents } from "./evmEvidence.ts"
 import { type DeploymentCheck, deploymentCheck, settled } from "./ownerDecisions.ts"
 import { pledgedFundsRefusal } from "./pledgeRefusals.ts"
 import type { EvmBatchPlan, EvmCallPlan, OwnerPlan } from "./ownerPlans.schema.ts"
@@ -277,10 +278,8 @@ export effect function sendBatch<E, R>(connection: EvmConnection, vault: EvmVaul
   if (first !== undefined) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, ...first }])
   try requireVaultWallet(connection, vault)
   try beforePrompt(batchPlan(connection.address, vault.chainId, calls))
-  const result: unknown = evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(vault.chainId), atomicRequired: true, calls }]) catch effect (error) => {
-    if (error._tag === "WalletFailed" && batchRefusedCode(failureCode(error))) throw new VaultBatchUnavailable({ message: evmVaultMessages.batchRefused })
-    throw error
-  }
+  const result = try evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(vault.chainId), atomicRequired: true, calls }],
+    (caught) => batchRefusedCode(failureOf(caught).code) ? new VaultBatchUnavailable({ message: evmVaultMessages.batchRefused }) : undefined)
   const reference = batchReferenceOf(result)
   if (reference === undefined) throw new WalletFailed({ message: evmVaultMessages.batchNoReference })
   return reference
