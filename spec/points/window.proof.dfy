@@ -38,3 +38,47 @@ lemma AppendUniqueRecord(xs: seq<Recorded>, n: Recorded)
     }
   }
 }
+
+lemma CensusItemsMatchTotal(xs: seq<points__census_Census>, accItems: seq<points__census_Item>, accTotal: int)
+  requires |accItems| == accTotal && accTotal >= 0
+  requires forall c :: c in xs ==> |c.items| == c.totalCount && c.totalCount >= 0
+  ensures var items := Std.Collections.Seq.FoldLeft((acc: seq<points__census_Item>, c: points__census_Census) => (acc + c.items), accItems, xs);
+    var total := Std.Collections.Seq.FoldLeft((acc: int, c: points__census_Census) => (acc + c.totalCount), accTotal, xs);
+    |items| == total && total >= 0
+  decreases |xs|
+{
+  if |xs| > 0 {
+    CensusItemsMatchTotal(xs[1..], accItems + xs[0].items, accTotal + xs[0].totalCount);
+  }
+}
+
+lemma completeCensus_ensures(w: Window, censuses: seq<points__census_Census>)
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysExactWindow(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysBuildingAhead(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysIdsDistinct(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysBuildingCensusReset(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysPublishedCountExact(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> alwaysRecordsInInventory(completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> stepFailureKeepsPublished(w, completeCensus(w, censuses)))
+  ensures (inv(w) ==> canCompleteCensus(w, censuses) ==> stepWindowNeverRegresses(w, completeCensus(w, censuses)))
+{
+  hide *;
+  reveal inv, canCompleteCensus, completeCensus, censusVerified, points__census_alwaysCompleteWhenReady, censusItems, censusesTotal, inInventory, alwaysExactWindow, alwaysBuildingAhead, alwaysIdsDistinct, alwaysBuildingCensusReset, alwaysPublishedCountExact, alwaysRecordsInInventory, stepFailureKeepsPublished, stepWindowNeverRegresses;
+  if inv(w) && canCompleteCensus(w, censuses) {
+    CensusItemsMatchTotal(censuses, [], 0);
+  }
+}
+
+lemma CountedRecordsMeaning(w: Window)
+  ensures countedRecords(w) == |ProofLib.Filter((r: Recorded) => r.outcome.Counted?, w.records)|
+{
+}
+
+lemma initialHolds_ensures()
+  ensures inv(initialHolds())
+{
+  hide *;
+  reveal initial, windowDays, initialHolds, inv, alwaysExactWindow, alwaysBuildingAhead, alwaysIdsDistinct, alwaysBuildingCensusReset, alwaysPublishedCountExact, alwaysRecordsInInventory;
+  CountedRecordsMeaning(initial);
+  ProofLib.FilterNil((r: Recorded) => r.outcome.Counted?, initial.records);
+}
