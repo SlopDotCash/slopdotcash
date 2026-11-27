@@ -5,7 +5,7 @@ publication lock, and `backend/trace/PRIVATE_INTAKE_RECOVERY.md` requires an
 obsolete data refresh to be rejected if production advances before it
 obtains that lock. The pinned implementation is the GitHub Actions
 concurrency group of `.github/workflows/deploy.yml`: `slop-production` for
-`main` and `slop-staging` for `development`, each without cancelling a
+`main` and `slop-staging` for `staging`, each without cancelling a
 waiting run. Staging and production are separate stacks, so each has its own
 lock.
 

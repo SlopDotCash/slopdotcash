@@ -96,7 +96,7 @@ schema PagesDeployment {
   readonly deployment_trigger?: PagesTrigger
 }
 
-const branches = { Production: "main", Staging: "development" } as const
+const branches = { Production: "main", Staging: "staging" } as const
 const listingPageSize = 25
 const listingPages = 8
 const migrationSeconds = 900

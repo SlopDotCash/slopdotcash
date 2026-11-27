@@ -31,13 +31,13 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: Dispatch on main and development
+      - name: Dispatch on main and staging
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           status=0
-          for ref in main development; do
+          for ref in main staging; do
             if gh workflow run monthly-rewards.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"; then
               echo "Dispatched monthly allocations on $ref."
             else
@@ -50,7 +50,7 @@ jobs:
   propose:
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:

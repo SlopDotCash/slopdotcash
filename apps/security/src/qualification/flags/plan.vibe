@@ -10,7 +10,7 @@ export interface FlagNames {
   readonly queues: readonly [work: string, failed: string]
 }
 
-export const protectedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/vetting-recovery-qualification.yml@refs/heads/development"
+export const protectedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/vetting-recovery-qualification.yml@refs/heads/staging"
 export const databaseBinding = "EVIDENCE_DATABASE"
 export const bucketBinding = "EVIDENCE_SOURCE"
 export const queueBinding = "EVIDENCE_BACKUP_QUEUE"
@@ -22,7 +22,7 @@ CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL)
 
 const runPattern = /^slop-vet-flags-[0-9]{1,20}-[0-9]{1,5}$/u
 const accountPattern = /^[a-f0-9]{32}$/u
-export const protectedRefusal = "Exact protected development qualification is required"
+export const protectedRefusal = "Exact protected staging qualification is required"
 
 export function isFlagsRun(run: string) {
   return runPattern.test(run)
@@ -56,7 +56,7 @@ export function flagsPlan(source: string, run: string) {
 }
 
 export effect function protectedFlagsRun(run: string) {
-  const checkout = protectedCheckout({ refs: ["refs/heads/development"], workflowRef: protectedWorkflow, mode: "execute", message: protectedRefusal }) catch effect () => {
+  const checkout = protectedCheckout({ refs: ["refs/heads/staging"], workflowRef: protectedWorkflow, mode: "execute", message: protectedRefusal }) catch effect () => {
     throw new FlagsRefused({ message: protectedRefusal })
   }
   const account = try variable("CLOUDFLARE_ACCOUNT_ID")

@@ -48,7 +48,7 @@ export function deploymentTier(text: string | undefined) {
 export type PublicTier = Exclude<Tier, "local">
 
 export interface Origins {
-  readonly branch: "main" | "development"
+  readonly branch: "main" | "staging"
   readonly site: string
   readonly api: string
   readonly identity: string
@@ -59,7 +59,7 @@ export interface Origins {
 export function deploymentOrigins(tier: PublicTier): Origins {
   if (tier === "staging") {
     const site = "https://staging.slop.cash"
-    return { branch: "development", site, api: site, identity: "https://identity-staging.slop.cash", browserOrigins: new Set([site]), traceBrowserOrigins: new Set([site]) }
+    return { branch: "staging", site, api: site, identity: "https://identity-staging.slop.cash", browserOrigins: new Set([site]), traceBrowserOrigins: new Set([site]) }
   }
   const site = "https://slop.cash"
   const browserOrigins = [site, "https://slop.tech", "https://eliza.army"]

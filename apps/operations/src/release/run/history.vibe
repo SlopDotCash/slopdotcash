@@ -15,14 +15,19 @@ schema Deployment {
   readonly ref: string
   readonly environment: string
   readonly production_environment: boolean
+  readonly created_at?: string
 }
 schema DeploymentStatus { readonly log_url?: string | null }
 schema WorkflowRun { readonly head_sha: string; readonly path: string }
 
 const stagingEnvironment = "slop-staging"
+const stagingBranch = "staging"
+const legacyStagingBranch = "development"
+const stagingCutoverMillis = Date.parse("2026-11-27T00:00:00Z")
 const deadlineVariable = "STAGING_ORDER_RETRY_UNTIL"
 const revision = /^[0-9a-f]{40}$/u
 const epochSeconds = /^\d+$/u
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u
 const nonReleaseWorkflows: ReadonlySet<string> = new Set([
   ".github/workflows/vetting-recovery-qualification.yml",
   ".github/workflows/vetting-sandbox-qualification.yml",
@@ -41,6 +46,12 @@ interface Verdict {
 interface QuotaDelay {
   readonly valid: boolean
   readonly retryAt: number
+}
+
+function retiredLegacyStaging(deployment: Deployment) {
+  if (deployment.ref !== legacyStagingBranch || deployment.created_at === undefined || !isoInstant.test(deployment.created_at)) return false
+  const createdAt = Date.parse(deployment.created_at)
+  return Number.isFinite(createdAt) && createdAt < stagingCutoverMillis
 }
 
 function quotaDelay(failure: RateLimited, now: number): QuotaDelay {
@@ -137,19 +148,20 @@ export effect function stagingHistory<E, R>(run: Run, repository: string, root: 
     const ancestor = try observe()
     try elapsed()
     try sent({ type: "inspect", ancestor })
-    if (!ancestor) throw new StagingHistoryRefused({ message: `Live development no longer contains the staging candidate ${tested}` })
+    if (!ancestor) throw new StagingHistoryRefused({ message: `Live staging no longer contains the staging candidate ${tested}` })
     const history = github.pages(`/repos/${repository}/deployments?environment=${stagingEnvironment}`, Deployment, { perPage: 100, maxPages: 10 }) catch effect (failure) => {
       return try failed(failure)
     }
     const checked = new Set<string>()
     const ignored: string[] = []
     for (const deployment of history) {
-      if (deployment.environment !== stagingEnvironment || deployment.ref !== "development" || deployment.production_environment || !revision.test(deployment.sha)) {
+      const retired = retiredLegacyStaging(deployment)
+      if (deployment.environment !== stagingEnvironment || (deployment.ref !== stagingBranch && !retired) || deployment.production_environment || !revision.test(deployment.sha)) {
         throw new StagingHistoryRefused({ message: "Unknown staging deployment provenance; require human review" })
       }
       if (checked.has(deployment.sha)) continue
-      const ancestorOrEqual = try isAncestor(root, deployment.sha, tested)
-      const nonRelease = ancestorOrEqual ? false : try creator(deployment)
+      const ancestorOrEqual = retired ? deployment.sha === tested : try isAncestor(root, deployment.sha, tested)
+      const nonRelease = retired ? !ancestorOrEqual : ancestorOrEqual ? false : try creator(deployment)
       try elapsed()
       const read = try sent({ type: "readHistory", revision: try run.idOf("staging revision", deployment.sha), ancestorOrEqual, nonRelease })
       if (read.phase === "OrderRefused") return { ignored, newer: true } satisfies Verdict
