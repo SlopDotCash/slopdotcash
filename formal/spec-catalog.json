@@ -18354,7 +18354,7 @@
     },
     {
       "path": "spec/points/corrections.md",
-      "sha256": "40a40fa727a27f1eea5299344eabd759414afb7bdf4eedfc9e278bd16773b811",
+      "sha256": "35fe34d7e6344d134c880321d16cb0ecf501526ac2eb707bd4f08e99a8255254",
       "module": "points__corrections",
       "stories": [
         {
@@ -18363,7 +18363,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest",
-          "line": 262
+          "line": 264
         }
       ],
       "rules": [
@@ -18453,7 +18453,7 @@
         },
         {
           "heading": "Story: Reassign the existing pool while preserving funded history / An already-correct pool records its earlier-acceptance proof once",
-          "line": 224,
+          "line": 226,
           "definitions": [
             "noEntry",
             "lastShares",
@@ -18469,7 +18469,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest",
-          "line": 264,
+          "line": 266,
           "definitions": [
             "noChunk",
             "canStageChunk",
@@ -18486,7 +18486,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / A recorded source omitted from the historical search is verified through a census supplement",
-          "line": 299,
+          "line": 303,
           "definitions": [
             "canRequireSupplement",
             "requireSupplement",
@@ -18503,7 +18503,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Directed witnesses check protection races, stale predecessors, October attribution and replay",
-          "line": 332,
+          "line": 336,
           "definitions": [
             "readyManifest",
             "carrier",
@@ -20118,7 +20118,7 @@
     },
     {
       "path": "spec/points/profiles.md",
-      "sha256": "c4b4ceb3a737254aca7490de576755740b502f8f262a41d8ac99a728ea45213f",
+      "sha256": "7f67fc527b06ab8a9071bef35b3de2bcaf6e1b5cdd4ad809f615c9fcd7f4ce83",
       "module": "points__profiles",
       "stories": [
         {
@@ -20164,7 +20164,7 @@
         },
         {
           "heading": "Story: Publish a profile census that never loses counts / A missing issue history is recorded as a coverage gap, never as zero",
-          "line": 95,
+          "line": 99,
           "definitions": [
             "canRecordIssue",
             "recordIssue",
@@ -20188,7 +20188,7 @@
         },
         {
           "heading": "Story: Publish a profile census that never loses counts / Simulation samples rename, remove and re-add repositories",
-          "line": 162,
+          "line": 166,
           "definitions": [
             "targetsValues",
             "tallyValues",

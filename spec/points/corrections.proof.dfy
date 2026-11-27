@@ -113,3 +113,66 @@ lemma lawReplayAppendsNothing_ensures(manifest: Manifest)
     assert prepare(committed, manifest).history == committed.history;
   }
 }
+
+lemma FoldThreeScan(f: (ZeroLineScan, CensusCommit) -> ZeroLineScan, z: ZeroLineScan, a: CensusCommit, b: CensusCommit, c: CensusCommit)
+  ensures Std.Collections.Seq.FoldLeft(f, z, [a, b, c]) == f(f(f(z, a), b), c)
+{
+  ProofLib.FoldLeftAppend(f, z, [], a);
+  ProofLib.FoldLeftAppend(f, z, [a], b);
+  ProofLib.FoldLeftAppend(f, z, [a, b], c);
+}
+
+lemma lawMergeRowsLeaveTheMarkerUnproved_ensures(censusRow: CensusCommit)
+  ensures (lawMergeRowsLeaveTheMarkerUnproved(censusRow) == true)
+{
+  if censusRow.parentsKnown && censusRow.parents > 1 {
+    FoldThreeScan((acc: ZeroLineScan, row: CensusCommit) => scanCommit(acc, row), ZeroLineScan(false, false, false, false), emptyMarkerRow, carriedChangeRow, censusRow);
+  }
+}
+
+lemma lawOwnedChangeProvesWork_ensures(censusRow: CensusCommit)
+  ensures (lawOwnedChangeProvesWork(censusRow) == true)
+{
+  if censusRow.parentsKnown && censusRow.parents <= 1 && censusRow.owned && censusRow.linesKnown && censusRow.additions > 0 {
+    FoldThreeScan((acc: ZeroLineScan, row: CensusCommit) => scanCommit(acc, row), ZeroLineScan(false, false, false, false), emptyMarkerRow, carriedChangeRow, censusRow);
+  }
+}
+
+lemma lawUnknownParentsProveNothing_ensures(censusRow: CensusCommit)
+  ensures (lawUnknownParentsProveNothing(censusRow) == true)
+{
+  if !censusRow.parentsKnown {
+    FoldThreeScan((acc: ZeroLineScan, row: CensusCommit) => scanCommit(acc, row), ZeroLineScan(false, false, false, false), emptyMarkerRow, carriedChangeRow, censusRow);
+  }
+}
+
+lemma stageChunk_ensures(c: Correction, index: int, digest: string, by_: Actor)
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysSourceHistory(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysOctoberOnlyInScope(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysConfirmationApplied(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysChunksMatchManifest(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysAppliedUnderReviewedPacket(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysUnsettledSupplementUnprepared(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysSupplementShape(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> alwaysOpenUnapplied(stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> stepNoHistoryGrowthAfterProtection(c, stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> stepOnlyApplyAppends(c, "stageChunk", stageChunk(c, index, digest, by_)))
+  ensures (inv(c) ==> canStageChunk(c, index, digest, by_) ==> stepConfirmationKept(c, stageChunk(c, index, digest, by_)))
+{
+  if inv(c) && canStageChunk(c, index, digest, by_) {
+    var after := stageChunk(c, index, digest, by_);
+    assert c.packet.expected[index] in c.packet.expected;
+    assert digest != "";
+    forall x | x in after.packet.staged
+      ensures x.index >= 0 && x.index < |after.packet.staged| && after.packet.staged[x.index] == x && x.digest == (if ((0 <= x.index) && (x.index < |after.packet.expected|)) then after.packet.expected[x.index] else "") && x.digest != ""
+    {
+      if x in c.packet.staged {
+        assert x.index < |c.packet.staged|;
+        assert after.packet.staged[x.index] == c.packet.staged[x.index];
+      } else {
+        assert x == Chunk(index, digest);
+        assert after.packet.staged[index] == x;
+      }
+    }
+  }
+}

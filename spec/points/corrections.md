@@ -189,7 +189,8 @@ applied manifest is `Replayed` and appends nothing. A batch
 whose receipt (`correctionBatchRecorded`) is already present is a replay and
 appends nothing. Existing approved, funded, scheduled and paid terms never
 change through this correction flow. A manifest that changes no share of an
-ordinary pool is not committed: it is applied as unchanged (below).
+ordinary pool is not committed: it is applied as unchanged (below). This
+instance stays bound to its October Eliza source identity and occurrence.
 
 ```quint
 pure def canCommit(c: Correction, recipientBanned: bool, by: Actor): bool = c.phase == Prepared and by == TrustedWorkflow
@@ -201,7 +202,8 @@ pure def commit(c: Correction, recipientBanned: bool, by: Actor): Correction =
     appliedWork: c.staged.work,
     history: c.history.append({ source: c.source, occurredAt: c.occurredAt,
       shares: A::allocatePoints(c.pool, c.staged.recipients) }) }
-pure def alwaysSourceHistory(c: Correction): bool = c.history.every(row => row.source == c.source
+pure def alwaysSourceHistory(c: Correction): bool = c.project == "eliza" and c.occurredAt == octoberAt and
+  c.history.every(row => row.source == c.source
   and row.occurredAt == c.occurredAt and A::pointTotal(row.shares) == c.pool)
 pure def alwaysOctoberOnlyInScope(c: Correction): bool = c.appliedWork.length() > 0 implies octoberScope(c)
 pure def stepNoHistoryGrowthAfterProtection(before: Correction, after: Correction): bool =
@@ -263,10 +265,11 @@ pure def sometimesUnchangedAppendsNothing(c: Correction): bool = c.phase == Unch
 
 ### Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest
 
-The packet is staged privately in chunks, in manifest order; each chunk is
-accepted only when the digest of its bytes equals the strict manifest's digest
-for its position, and the packet is assembled only when every listed chunk is
-present and matches.
+The packet is staged privately in chunks, in manifest order; the manifest names
+a non-empty packet digest and a non-empty digest for each expected chunk, each
+chunk is accepted only when the digest of its bytes equals the strict manifest's
+digest for its position, and the packet is assembled only when every listed
+chunk is present and matches.
 Plan mode runs preparation and writes nothing. Apply runs only on `main`
 under the production publication lock with the `reviewed_packet_sha256`
 the repository owner reviewed, which must equal the assembled packet's
@@ -285,6 +288,7 @@ pure def assemble(c: Correction, by: Actor): Correction = { ...c, packet: { ...c
 pure def canReviewPacket(c: Correction, digest: str, by: Actor): bool = by == Owner and digest != "" and c.packet.reviewedDigest == ""
 pure def reviewPacket(c: Correction, digest: str, by: Actor): Correction = { ...c, packet: { ...c.packet, reviewedDigest: digest } }
 pure def alwaysChunksMatchManifest(c: Correction): bool =
+  c.packet.digest != "" and c.packet.expected.every(d => d != "") and
   c.packet.staged.every(x => x.index >= 0 and c.packet.staged.nthOr(x.index, noChunk) == x
     and x.digest == c.packet.expected.nthOr(x.index, "") and x.digest != "")
     and c.packet.staged.length() <= c.packet.expected.length()

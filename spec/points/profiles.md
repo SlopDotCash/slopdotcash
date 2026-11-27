@@ -72,6 +72,8 @@ A repository collected under its current name replaces the row a previous
 census kept under its old name, so its pull requests are counted once. A
 count is recorded only for a collected name that resolved to its expected
 registry identity, and only when the crawl reconciles with GitHub's total.
+While collecting, each target carries a positive repository and permanent
+registry identity, and each permanent registry identity is targeted once.
 
 ```quint
 pure def canRecordRepository(p: Profiles, tally: RepositoryTally): bool =
@@ -82,7 +84,9 @@ pure def recordRepository(p: Profiles, tally: RepositoryTally): Profiles =
   { ...p, rows: p.rows.append({ repository: tally.repository, canonical: tally.canonical, pullRequests: tally.crawled,
     excluded: tally.excluded }) }
 pure def alwaysOneRowPerCollectedIdentity(p: Profiles): bool = p.phase == Collecting implies
-  p.targets.every(t => p.rows.select(r => r.canonical == t.canonical).length() <= 1)
+  p.targets.every(t => t.repository > 0 and t.canonical > 0 and
+    p.targets.select(o => o.canonical == t.canonical).length() == 1 and
+    p.rows.select(r => r.canonical == t.canonical).length() <= 1)
 pure def alwaysRowsCollectedOrCarried(p: Profiles): bool = p.phase == Collecting implies
   p.rows.every(r => p.targets.some(t => t.repository == r.repository and t.canonical == r.canonical) or carried(r, p.targets))
 pure def lawOldNameOfCollectedRepositoryNotCarried(row: RepositoryRow, targets: List[Target]): bool =
