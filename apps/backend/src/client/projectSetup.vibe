@@ -1,5 +1,6 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"
 import { type AnyRoute, route } from "@repo/platform/route"
+import { ScanClearanceView } from "@repo/ports/security"
 
 export { type ProtectedPath, type ReadyLabelConfig, type ReadyLabelSetting, type ReadyLabelSettings, presentSetting, protectedPathOf, protectedPathProblem, readyLabelDefaults, readyLabelLimits, readyLabelOn, readyLabelProblem, readyLabelSetting, readyLabelSettingsOf, readyLabelValid } from "../projects/owner/readyLabel.ts"
 
@@ -19,7 +20,13 @@ export schema ProjectRecord {
 
 export schema SetupCheckState { readonly state: string; readonly message: string }
 
-export schema ScanCheckState { readonly state: string; readonly message: string; readonly exempt?: boolean; readonly exemptionKind?: "existing-project" | "owner-approved-admission" }
+export schema ScanCheckState {
+  readonly state: string
+  readonly message: string
+  readonly exempt?: boolean
+  readonly exemptionKind?: "existing-project" | "owner-approved-admission"
+  readonly clearance?: ScanClearanceView
+}
 
 export schema SetupChecks { readonly authority: SetupCheckState; readonly installation: SetupCheckState; readonly scan: ScanCheckState }
 
