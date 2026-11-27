@@ -14,7 +14,7 @@ export const onlySameOriginPathsSurviveTheLoginReturn = vectors<string, ParsedNe
   ["?next=earnings", path("/earnings")],
   ["?next=%2Fprojects%2Fslop%2Fmanage%3Ftab%3Done%23wallets", path("/projects/slop/manage?tab=one#wallets")],
   ["?next=%2Faccount%23notifications", path("/account#notifications")],
-  ["?next=%2Flogin%2F", path("/login/")],
+  ["?next=%2Flogin%2F", foreign],
   ["?next=%2Flogin", foreign],
   ["?next=%2Flogin%3Fnext%3D%252Finbox", foreign],
   ["?next=%2F%2Fevil.test", foreign],
