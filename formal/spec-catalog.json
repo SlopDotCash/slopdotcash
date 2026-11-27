@@ -25828,7 +25828,7 @@
     },
     {
       "path": "spec/settlement/bindingAuthority.md",
-      "sha256": "43c30bba4ccb5836c3057c00f78c812373f812cb20bce5062d7eab76607f3846",
+      "sha256": "fdb4802a80335c59df1d1463d7960b59c81ffe37e384151cb5307448f163fff0",
       "module": "settlement__bindingAuthority",
       "stories": [
         {
@@ -25961,7 +25961,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / With the owner-decision zero delay no cancellation window is ever open",
-          "line": 269,
+          "line": 293,
           "definitions": [
             "alwaysZeroDelayLeavesNoVeto",
             "sometimesCancelledWithDelay",
@@ -25975,7 +25975,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Simulation samples",
-          "line": 291,
+          "line": 315,
           "definitions": [
             "byValues",
             "namedValues",
@@ -32586,7 +32586,7 @@
     },
     {
       "path": "spec/settlement/vaultSnapshots.md",
-      "sha256": "e384c829084fb8aa55e83f332dc41eb024a75946d45e7e289383750856bcc55b",
+      "sha256": "40dea209bbab8caa32c990d024e56d2fa08615366bfd01925011590ba14b86c0",
       "module": "settlement__vaultSnapshots",
       "stories": [
         {
@@ -32599,19 +32599,19 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence",
-          "line": 290
+          "line": 293
         },
         {
           "heading": "Story: Keep each vault's first read of the month",
-          "line": 522
+          "line": 528
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read",
-          "line": 570
+          "line": 576
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero",
-          "line": 611
+          "line": 617
         }
       ],
       "rules": [
@@ -32724,7 +32724,7 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence / Only a reviewed registry binding can obtain totals",
-          "line": 292,
+          "line": 295,
           "definitions": [
             "canBeginRead",
             "beginBoundRead",
@@ -32747,7 +32747,7 @@
         },
         {
           "heading": "Story: Recover or refresh with exact finalized evidence / The write compares the latest row atomically",
-          "line": 356,
+          "line": 359,
           "definitions": [
             "countersAdvance",
             "isOlder",
@@ -32804,7 +32804,7 @@
         },
         {
           "heading": "Story: Keep each vault's first read of the month / The first finalized read of each UTC month is recorded once per vault and never changes",
-          "line": 524,
+          "line": 530,
           "definitions": [
             "sameMonthStart",
             "monthStartOf",
@@ -32817,7 +32817,7 @@
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read / An ordinary vault read stores its month pledges, keeping the newest read of each month",
-          "line": 572,
+          "line": 578,
           "definitions": [
             "withMonthPledges",
             "alwaysPledgesOfTheOrdinaryVault",
@@ -32832,7 +32832,7 @@
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero / A failed refresh keeps the last totals marked stale",
-          "line": 613,
+          "line": 619,
           "definitions": [
             "Freshness",
             "ShownBalance",
@@ -32863,11 +32863,11 @@
         },
         {
           "target": "../frontend/projections.md",
-          "line": 543
+          "line": 549
         },
         {
           "target": "./monthPledges.md",
-          "line": 575
+          "line": 581
         }
       ]
     },

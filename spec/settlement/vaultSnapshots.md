@@ -188,6 +188,8 @@ deployment made it, the waiting request closes registered. Nothing here
 registers a vault by itself: the repeat passes every check of the owner route.
 The shell sweeps at most 3 due requests, ordered by next check and id, at
 most once a minute per isolate, and logs a failure by its error name only.
+Every request carries a unique positive request identifier, and every repeat
+names an existing saved creation.
 
 ```quint
 type SavedState = SavedWaiting | SavedRegistered | SavedRefused | SavedExpired
@@ -262,7 +264,8 @@ pure def alwaysAtMostThreeWaiting(s: Snapshots): bool = waitingCount(s) <= saved
 pure def alwaysSavedRegisteredIsRegistered(s: Snapshots): bool =
   s.savedCreations.every(v => v.state == SavedRegistered implies namesRegistration(s, v))
 pure def alwaysRepeatsNameASavedCreation(s: Snapshots): bool =
-  s.requests.every(r => r.repeatOf > 0 implies (r.source == RegistrationRequest and savedCreation(s, r.repeatOf).id > 0))
+  s.requests.every(r => r.id > 0 and s.requests.select(o => o.id == r.id).length() == 1
+    and (r.repeatOf > 0 implies (r.source == RegistrationRequest and savedCreation(s, r.repeatOf).id > 0)))
 pure def stepRepeatsActAsTheSaver(before: Snapshots, after: Snapshots): bool =
   after.requests.every(r => (r.repeatOf > 0 and requestRow(before, r.id).id == 0)
     implies (r.actor > 0 and r.actor == savedCreation(before, r.repeatOf).actor))
@@ -363,6 +366,8 @@ for retained rows and initialize the retired column to zero for a first write.
 Amount comparison uses arbitrary-length base-unit limbs. An unsuccessful
 conditional write can return older or unavailable as appropriate. A write
 that succeeded with a lost reply may still be confirmed by reading the row.
+Every registered deployment and every request staged to append a registration
+carries a valid deployment identity on an approved network.
 
 ```quint
 pure def countersAdvance(newer: Counters, previous: Counters): bool =
@@ -421,6 +426,7 @@ pure def alwaysSameAssetAcrossPurposes(s: Snapshots): bool =
 pure def alwaysRegisteredIdentityApproved(s: Snapshots): bool =
   (registered(s.ordinary.registration) implies validIdentity(s.ordinary.registration.identity))
     and (registered(s.privateBounty.registration) implies validIdentity(s.privateBounty.registration.identity))
+    and s.requests.every(r => r.phase == ReadyAppend implies validIdentity(r.registration.identity))
 pure def sometimesStored(s: Snapshots): bool = s.ordinary.observation.exists or s.privateBounty.observation.exists
 pure def sometimesRegisteredWithoutObservation(s: Snapshots): bool = registered(s.ordinary.registration)
   and not(s.ordinary.observation.exists) and s.requests.some(r => r.result == ObservationUnavailable)

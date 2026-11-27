@@ -235,18 +235,39 @@ pure def executeRotation(b: Bindings): Bindings =
 
 ### Versions only grow, history is retained and the cancellation budget is bounded
 
+Each actor appears at most once with a bounded cancellation budget, a known paid
+version that is never cancelled, and timestamps at or before a nonnegative
+clock. Before deployment there are no actors, history, or pending rotation and
+the initial authority holds no excluded role on either chain; after deployment
+both the current authority and any pending rotation authority exclude the
+chain's restricted roles, rotation shape matches the chain, and Solana history
+never names the project or vault. Every nonzero current binding belongs to its
+actor and appears in history, and every history record has a positive actor and
+version no greater than that actor's current version, matching the actor's
+current binding when at the current version. Versions and paid versions never
+decrease, history retains every prior binding's identity and activation time,
+only `executeRotation` changes the current authority, and deployment parameters
+stay fixed once deployed.
+
 ```quint
 pure def alwaysActorsUnique(b: Bindings): bool = b.actors.every(a => a.actor > 0 and b.actors.select(o => o.actor == a.actor).length() == 1)
 pure def alwaysCancelBudget(b: Bindings): bool = b.actors.every(a => a.cancelCount >= 0 and a.cancelCount <= maxCancelsBetweenPayments)
 pure def alwaysPaidVersionKnown(b: Bindings): bool = b.actors.every(a => a.paidVersion >= 0 and a.paidVersion <= a.current.version
   and not(a.current.cancelled and a.paidVersion == a.current.version))
-pure def alwaysTimesInPast(b: Bindings): bool = b.actors.every(a => a.current.activatesAt <= b.clock and a.lastCommittedAt <= b.clock
-  and a.commitTimes.every(t => t <= b.clock))
+pure def alwaysTimesInPast(b: Bindings): bool = b.clock >= 0
+  and b.actors.every(a => a.current.activatesAt <= b.clock and a.lastCommittedAt <= b.clock
+    and a.commitTimes.every(t => t <= b.clock))
 pure def alwaysRotationShape(b: Bindings): bool =
   (b.authority.pending == "" implies b.authority.effectiveAt == 0 and not(b.authority.confirmed))
     and (b.authority.confirmed implies b.chain == SolanaChain) and b.authority.current != ""
     and (b.chain == EvmChain implies b.rotationDelay == 0)
-pure def alwaysCurrentInHistory(b: Bindings): bool = b.actors.every(a => a.current.version == 0 or b.history.includes(a.current))
+    and (not(b.deployed) implies b.authority.pending == "" and b.actors.length() == 0 and b.history.length() == 0)
+    and (b.authority.pending != "" implies not(excludedAuthority(b, b.authority.pending)))
+pure def alwaysCurrentInHistory(b: Bindings): bool =
+  b.actors.every(a => a.current.version == 0 or (a.current.actor == a.actor and b.history.includes(a.current)))
+    and b.history.every(h => h.actor > 0 and h.version > 0
+      and b.actors.some(a => a.actor == h.actor and h.version <= a.current.version
+        and (h.version == a.current.version implies h == a.current)))
 pure def stepVersionsGrow(before: Bindings, after: Bindings): bool =
   before.actors.every(a => actorState(after, a.actor).current.version >= a.current.version
     and actorState(after, a.actor).paidVersion >= a.paidVersion)
@@ -254,9 +275,12 @@ pure def stepHistoryRetained(before: Bindings, after: Bindings): bool =
   after.history.length() >= before.history.length()
     and before.history.every(h => after.history.some(n => n.actor == h.actor and n.version == h.version
       and n.destination == h.destination and n.claimDigest == h.claimDigest and n.activatesAt == h.activatesAt))
-pure def alwaysAuthorityNotExcludedRole(b: Bindings): bool = b.deployed implies
-  (if (b.chain == EvmChain) b.authority.current != b.registrar and b.authority.current != b.upgradeAuthority
-   else b.authority.current != b.owner and b.authority.current != b.feeRecipient and b.authority.current != b.rotationAuthority)
+pure def alwaysAuthorityNotExcludedRole(b: Bindings): bool =
+  if (b.deployed)
+    if (b.chain == EvmChain) b.authority.current != b.registrar and b.authority.current != b.upgradeAuthority
+    else b.authority.current != b.owner and b.authority.current != b.feeRecipient and b.authority.current != b.rotationAuthority
+  else b.authority.current != b.registrar and b.authority.current != b.upgradeAuthority
+    and b.authority.current != b.owner and b.authority.current != b.feeRecipient and b.authority.current != b.rotationAuthority
 pure def alwaysSolanaDestinationsSafe(b: Bindings): bool = b.chain == SolanaChain implies
   b.history.every(h => h.destination != b.project and h.destination != b.vault)
 pure def stepOnlyRegistrarOrAnyoneRotates(before: Bindings, via: str, after: Bindings): bool =
