@@ -286,9 +286,11 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
   const rows = poolRows(journal, packet.projectId, retirement.sourceId, retirement.workUnitId)
   const latestBaseline = latestOf(input.baseline.revisions)
   const ownPool = try ownRecordPool(rows)
+  const emptyMerge = retirement.identicalAcceptedChange?.emptyMerge === true
+  const exactBaselinePool = retirement.netOutcome !== undefined || emptyMerge
   try require(candidate !== undefined && rows.length > 0 && rows.every(({ award }) => award.occurredAt === source.occurredAt && award.occurredAt.startsWith("2026-10-") &&
     award.sourceUrl === source.sourceUrl) &&
-    (retirement.netOutcome === undefined || (candidate?.kind === "pull-request" && candidate.sourceIds.length === 1 && candidate.sourceIds[0] === source.sourceId &&
+    (!exactBaselinePool || (candidate?.kind === "pull-request" && candidate.sourceIds.length === 1 && candidate.sourceIds[0] === source.sourceId &&
       rows.every((row) => latestBaseline.get(row.award.key)?.id === row.id))) &&
     ((retirement.identicalAcceptedChange === undefined && retirement.netOutcome === undefined) || ownPool) &&
     matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
@@ -326,7 +328,8 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
   })
   const digest = digestText(retirement)
   const event: Event = { type: "retireDuplicate", project: packet.projectId, unit: pool.unit, retirement: checked.record, packetRun: runOf(input), reason: octoberDuplicateRetirementDecision, digest }
-  const result = try appendedPool(pool, event, templates, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt, "Duplicate retirement does not meet the reviewed rules")
+  const retiredAwards = emptyMerge ? templates.filter(({ amount }) => amount > 0) : templates
+  const result = try appendedPool(pool, event, retiredAwards, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt, "Duplicate retirement does not meet the reviewed rules")
   return { journal: result.journal, mixed: checked.mixed }
 }
 

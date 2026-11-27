@@ -601,7 +601,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       jointAssessed: decision !== undefined,
       commits: [],
       emptyMarker: pull.emptyAcceptanceMarker === true,
-      unresolved: history.unresolvedImplementationSources.has(pull.id),
+      unresolved: history.unresolvedImplementationSources.has(pull.id) || (decision === undefined && pull.acceptedLineCountsDiffer === true),
       digestScored: acceptanceKey !== "" && scoredDigests.includes(acceptanceKey),
       earlierOverlap: (pull.commits ?? []).some((commit) => {
         const earlier = earlierOwners.get(commitKey(pull, commit.oid))

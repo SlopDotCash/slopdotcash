@@ -81,6 +81,7 @@ export schema IdenticalAcceptedChange {
   readonly diffSha256: string
   readonly carriedAcceptance?: boolean
   readonly emptySquash?: boolean
+  readonly emptyMerge?: true
   readonly survivingCarrier?: boolean
 }
 export schema RewardedUnit { readonly recordDigest: string; readonly recordJson: string; readonly claimId: string; readonly workUnitId: string; readonly awardSourceId: string }
