@@ -28,6 +28,7 @@ import { PAYOUT_FEE_BASIS_POINTS, WITHDRAWAL_FEE_BASIS_POINTS } from "../src/ker
 import { createJournal, journaled } from "../src/journal/journal.vibe"
 import { MonthlyFacts, awardSource, executionSnapshot } from "../src/monthly/store.vibe"
 import { ReleaseApprover, ReleaseRefused, type OwnerReleaseRequest, checkRelease, prepareRelease } from "../src/reserveRelease/release.vibe"
+import { release } from "../src/reserveRelease/store.vibe"
 import { AttesterConfig, attesterConfig, reviewedDeployment } from "../src/signer/evm.vibe"
 import { publishMonthlyAuthorizations } from "../src/signer/monthlyRoot.vibe"
 import { releaseApprover } from "../src/signer/reserveRelease.vibe"
@@ -498,11 +499,16 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       const sent = try promise(() => escrow.send(escrow.roles.owner.address, wrong.vault, prepared.transaction.data as Hex))
       try finalize(escrow)
       const checked = try checkRelease({ ...requestOf(wrong), planId: prepared.planId, transactionId: sent.transactionHash }, try registered(wrong))
+      const stalePlan = checkRelease({ ...requestOf(wrong), manifestSha256: "d".repeat(64), planId: prepared.planId, transactionId: sent.transactionHash }, try registered(wrong)) catch (error) => error instanceof ReleaseRefused ? error.message : String(error)
+      const scope = { network, vault: stale.vault, period }
+      const firstHeight = Number(try promise(() => escrow.head()))
       const firstReview = try review(stale)
+      const firstEvidence = try release(scope)
       try promise(() => escrow.chain.rpc("evm_mine", []))
       try finalize(escrow)
-      const invalidated = try review(stale)
+      const latestHeight = Number(try promise(() => escrow.head()))
       const freshReview = try review(stale)
+      const freshEvidence = try release(scope)
       const staleDeployment = try registered(stale)
       const staleRequest = prepareRelease({ ...requestOf(stale), manifestSha256: "d".repeat(64) }, staleDeployment, { githubId: steward }) catch (error) => error instanceof ReleaseRefused ? error.message : String(error)
       const healthyReview = try review(healthy)
@@ -516,10 +522,13 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         terms: [prepared.terms.expectedRemaining, prepared.terms.releasedGross],
         owner: [sent.status, prepared.transaction.from],
         checked: checked.status,
+        stalePlan,
         free: [wrong.freeBefore, reservedFree, releasedFree],
         firstReview: firstReview.status,
-        invalidated,
-        freshReview: freshReview.status === "ready" && firstReview.status === "ready" ? [freshReview.status, freshReview.terms.releasedGross, freshReview.transaction.data === firstReview.transaction.data] : freshReview,
+        finalizedAdvance: latestHeight - firstHeight,
+        firstEvidence: [firstEvidence.phase, firstEvidence.observedHeight, firstEvidence.evidenceHeight, firstEvidence.requestRevision],
+        freshEvidence: [freshEvidence.phase, freshEvidence.observedHeight, freshEvidence.evidenceHeight, freshEvidence.requestRevision],
+        freshReview: freshReview.status === "ready" && firstReview.status === "ready" ? [freshReview.status, freshReview.terms.releasedGross, freshReview.transaction.data === firstReview.transaction.data, freshReview.planId === firstReview.planId] : freshReview,
         staleRequest,
         healthy: healthyReview,
         partial: partialReview,
@@ -535,10 +544,13 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         terms: ["6000000", "6000000"],
         owner: ["success", owner],
         checked: "finalized",
+        stalePlan: "Project policy changed",
         free: [20_000_000n, 14_000_000n, 20_000_000n],
         firstReview: "ready",
-        invalidated: { status: "held", reason: "evidence-stale" },
-        freshReview: ["ready", "6000000", true],
+        finalizedAdvance: 1,
+        firstEvidence: ["Approved", firstHeight, firstHeight, 1],
+        freshEvidence: ["Approved", latestHeight, latestHeight, 1],
+        freshReview: ["ready", "6000000", true, true],
         staleRequest: "Project policy changed",
         healthy: { status: "held", reason: "no-wrong-sum-fault" },
         partial: { status: "held", reason: "prior-reserve-transition" },
