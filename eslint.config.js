@@ -141,7 +141,7 @@ const commented = {
   "packages/contracts/test/drivers/contracts__solanaEscrow.ts": 22,
   "packages/contracts/test/support/anvil.ts": 1,
   "packages/contracts/test/support/solanaAccounts.ts": 14,
-  "packages/contracts/test/support/solanaChain.ts": 27,
+  "packages/contracts/test/support/solanaChain.ts": 24,
   "packages/contracts/test/support/solanaState.ts": 3,
   "packages/frontend/src/app/publicPages.tsx": 1,
   "packages/frontend/src/kernels/payingNetworks.ts": 1,

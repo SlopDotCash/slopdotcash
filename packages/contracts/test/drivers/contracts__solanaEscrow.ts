@@ -295,7 +295,7 @@ async function upgradeProgram(by: Keypair): Promise<boolean> {
   // The loader makes a new build visible from the next slot.
   if (accepted) {
     const slot = (await ready().rpc("getSlot", [{ commitment: "confirmed" }])) as number;
-    while (((await ready().rpc("getSlot", [{ commitment: "confirmed" }])) as number) < slot + 2) await new Promise((resolve) => setTimeout(resolve, 200));
+    while (((await ready().rpc("getSlot", [{ commitment: "confirmed" }])) as number) < slot + 2) await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return accepted;
 }
@@ -613,6 +613,10 @@ export const driver: Driver<Observed> & AsyncDisposable = {
     await chain.boot(startOfWalk, merged(chain.base, initialAccounts(), tokenAccounts()));
   },
   dispatch: async (_key, event, by) => {
+    if (event.type !== "tick") {
+      const slot = (await ready().rpc("getSlot", [{ commitment: "confirmed" }])) as number;
+      if (slot >= 14) await restart(walk.now);
+    }
     try {
       return (await accepted(event, by)) ? "accepted" : "refused";
     } catch (error) {

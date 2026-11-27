@@ -289,19 +289,29 @@ async function templateVote(ledger: string): Promise<GenesisAccount> {
   throw new Error("the test validator's genesis holds no vote account");
 }
 
-/** The bytes of the program with its declared ID changed, so that every instruction fails as no current one exists. */
 function earlierBuild(current: Uint8Array): Uint8Array {
-  const id = keyBytes(PROGRAM);
-  const other = sha256(utf8("slop-escrow earlier build"));
   const bytes = new Uint8Array(current);
-  let found = 0;
-  for (let at = 0; at + 32 <= bytes.length; at++) {
-    if (id.every((byte, index) => bytes[at + index] === byte)) {
-      bytes.set(other, at);
-      found++;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const entry = view.getBigUint64(24, true);
+  const phoff = Number(view.getBigUint64(32, true));
+  const phentsize = view.getUint16(54, true);
+  const phnum = view.getUint16(56, true);
+  let offset = -1;
+  for (let i = 0; i < phnum; i++) {
+    const at = phoff + i * phentsize;
+    if (view.getUint32(at, true) !== 1) continue;
+    const pOffset = view.getBigUint64(at + 8, true);
+    const pVaddr = view.getBigUint64(at + 16, true);
+    const pFilesz = view.getBigUint64(at + 32, true);
+    if (entry >= pVaddr && entry < pVaddr + pFilesz) {
+      offset = Number(pOffset + (entry - pVaddr));
+      break;
     }
   }
-  if (found === 0) throw new Error("the program bytes do not hold its declared ID");
+  if (offset < 0 || offset + 24 > bytes.length) throw new Error("the program ELF has no loadable entrypoint");
+  const straddlesLddw = bytes[offset] !== 0x18 && bytes[offset + 8] === 0x18;
+  bytes.set([0xb7, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], offset);
+  if (straddlesLddw) bytes.set([0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], offset + 16);
   return bytes;
 }
 
@@ -350,7 +360,7 @@ export async function launch(): Promise<Chain> {
         const slot = await call(url, "getSlot", [{ commitment: "confirmed" }]).catch(() => 0);
         if (typeof slot === "number" && slot >= 1) return slot;
       }
-      await sleep(500);
+      await sleep(50);
     }
     throw new Error("the validator did not become ready within 600 seconds");
   };
@@ -447,7 +457,7 @@ export async function launch(): Promise<Chain> {
       const status = reply.value[0];
       if (status !== null && status !== undefined && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) return status.err === null;
       if ((status === null || status === undefined) && !valid.value) return undefined;
-      await sleep(200);
+      await sleep(25);
     }
     throw new Error("a transaction stayed unconfirmed for ten minutes while its blockhash was still valid");
   };
@@ -498,9 +508,7 @@ export async function launch(): Promise<Chain> {
       "--faucet-pubkey", bootstrap.faucet.address, "--faucet-lamports", "500000000000000000",
       "--bootstrap-validator-lamports", "500000000000", "--bootstrap-validator-stake-lamports", "1000000000000000",
       "--creation-time", new Date(time * 1000).toISOString(), "--cluster-type", "development",
-      // The banking stage takes transactions only within a slot's nominal length, so a tick has a duration; 50 ms
-      // ticks give 400 ms slots, and a blockhash outlives a loaded host's delay between reading it and sending.
-      "--target-tick-duration", "50", "--hashes-per-tick", "1000", "--ticks-per-slot", "8",
+      "--target-tick-duration", "5000", "--hashes-per-tick", "sleep", "--ticks-per-slot", "8",
       "--max-genesis-archive-unpacked-size", "1073741824", "--primordial-accounts-file", file,
     ], { timeout: 600_000, maxBuffer: 64 * 1024 * 1024 });
     await rm(file, { force: true });
@@ -512,9 +520,9 @@ export async function launch(): Promise<Chain> {
     ]);
     const slot = await start(ledger, []);
     let clock: unknown;
-    for (let attempt = 0; attempt < 120 && typeof clock !== "number"; attempt++) {
+    for (let attempt = 0; attempt < 1200 && typeof clock !== "number"; attempt++) {
       clock = await rpc("getBlockTime", [slot]).catch(() => undefined);
-      if (typeof clock !== "number") await sleep(500);
+      if (typeof clock !== "number") await sleep(50);
     }
     if (clock !== time) throw new Error(`the validator's clock reads ${String(clock)}, not the genesis time ${time}`);
   };

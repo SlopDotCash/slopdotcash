@@ -5,6 +5,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/operations__notifications.conformance.ts";
+import type { Enrollment } from "../../gen/backend__email.ts";
 import type { Event, Inbox, Kind, NotifyConfig } from "../../gen/operations__notifications.ts";
 import type { Projection, Release } from "../../src/notifications/rows.vibe";
 import { Change, digestText, observe, recipientScope, send } from "../../src/notifications/store.vibe";
@@ -55,8 +56,9 @@ const keyText = (key: number) => {
   world.keys.set(text, key);
   return text;
 };
-const versionText = (version: number) => version > 0 ? `version-g${world.generation}-v${version}` : "";
-const versionOf = (text: string) => text === "" ? 0 : Number(text.slice(`version-g${world.generation}-v`.length));
+const versionPrefix = () => `v${String(world.generation).padStart(8, "0")}-`;
+const versionText = (version: number) => version > 0 ? `${versionPrefix()}${String(version).padStart(64 - versionPrefix().length, "0")}` : "";
+const versionOf = (text: string) => text === "" ? 0 : Number(text.slice(versionPrefix().length));
 const pilotText = (pilot: number) => `pilot-g${world.generation}-p${pilot}`;
 const pilotOf = (text: string | undefined) => text === undefined ? 0 : Number(text.slice(`pilot-g${world.generation}-p`.length));
 const referenceText = (reference: number) => reference > 0 ? `evidence-g${world.generation}-r${reference}` : "";
@@ -207,29 +209,123 @@ const view = (state: Inbox): Seen => {
   return { ...seen, evidence: [...state.evidence].sort((left, right) => left - right) };
 };
 
-interface Closing {
-  readonly actor: number;
-  readonly activity: boolean;
-  readonly security: boolean;
-}
+const SafeInt = Schema.Int.check(Schema.isBetween({ minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }));
 
-const closingOf = (raw: unknown): Closing | undefined => {
-  const enrollment = raw as { actor?: unknown; preference?: { activity?: unknown; security?: unknown } | null } | null;
-  if (typeof enrollment !== "object" || enrollment === null || !isInt(enrollment.actor)) return undefined;
-  const preference = enrollment.preference;
-  if (typeof preference !== "object" || preference === null || typeof preference.activity !== "boolean" || typeof preference.security !== "boolean") return undefined;
-  return { actor: enrollment.actor, activity: preference.activity, security: preference.security };
-};
+const EnrollmentSchema = Schema.Struct({
+  actor: SafeInt,
+  verifications: Schema.Array(Schema.Struct({
+    id: SafeInt,
+    requestKey: SafeInt,
+    address: Schema.String,
+    addressKey: Schema.String,
+    tokenDigest: SafeInt,
+    activity: Schema.Boolean,
+    security: Schema.Boolean,
+    delivery: Schema.Literals(["Queued", "Sending", "Sent", "DeliveryUnknown"]),
+    createdAt: SafeInt,
+    expiresAt: SafeInt,
+    cancelled: Schema.Boolean,
+    consumed: Schema.Boolean,
+    version: SafeInt,
+  })),
+  destination: Schema.Struct({
+    address: Schema.String,
+    version: SafeInt,
+    verifiedAt: SafeInt,
+  }),
+  preference: Schema.Struct({
+    stored: Schema.Boolean,
+    activity: Schema.Boolean,
+    security: Schema.Boolean,
+    version: SafeInt,
+    revision: SafeInt,
+  }),
+  unsubscribeTokens: Schema.Array(Schema.Struct({
+    token: SafeInt,
+    version: SafeInt,
+  })),
+  pilotVersion: SafeInt,
+});
 
-const closed = async (enrollment: Closing, by: number) => {
-  if (by !== accountService || enrollment.actor <= 0 || enrollment.activity || enrollment.security) return "refused";
+const decodeEnrollment = Schema.decodeUnknownExit(EnrollmentSchema);
+
+const applyEnrollment = async (enrollment: Enrollment, by: number, closing: boolean): Promise<"accepted" | "refused"> => {
+  if (by !== accountService || enrollment.actor <= 0) return "refused";
+  if (closing && (enrollment.preference.activity || enrollment.preference.security)) return "refused";
+  const recipient = githubId(enrollment.actor);
+  if (!closing) {
+    const priorPref = (await db.prepare("SELECT revision FROM notification_email_preferences WHERE github_id = ?").bind(recipient).all()).results[0];
+    const priorDest = (await db.prepare("SELECT destination_version FROM notification_email_destinations WHERE github_id = ?").bind(recipient).all()).results[0];
+    const priorRevision = typeof priorPref?.revision === "number" ? priorPref.revision : 0;
+    const priorVersion = typeof priorDest?.destination_version === "string" ? versionOf(priorDest.destination_version) : 0;
+    if (enrollment.preference.revision < priorRevision || enrollment.destination.version < priorVersion) return "refused";
+  }
   const at = iso(clock.now());
-  await db.batch([
-    db.prepare("INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (?, 0, NULL, NULL, ?) ON CONFLICT (github_id) DO NOTHING")
-      .bind(githubId(enrollment.actor), at),
-    db.prepare("UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, destination_version = '', updated_at = ? WHERE github_id = ?")
-      .bind(at, githubId(enrollment.actor)),
-  ]);
+  const destVersion = versionText(enrollment.destination.version);
+  const prefVersion = versionText(enrollment.preference.version);
+  const statements = [];
+  if (enrollment.destination.version > 0) {
+    statements.push(
+      db.prepare(`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT (github_id) DO UPDATE SET email = excluded.email, destination_version = excluded.destination_version, verified_at = excluded.verified_at`)
+        .bind(recipient, enrollment.destination.address || "member@slop.test", destVersion, iso(base() + enrollment.destination.verifiedAt)),
+    );
+  } else {
+    statements.push(db.prepare("DELETE FROM notification_email_destinations WHERE github_id = ?").bind(recipient));
+  }
+  if (closing || enrollment.preference.stored) {
+    const enabled = !closing && enrollment.preference.activity ? 1 : 0;
+    const securityEnabled = !closing && enrollment.preference.security ? 1 : 0;
+    const storedVersion = closing ? (prefVersion === "" ? "" : prefVersion) : (prefVersion === "" ? null : prefVersion);
+    statements.push(
+      db.prepare(`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (github_id) DO UPDATE SET enabled = excluded.enabled, security_enabled = excluded.security_enabled, destination_version = excluded.destination_version, updated_at = excluded.updated_at`)
+        .bind(recipient, enabled, securityEnabled, storedVersion, at, enrollment.preference.revision),
+      db.prepare("UPDATE notification_email_preferences SET revision = ? WHERE github_id = ?")
+        .bind(enrollment.preference.revision, recipient),
+    );
+  } else {
+    statements.push(db.prepare("DELETE FROM notification_email_preferences WHERE github_id = ?").bind(recipient));
+  }
+  if (closing) {
+    statements.push(
+      db.prepare("UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND state IN ('queued', 'retrying')").bind(at, recipient),
+      db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND state IN ('queued', 'retrying')").bind(at, recipient),
+    );
+  } else {
+    const secConsented = enrollment.preference.version > 0 && enrollment.preference.version === enrollment.destination.version && enrollment.preference.security;
+    const actConsented = enrollment.preference.version > 0 && enrollment.preference.version === enrollment.destination.version && enrollment.preference.activity;
+    if (enrollment.preference.stored && !enrollment.preference.security) {
+      statements.push(
+        db.prepare("UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND state IN ('queued', 'retrying')").bind(at, recipient),
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 1 AND state IN ('queued', 'retrying')").bind(at, recipient),
+      );
+    } else if (!secConsented) {
+      statements.push(
+        db.prepare("UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> ''").bind(at, recipient),
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 1 AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> ''").bind(at, recipient),
+      );
+    } else {
+      statements.push(
+        db.prepare("UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> '' AND destination_version <> ?").bind(at, recipient, destVersion),
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 1 AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> '' AND destination_version <> ?").bind(at, recipient, destVersion),
+      );
+    }
+    if (enrollment.preference.stored && !enrollment.preference.activity) {
+      statements.push(
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 0 AND state IN ('queued', 'retrying')").bind(at, recipient),
+      );
+    } else if (!actConsented) {
+      statements.push(
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 0 AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> ''").bind(at, recipient),
+      );
+    } else {
+      statements.push(
+        db.prepare("UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ? WHERE recipient_github_id = ? AND essential = 0 AND state IN ('queued', 'retrying') AND destination_version IS NOT NULL AND destination_version <> '' AND destination_version <> ?").bind(at, recipient, destVersion),
+      );
+    }
+  }
+  await db.batch(statements);
   return "accepted";
 };
 
@@ -239,7 +335,8 @@ export const driver: Driver<Seen> & AsyncDisposable = {
     clock.set(base() + 1);
   },
   dispatch: async (_key, event: Event, by) => {
-    if (event.type === "closeAccount") return closed({ actor: event.enrollment.actor, ...event.enrollment.preference }, Number(by));
+    if (event.type === "observeEnrollment") return applyEnrollment(event.enrollment, Number(by), false);
+    if (event.type === "closeAccount") return applyEnrollment(event.enrollment, Number(by), true);
     const change = changeOf(event);
     if (change === undefined) return "refused";
     const result = await settled(send(scope(), change, githubId(Number(by)), releaseOf(world.config)));
@@ -247,9 +344,10 @@ export const driver: Driver<Seen> & AsyncDisposable = {
   },
   receive: async (_key, raw, by) => {
     const copy = fieldsOnce(raw);
-    if (copy?.type === "closeAccount") {
-      const closing = closingOf(copy.enrollment);
-      return closing === undefined ? "refused" : closed(closing, Number(by));
+    if (copy?.type === "observeEnrollment" || copy?.type === "closeAccount") {
+      const decoded = decodeEnrollment(copy.enrollment);
+      if (Exit.isFailure(decoded)) return "refused";
+      return applyEnrollment(decoded.value as Enrollment, Number(by), copy.type === "closeAccount");
     }
     const decoded = Schema.decodeUnknownExit(Change)(copy === undefined ? raw : rawChangeOf(copy));
     if (Exit.isFailure(decoded)) return "refused";

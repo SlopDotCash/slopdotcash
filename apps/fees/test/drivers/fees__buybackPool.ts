@@ -1,13 +1,13 @@
 import { Effect } from "effect";
 import { keccak256 } from "viem";
 import { outcome } from "@repo/platform/testing/area";
-import type { Options } from "../../gen/fees__buybackPool.conformance.ts";
+import type { Driver, Options } from "../../gen/fees__buybackPool.conformance.ts";
 import type { Event, Pool } from "../../gen/fees__buybackPool.ts";
 import type { IncomeEntry } from "../../src/buyback/codec.vibe";
 import type { ArrivalEntry, PoolInstance } from "../../src/buybackPool/codec.vibe";
 import { type Facts, poolOf, send, sendFloors } from "../../src/buybackPool/store.vibe";
 import { robinhoodUsdg } from "../../src/runtime/pins.ts";
-import { type GenerationNames, generationInstance, generationNames, gweiSigned, heldLease, hex, journalDriver, journalHarness, senderOf } from "../support/journal.ts";
+import { type GenerationNames, generationInstance, generationNames, gweiSigned, heldLease, hex, journalHarness, senderOf } from "../support/journal.ts";
 
 const buybackStart = 1_794_441_600_000;
 const gwei = 1_000_000_000n;
@@ -128,12 +128,25 @@ async function dispatch(event: Event, by: unknown): Promise<"accepted" | "refuse
   return outcome(sent, runtime);
 }
 
+function view(state: Pool): Pool {
+  return { ...state, credits: [...state.credits].sort((left, right) => left.asset - right.asset) };
+}
+
 async function observe(): Promise<Pool> {
   const { state } = await runtime.runPromise(poolOf(pool));
   const back = (receipt: number) => receipts.get(receipt) ?? receipt;
-  return { ...state, rhReceipts: state.rhReceipts.map(back), slopReceipts: state.slopReceipts.map(back) };
+  return view({ ...state, rhReceipts: state.rhReceipts.map(back), slopReceipts: state.slopReceipts.map(back) });
 }
 
-export const driver = journalDriver<Event, Pool>(harness, { reset: begin, dispatch, observe });
+export const driver: Driver<Pool> & AsyncDisposable = {
+  reset: async () => {
+    await harness.db.prepare("UPDATE fee_conversions SET state = 'failed', reason = 'reset', updated_at = ? WHERE network = 'robinhood' AND state IN ('submitted', 'unknown')")
+      .bind(new Date(clock.now()).toISOString()).run();
+    begin();
+  },
+  dispatch: (_key, event, by) => dispatch(event, by),
+  observe: () => observe(),
+  [Symbol.asyncDispose]: () => harness[Symbol.asyncDispose](),
+};
 
-export const options: Options = { keys: ["pool"], walks: 5, steps: 12 };
+export const options: Options = { keys: ["pool"], walks: 5, steps: 12, view };

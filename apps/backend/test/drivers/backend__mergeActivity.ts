@@ -33,19 +33,18 @@ function instanceOf(key: string): Instance {
   return made;
 }
 
-function evidenceOf(key: Key, raw: unknown): Evidence {
-  if (typeof raw !== "object" || raw === null || !("wanted" in raw) || !Array.isArray(raw.wanted)) return noEvidence;
-  const wanted = raw.wanted.flatMap((issue: unknown) => {
-    if (typeof issue !== "object" || issue === null || !("number" in issue) || typeof issue.number !== "number") return [];
-    const own = "ownRepository" in issue && issue.ownRepository === true;
-    const open = "openPulls" in issue && typeof issue.openPulls === "number" ? issue.openPulls : 0;
-    const url = own ? `https://github.com/${key.repository}/issues/${issue.number}` : `https://github.com/elsewhere/${key.repository}/issues/${issue.number}`;
-    return [{ number: issue.number, title: `Wanted issue ${issue.number}`, url, openPullRequests: open }];
-  });
+function evidenceOf(key: Key, event: Event): Evidence {
+  if (event.type !== "readSucceeded") return noEvidence;
+  const wanted = event.wanted.map((issue) => ({
+    number: issue.number,
+    title: `Wanted issue ${issue.number}`,
+    url: issue.ownRepository ? `https://github.com/${key.repository}/issues/${issue.number}` : `https://github.com/elsewhere/${key.repository}/issues/${issue.number}`,
+    openPullRequests: issue.openPulls,
+  }));
   return { ...noEvidence, wanted };
 }
 
-async function settled(key: string, sent: Effect.Effect<Merges, unknown, Services>, pruning: boolean) {
+async function settled(key: string, sent: Effect.Effect<Merges, unknown, Services>, pruning: () => boolean) {
   const exit = await runtime.runPromiseExit(sent);
   if (Exit.isFailure(exit)) {
     const error = Cause.squash(exit.cause);
@@ -56,7 +55,7 @@ async function settled(key: string, sent: Effect.Effect<Merges, unknown, Service
   const next = exit.value;
   const instance = instanceOf(key);
   instance.facts = { at: next.now * hourMillis, measured: next.measured, listed: next.listed, running: next.running, reads: next.reads, intake: next.intake, label: next.label, labelPending: next.labelPending };
-  if (pruning) instance.pruned = next.row;
+  if (pruning()) instance.pruned = next.row;
   return "accepted" as const;
 }
 
@@ -73,8 +72,15 @@ export const driver: Driver & AsyncDisposable = {
     generation += 1;
     instances = new Map();
   },
-  dispatch: (key, event: Event, by) => settled(key, send(keyOf(key), instanceOf(key).facts, event, String(by), evidenceOf(keyOf(key), event)), event.type === "prune"),
-  receive: (key, raw, by) => settled(key, receive(keyOf(key), instanceOf(key).facts, raw, String(by), evidenceOf(keyOf(key), raw)), typeof raw === "object" && raw !== null && "type" in raw && raw.type === "prune"),
+  dispatch: (key, event: Event, by) => settled(key, send(keyOf(key), instanceOf(key).facts, event, String(by), evidenceOf(keyOf(key), event)), () => event.type === "prune"),
+  receive: (key, raw, by) => {
+    let pruning = false;
+    const entity = keyOf(key);
+    return settled(key, receive(entity, instanceOf(key).facts, raw, String(by), (event) => {
+      pruning = event.type === "prune";
+      return evidenceOf(entity, event);
+    }), () => pruning);
+  },
   observe,
   [Symbol.asyncDispose]: async () => {
     await runtime.dispose();

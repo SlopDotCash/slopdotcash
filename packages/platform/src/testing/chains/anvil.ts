@@ -6,8 +6,14 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { type Abi, type Address, type Hex, encodeDeployData, getAddress, isAddress, isHex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import type { Handler } from "../../testing.ts";
 import { type RpcCall, type Served, childEnvironment, forward, freePort, isList, isRecord, mapResults, replaceStrings, replay, rewriteCalls, rpc, rpcCalls, serve, supervised } from "./faults.ts";
+
+export async function signPersonalMessage(privateKey: Hex, message: string): Promise<{ readonly signer: Address; readonly signature: Hex }> {
+  const account = privateKeyToAccount(privateKey);
+  return { signer: account.address, signature: await account.signMessage({ message }) };
+}
 
 export interface Account {
   readonly address: Address;
