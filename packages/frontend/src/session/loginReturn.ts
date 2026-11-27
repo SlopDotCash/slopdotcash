@@ -1,10 +1,17 @@
 // spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
 import type { ParsedNext } from "../../gen/frontend__composition.ts";
 
-const loginPathname = "/login";
+const loginSegment = "login";
 
-function isLoginPathname(pathname: string): boolean {
-  return pathname.replace(/\/+$/u, "") === loginPathname;
+/** @throws {never} */
+export function isLoginPathname(pathname: string): boolean {
+  const [first, second] = pathname.split("/").filter(Boolean);
+  if (first === undefined || second !== undefined) return false;
+  try {
+    return decodeURIComponent(first) === loginSegment;
+  } catch {
+    return false;
+  }
 }
 
 const foreign: ParsedNext = { tag: "ForeignOrMalformed" };

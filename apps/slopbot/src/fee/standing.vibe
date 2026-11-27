@@ -42,6 +42,7 @@ schema ActiveDepositRow {
 schema WatchedCoverRow {
   readonly repository_id: number
   readonly pull_number: number
+  readonly deposit_id: string
   readonly installation_id: number
   readonly owner: string
   readonly repo: string
@@ -175,7 +176,7 @@ effect function readCoverPull(cover: typeof WatchedCoverRow.Type) {
 }
 
 effect function readCovers(nowMillis: number, at: string) {
-  const due = try rows(WatchedCoverRow, sql`SELECT repository_id, pull_number, installation_id, owner, repo, window_start, state, strike_seen_at
+  const due = try rows(WatchedCoverRow, sql`SELECT repository_id, pull_number, deposit_id, installation_id, owner, repo, window_start, state, strike_seen_at
     FROM standing_deposit_covers
     WHERE state IN ('watch', 'pending', 'clear') AND next_check_at IS NOT NULL AND next_check_at <= ${at}
     ORDER BY updated_at, next_check_at LIMIT ${standingCoverBatch}`)
@@ -187,6 +188,14 @@ effect function readCovers(nowMillis: number, at: string) {
       continue
     }
     const reading = coverReading(cover, pull, nowMillis)
+    if (reading.unreadableTime !== null) {
+      try Effect.logWarning("slopbot standing cover unreadable time", {
+        depositId: cover.deposit_id,
+        repositoryId: cover.repository_id,
+        pullNumber: cover.pull_number,
+        field: reading.unreadableTime,
+      })
+    }
     try (try D1).run(sql`UPDATE standing_deposit_covers
       SET state = ${reading.state}, pr_open = ${reading.prOpen}, strike_seen_at = ${reading.strikeSeenAt}, next_check_at = ${reading.nextCheckAt}, updated_at = ${at}
       WHERE repository_id = ${cover.repository_id} AND pull_number = ${cover.pull_number} AND state = ${cover.state}`)

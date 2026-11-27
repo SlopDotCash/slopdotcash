@@ -146,14 +146,32 @@ export effect function installed(repository: string) {
   return found === "no" || found === "unknown" ? found : "yes" as const
 }
 
+type RefusedPostOutcome = "forbidden" | "invalid" | "rate-limited"
+
+effect function logRefusedPost(repository: string, status: number, outcome: RefusedPostOutcome, requestId: string | undefined) {
+  try Effect.logWarning("security_advisory_post_refused", { repository, status, outcome, requestId: requestId ?? null })
+}
+
 effect function refusedPost(error: GitHubFailure, repository: string) {
-  if (error._tag === "RateLimited") return { kind: "rate-limited", retryAfterSeconds: error.retryAfterSeconds ?? null } satisfies PostOutcome as PostOutcome
+  if (error._tag === "RateLimited") {
+    try logRefusedPost(repository, error.status, "rate-limited", error.requestId)
+    return { kind: "rate-limited", retryAfterSeconds: error.retryAfterSeconds ?? null } satisfies PostOutcome as PostOutcome
+  }
   if (error._tag === "NotFound") return { kind: "rejected", code: (try installed(repository)) === "no" ? "app-not-installed" : "pvr-disabled" } satisfies PostOutcome as PostOutcome
   if (error._tag !== "GitHubRefused") return { kind: "uncertain" } satisfies PostOutcome as PostOutcome
-  if (error.status === 403 && /rate limit/iu.test(error.message)) return { kind: "rate-limited", retryAfterSeconds: null } satisfies PostOutcome as PostOutcome
+  if (error.status === 403 && /rate limit/iu.test(error.message)) {
+    try logRefusedPost(repository, error.status, "rate-limited", error.requestId)
+    return { kind: "rate-limited", retryAfterSeconds: null } satisfies PostOutcome as PostOutcome
+  }
   if (error.status === 401) return { kind: "rejected", code: "grant-expired" } satisfies PostOutcome as PostOutcome
-  if (error.status === 403) return { kind: "rejected", code: "forbidden" } satisfies PostOutcome as PostOutcome
-  if (error.status === 422) return { kind: "rejected", code: "invalid" } satisfies PostOutcome as PostOutcome
+  if (error.status === 403) {
+    try logRefusedPost(repository, error.status, "forbidden", error.requestId)
+    return { kind: "rejected", code: "forbidden" } satisfies PostOutcome as PostOutcome
+  }
+  if (error.status === 422) {
+    try logRefusedPost(repository, error.status, "invalid", error.requestId)
+    return { kind: "rejected", code: "invalid" } satisfies PostOutcome as PostOutcome
+  }
   return { kind: "uncertain" } satisfies PostOutcome as PostOutcome
 }
 

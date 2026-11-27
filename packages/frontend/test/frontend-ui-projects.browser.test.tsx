@@ -19,6 +19,7 @@ type User = (typeof users)[keyof typeof users];
 
 const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001,18633264" };
 const refusedLoads = "^console Failed to load resource: the server responded with a status of 40[0139]";
+const missingSnapshots = ["^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404"] as const;
 const settings = named("heading", "Settings", { level: 1 });
 const publish = named("button", "Publish changes");
 const closure = named("checkbox", "Slopbot may close Slop-skill PRs · authors can appeal");
@@ -153,6 +154,7 @@ async function incompleteAssessment(projectId: string, id: string, repository?: 
 beforeEach(async () => {
   await site.start();
   await site.deploy(roles);
+  await site.allow(...missingSnapshots);
   for (const user of Object.values(users)) await site.user(user.id, user.login);
 });
 
@@ -211,8 +213,10 @@ describe("Complete project setup with explicit independent", () => {
 
     const checks = () => site.sent().then((sent) => sent.filter((each) => each.method === "POST" && each.path === `/api/v1/project-setup/${id}/check`).length);
     const before = await checks();
+    await shown(named("button", "Check again")).toMatchObject({ visible: true, disabled: false });
     await site.click(named("button", "Check again"));
     await expect.poll(checks, { timeout: 30_000 }).toBe(before + 1);
+    await shown(named("button", "Check again")).toMatchObject({ visible: true, disabled: false });
     await manage(id);
     await shown(named("button", "Check again")).toMatchObject({ visible: true });
     expect(await checks()).toBe(before + 2);
@@ -444,6 +448,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown(text("Project access could not be checked. Retry.")).toMatchObject({ visible: true });
     await site.click(named("button", "Retry"));
     await shown(settings).toMatchObject({ visible: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
 
     await signOut(users.uma.login);
     await signIn(users.pia.login, `/projects/${encodeURIComponent(id)}/manage`);
@@ -458,6 +463,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await signOut(users.pia.login);
     await signIn(users.uma.login, `/projects/${encodeURIComponent(id)}/manage`);
     await shown(settings).toMatchObject({ visible: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
     await site.permission(fullName, users.uma.login, "read");
     await site.open(`/projects/${encodeURIComponent(id)}/manage`);
     await shown(text("Maintainers only", true)).toMatchObject({ visible: true });
@@ -645,6 +651,7 @@ describe("Exempt only by the frozen set or an audited", () => {
     await signOut(users.pia.login);
 
     await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
     await incompleteAssessment(id, `vet_${"9".repeat(32)}`, "other/repository");
     const inconsistent = await site.fetch("POST", checkPath, {});
     expect(JSON.stringify(inconsistent)).toContain("The last scan did not clear the project.");
@@ -754,7 +761,7 @@ async function monthlyPool(id: string, owner: User, more: { readonly active?: bo
     ...(more.org === true ? { steward: { ...recordedSteward, kind: "organization", github: { ...recordedSteward.github, type: "Organization" } } } : {}),
     rewardAsset: { network: "base", chainId: "8453", cluster: null, kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, verifiedAt: "2026-11-01T00:00:00.000Z" },
     reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: withEscrow ? 200 : 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
-    ...(withEscrow ? { escrow: escrow ?? { schemaVersion: "1", effectiveCycle: awardPeriod(), chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] } } : {}),
+    ...(withEscrow ? { escrow: { schemaVersion: "1", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...escrow, effectiveCycle: awardPeriod(), chain: "base", deployments: escrow?.deployments ?? [] } } : {}),
   };
   const now = new Date().toISOString();
   const kind = status === "active" && String(current?.status) !== "active" ? "Activated" : "OwnerUpdate";
@@ -848,6 +855,7 @@ describe("Freeze exactly one execution snapshot", () => {
     await site.allow(refusedLoads);
     const fullName = await repository(users.ron, "finals");
     const id = await createProject(users.ron, fullName, "Finals");
+    await site.backendRpc();
     await site.vault({ projectId: id });
     await monthlyPool(id, users.ron);
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
@@ -1053,7 +1061,7 @@ describe("Fund, reserve and pay one month through its own vault", () => {
     await shown(field("Token amount")).toMatchObject({ visible: true, disabled: false });
     await shown(field("Deposit tokens")).toMatchObject({ checked: true });
     await shown(field("Withdraw free funds")).toMatchObject({ count: 0 });
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
     expect(await site.walletAsked()).not.toContainEqual(expect.objectContaining({ method: "eth_sendTransaction" }));
 
     await site.fill(field("Token amount"), "5");
@@ -1065,7 +1073,7 @@ describe("Fund, reserve and pay one month through its own vault", () => {
 
     await site.click(named("button", "in wallet", { exact: false, within: review }));
     await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
   });
 
   // spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"
@@ -1097,7 +1105,7 @@ describe("Fund, reserve and pay one month through its own vault", () => {
     expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
     await site.click(named("button", "in wallet", { exact: false, within: review }));
     await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
     expect((await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.startsWith(`/api/v1/projects/${id}`))).toEqual([]);
   });
 });

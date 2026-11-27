@@ -54,11 +54,14 @@ export interface StandingPullSnapshot {
   readonly labels?: ReadonlyArray<{ readonly name: string }>;
 }
 
+export type UnreadableCoverTime = "window_start" | "strike_seen_at";
+
 export interface CoverReadingResult {
   readonly state: StandingCoverState;
   readonly prOpen: 0 | 1;
   readonly strikeSeenAt: string | null;
   readonly nextCheckAt: string | null;
+  readonly unreadableTime: UnreadableCoverTime | null;
 }
 
 function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
@@ -135,9 +138,11 @@ export function coverReading(
   const open = pull.state === "open" && !merged;
   const closed = !open && !merged;
   const keepMarked = (pull.labels ?? []).some((label) => label.name === keepFeeLabel);
-  const windowEnds = Date.parse(cover.window_start) + standingDepositStrikeWindowDays * dayMs;
+  const windowStart = Date.parse(cover.window_start);
+  const windowEnds = windowStart + standingDepositStrikeWindowDays * dayMs;
+  const validWindow = isValidDateMs(windowStart) && isValidDateMs(windowEnds);
   const closedAt = Date.parse(pull.closed_at ?? "");
-  const marked = closed && keepMarked && Number.isFinite(closedAt) && Number.isFinite(windowEnds) && closedAt <= windowEnds;
+  const marked = closed && keepMarked && Number.isFinite(closedAt) && validWindow && closedAt <= windowEnds;
   const graceMs = standingDepositStrikeGraceHours * hourMs;
   const storedStrikeMs = cover.strike_seen_at === null ? Number.NaN : Date.parse(cover.strike_seen_at);
   const validStoredStrike = isValidDateMs(storedStrikeMs) && isValidDateMs(storedStrikeMs + graceMs);
@@ -150,8 +155,16 @@ export function coverReading(
       prOpen,
       strikeSeenAt: cover.strike_seen_at,
       nextCheckAt: open ? new Date(nowMillis + dayMs).toISOString() : null,
+      unreadableTime: null,
     };
   }
+  const unreadableTime: UnreadableCoverTime | null = merged
+    ? null
+    : !validWindow
+      ? "window_start"
+      : marked && cover.strike_seen_at !== null && !validStoredStrike
+        ? "strike_seen_at"
+        : null;
   const state = standingCoverState(
     {
       windowStart: cover.window_start,
@@ -168,14 +181,14 @@ export function coverReading(
     nextCheckAt = new Date(strikeSeenMs + graceMs).toISOString();
   } else if (state === "watch") {
     nextCheckAt = new Date(
-      Number.isFinite(windowEnds)
+      validWindow
         ? Math.max(nowMillis + 60_000, Math.min(nowMillis + dayMs, windowEnds + 60_000))
         : nowMillis + dayMs,
     ).toISOString();
   } else if (state === "clear" && open) {
     nextCheckAt = new Date(nowMillis + dayMs).toISOString();
   }
-  return { state, prOpen, strikeSeenAt, nextCheckAt };
+  return { state, prOpen, strikeSeenAt, nextCheckAt, unreadableTime };
 }
 
 /** @throws {never} */

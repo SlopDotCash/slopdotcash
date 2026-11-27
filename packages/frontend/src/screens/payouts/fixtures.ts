@@ -7,11 +7,17 @@ const usdc = { network: "base-mainnet", chain: "base", assetAddress: "0x833589fc
 export const vault = "0x5e1f0000000000000000000000000000000000aa";
 export const payee = "0x2b7c0000000000000000000000000000000000c3";
 
-const payment = (id: string, deliveryState: AccountPayment["deliveryState"], transactionId: string | null = null): AccountPayment => ({
+const payment = (
+  id: string,
+  deliveryState: AccountPayment["deliveryState"],
+  transactionId: string | null = null,
+  contributionMonth: string | null = "2026-11",
+): AccountPayment => ({
   ...usdc,
   id,
   vault,
   projectId: "slop",
+  contributionMonth,
   grossBase: "125000000",
   feeBase: "2500000",
   netBase: "122500000",
@@ -31,7 +37,7 @@ export const payouts: PaymentsAccount = {
     payment("pay-submitted", "submitted"),
     reservedPayment,
     payment("pay-held", "held"),
-    payment("pay-wallet", "needs_wallet"),
+    payment("pay-wallet", "needs_wallet", null, null),
   ],
   monthlyAwards: [
     { ...usdc, projectId: "slop", period: "2026-10", grossBase: "50000000", feeBase: "1000000", netBase: "49000000", state: "underfunded" },

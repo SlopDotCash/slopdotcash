@@ -13,7 +13,7 @@ export error ProbeFailed { probe: string }
 
 export const stagingOrigin = "https://staging.slop.cash"
 export const stagingSandbox = "slop-vetting-sandbox-staging"
-export const operatorWorkflow = "SlopDotCash/slopdotcash/.github/workflows/operator.yml@refs/heads/staging"
+export const operatorWorkflow = "SlopDotCash/slopdotcash/.github/workflows/operator.yml@refs/heads/develop"
 export const sandboxProbes = ["authorization", "digest", "uid-environment", "fresh-filesystem", "python-node", "egress", "output-limit", "timeout", "fresh-after-timeout"] as const
 
 schema Health { ok?: boolean; service?: string; revision?: string; imageSha256?: string }
@@ -71,7 +71,7 @@ export function successfulDeployment(listed: ReadonlyArray<PagesDeployment>, sha
   const matches = listed.flatMap((deployment) => {
     const createdOn = Date.parse(deployment.created_on ?? "")
     const metadata = deployment.deployment_trigger?.metadata
-    const exact = deployment.environment === "production" && deployment.project_name === pagesProject && deployment.is_skipped === false && deployment.latest_stage?.name === "deploy" && deployment.latest_stage.status === "success" && metadata?.branch === "staging" && metadata.commit_dirty === false && metadata.commit_hash === sha && Number.isFinite(createdOn)
+    const exact = deployment.environment === "production" && deployment.project_name === pagesProject && deployment.is_skipped === false && deployment.latest_stage?.name === "deploy" && deployment.latest_stage.status === "success" && metadata?.branch === "develop" && metadata.commit_dirty === false && metadata.commit_hash === sha && Number.isFinite(createdOn)
     return exact ? [{ id: deployment.id ?? "", url: deployment.url ?? "", createdOn }] : []
   })
   if (matches.some((match) => !/^[0-9a-f-]{20,}$/iu.test(match.id) || !URL.canParse(match.url) || new URL(match.url).protocol !== "https:")) return "invalid"
@@ -96,7 +96,7 @@ effect function deployedIdentity(sha: string, key: PublicScannerKey) {
   const project = try metadataRead("pages project", `pages/projects/${pagesProject}`, PagesProject)
   const production = project.deployment_configs.production
   const published = production.env_vars?.[scannerKeyName]
-  try expectMetadata(project.production_branch === "staging" && published?.type === "plain_text" && published.value === key.publicKey)
+  try expectMetadata(project.production_branch === "develop" && published?.type === "plain_text" && published.value === key.publicKey)
   try expectMetadata(production.services?.VETTING_SANDBOX?.service === stagingSandbox)
   const listed = try metadataRead("pages deployments", `pages/projects/${pagesProject}/deployments?env=production&per_page=25`, Schema.Array(PagesDeployment))
   const deployment = successfulDeployment(listed, sha)
@@ -198,7 +198,7 @@ export effect function runSandboxProbes(identity: { readonly sourceSha: string; 
 }
 
 effect function executed() {
-  const { sha } = try protectedCheckout({ refs: ["refs/heads/staging"], workflowRef: operatorWorkflow, mode: "execute", message: "The protected staging qualification checkout is required" })
+  const { sha } = try protectedCheckout({ refs: ["refs/heads/develop"], workflowRef: operatorWorkflow, mode: "execute", message: "The protected staging qualification checkout is required" })
   const runnerTemp = try variable("RUNNER_TEMP")
   const key = try secretVariable("SLOP_VETTING_SIGNING_JWK")
   if (runnerTemp === undefined || key === undefined) throw new QualificationRefused({ message: "The protected staging qualification checkout is required" })

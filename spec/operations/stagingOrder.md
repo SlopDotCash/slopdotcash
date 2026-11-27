@@ -1,16 +1,17 @@
 # Staging order check with one quota retry
 
 The [release run](./release.md) publishes to staging only after the order
-check of its tested `staging` revision allows it ("Production publishes
+check of its tested `develop` revision allows it ("Production publishes
 only the current main head; staging publishes a checked ancestor and never
 rolls back"). This machine is one run of that check as development performs
 it at df21e37b7: `scripts/check-staging-order.mjs` (commit 9d5d37765) and
 development's own model `formal/models/release/staging_release_order.qnt`.
-One pass fetches `staging`, requires the candidate to be an ancestor of
+One pass fetches `develop`, requires the candidate to be an ancestor of
 or equal to its tip, and reads staging's deployment history. A history
 record that is not an ancestor of or equal to the candidate, and that a
 release created, refuses at once; a record made by the vetting controller or
-a qualification workflow is not a release and is skipped. Each record read
+a qualification workflow, or a retired pre-cutover `development` or `staging`
+record, is not a release and is skipped. Each record read
 carries its revision, whether `git merge-base --is-ancestor` found it an
 ancestor of or equal to the candidate, and whether a non-release workflow
 created it; the candidate is an ancestor of or equal to itself.

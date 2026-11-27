@@ -9,9 +9,14 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { RegistryObservation } from "../gen/slopbot__repositoryScope.ts"
 import { apiStart } from "../gen/slopbot__valueRequests.effect.vibe"
+import { consumeValueRequest } from "../src/value/inference/consumer.vibe"
 import { leaseSources } from "../src/value/requests/leases.vibe"
 import { type Gathered, type Run, claimRequest, nextDue, recordOutcome, resumeParked, startRun } from "../src/value/requests/store.vibe"
+import { Retention } from "../src/value/workUnits/types.vibe"
+import { fileOf, patchOf, scripted as scriptInference, seeded as seededInference, services as inferenceServices } from "./support/inferenceWorker.vibe"
+import { rewriteNext } from "./support/proofsWorker.vibe"
 import { type SiteEnv, idle, inboxSite, registryOver, slopbotAccess } from "./support/requestsWorker.vibe"
+import { answerNext } from "./support/workUnitsWorker.vibe"
 
 service Journey {
   readonly db: D1Database
@@ -156,6 +161,32 @@ effect function signedUp(members: ReadonlyArray<{ readonly githubId: string; rea
   try batch(statements)
 }
 
+effect function logged<A, E, R>(program: A!E!R) {
+  const lines: string[] = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const first = Array.isArray(message) ? message[0] : message
+    if (typeof first === "string") lines.push(first)
+  })], { mergeWithExisting: true })
+  provide capture {
+    const value = try program
+    return { value, lines }
+  }
+}
+
+effect function parseWarnings(lines: ReadonlyArray<string>) {
+  return try Effect.try(() => lines.filter((line) => line.includes("value_request_source_incomplete")).map((line) => JSON.parse(line) as unknown))
+}
+
+function patchedCommit(number: number) {
+  return (body: Readonly<Record<string, unknown>>) => {
+    const files = body["files"]
+    if (!Array.isArray(files)) return body
+    const listed: ReadonlyArray<Readonly<Record<string, unknown>>> = files
+    return { ...body, files: listed.map((file) => file["filename"] === fileOf(number) ? { ...file, patch: patchOf(number) } : file) }
+  }
+}
+
 effect function inbox(options: { readonly as?: string; readonly expected?: string; readonly query?: string; readonly method?: string } = {}) {
   const { env } = try Journey
   const headers: Record<string, string> = {}
@@ -293,6 +324,99 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       completed: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [], next: null } },
       exhausted: "AttemptsExhausted",
       exhaustedShown: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [{ ...item, pullRequest: 17, since: "2026-11-03T03:00:10.000Z", retryAt: null }], next: null } },
+    })
+  })
+
+  it.effect('Source-incomplete value requests emit structured sanitized limitation warnings for evidence, group, and work-unit gaps (spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")', () => effect {
+    const { db } = try Journey
+    const seeded = try seededInference()
+    clock.set(Date.now())
+    try batch([
+      sql`INSERT OR IGNORE INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (501, 101, 'ada', 'User', ${seededAt}, 1)`,
+      ...requested("si-ev-1", 1, "2026-11-10T00:00:00.000Z"),
+      ...requested("si-grp-2", 2, "2026-11-10T00:01:00.000Z"),
+      ...requested("si-wu-3", 3, "2026-11-10T00:02:00.000Z"),
+    ])
+
+    const runtime = inferenceServices(seeded, db)
+    const run1 = try startRun()
+
+    try scriptInference(seeded, 1, 1)
+    try answerNext(seeded.github, "GET /repos/ada/alpha/pulls/1/files?per_page=100&page=1", [
+      { filename: "src/bad\nname\t1.ts", status: "modified", additions: 1, deletions: 0, blob_url: "https://github.com/ada/alpha/blob/main/src/fix1.ts" },
+    ])
+    try orDie(Effect.try(() => seeded.github.failNext("GET /repos/ada/alpha/compare/", { status: 404 })))
+    const evidence = try logged(effect {
+      provide runtime {
+        return try consumeValueRequest({ deliveryId: "si-ev-1", installationId: 501, repositoryId: 7001, owner: "ada", repo: "alpha", number: 1 }, run1)
+      }
+    })
+
+    for (const sha of [seeded.heads.get(2) ?? "", seeded.merges.get(2) ?? ""]) {
+      try rewriteNext(seeded.github, `GET /repos/ada/alpha/commits/${sha}?per_page=100&page=1`, patchedCommit(2))
+    }
+    try orDie(Effect.try(() => seeded.github.failNext(`/commits/${seeded.heads.get(2) ?? ""}/pulls`, { status: 404 })))
+    const group = try logged(effect {
+      provide runtime {
+        return try consumeValueRequest({ deliveryId: "si-grp-2", installationId: 501, repositoryId: 7001, owner: "ada", repo: "alpha", number: 2 }, evidence.value.run)
+      }
+    })
+
+    const pull3: unknown = try orDie(Effect.try(() => seeded.github.represent.pull("ada/alpha", 3)))
+    const pull4: unknown = try orDie(Effect.try(() => seeded.github.represent.pull("ada/alpha", 4)))
+    for (const sha of [seeded.heads.get(3) ?? "", seeded.merges.get(3) ?? ""]) {
+      try rewriteNext(seeded.github, `GET /repos/ada/alpha/commits/${sha}?per_page=100&page=1`, patchedCommit(3))
+    }
+    try answerNext(seeded.github, `/commits/${seeded.heads.get(3) ?? ""}/pulls`, [pull3, pull4])
+    try answerNext(seeded.github, `/commits/${seeded.merges.get(3) ?? ""}/pulls`, [pull3])
+    try scriptInference(seeded, 4, 4)
+    const limitedRetention = Layer.merge(runtime, Layer.succeed(Retention, {
+      bindings: () => Effect.succeed({ bindings: new Map(), limitations: ["PR_test: retained copy\nmissing original", "PR_test: retained copy\nmissing original"] }),
+      repair: () => Effect.succeed(undefined),
+    }))
+    const workUnit = try logged(effect {
+      provide limitedRetention {
+        return try consumeValueRequest({ deliveryId: "si-wu-3", installationId: 501, repositoryId: 7001, owner: "ada", repo: "alpha", number: 3 }, group.value.run)
+      }
+    })
+
+    const allLines = [...evidence.lines, ...group.lines, ...workUnit.lines].join("\n")
+    try same({
+      outcomes: [evidence.value.outcome, group.value.outcome, workUnit.value.outcome],
+      evidence: try parseWarnings(evidence.lines),
+      group: try parseWarnings(group.lines),
+      workUnit: try parseWarnings(workUnit.lines),
+      leaked: ["orbio-test-credential", "surplus-test-credential", seeded.github.app.privateKeyPem].some((secret) => allLines.includes(secret)),
+    }, {
+      outcomes: ["SourceIncomplete", "SourceIncomplete", "SourceIncomplete"],
+      evidence: [{
+        event: "value_request_source_incomplete",
+        delivery: "si-ev-1",
+        repository: "ada/alpha",
+        pull: 1,
+        stage: "evidence",
+        limitationCount: 1,
+        limitations: ["Full diff required: src/bad name 1.ts"],
+      }],
+      group: [{
+        event: "value_request_source_incomplete",
+        delivery: "si-grp-2",
+        repository: "ada/alpha",
+        pull: 2,
+        stage: "group",
+        limitationCount: 1,
+        limitations: ["Value group collection is incomplete"],
+      }],
+      workUnit: [{
+        event: "value_request_source_incomplete",
+        delivery: "si-wu-3",
+        repository: "ada/alpha",
+        pull: 3,
+        stage: "work_unit",
+        limitationCount: 1,
+        limitations: ["PR_test: retained copy missing original"],
+      }],
+      leaked: false,
     })
   })
 })

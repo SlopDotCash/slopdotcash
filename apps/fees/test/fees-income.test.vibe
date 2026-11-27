@@ -492,7 +492,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
   it.effect('Inspect the deployed fee Worker bindings, its schedules, journal and tail, and probe the Solana RPC candidate from an unbound preview, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const text = try fs.readFileString(`${repositoryRoot}apps/fees/wrangler/feeConverter.production.jsonc`)
-    const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string>; readonly d1_databases: ReadonlyArray<{ readonly database_id: string }> }
+    const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string>; readonly optionalSecrets: ReadonlyArray<string>; readonly d1_databases: ReadonlyArray<{ readonly database_id: string }> }
     const matching: ReadonlyArray<Binding> = [
       { name: "FEE_DB", type: "d1" },
       ...Object.entries(reviewed.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
@@ -503,6 +503,8 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     const passed = try inspected(asFetch(cloudflare(matching, calls).handler), temp)
     const written = try fs.readFileString(`${temp}/fee-worker-bindings.json`)
     const mode = (try fs.stat(`${temp}/fee-worker-bindings.json`)).mode & 0o777
+    const withOptional = try inspected(asFetch(cloudflare([...matching, ...reviewed.optionalSecrets.map((name): Binding => ({ name, type: "secret_text", text: "PRIVATE_SECRET_MUST_NOT_RETURN" }))], []).handler), temp)
+    const optionalWrongKind = try inspected(asFetch(cloudflare([...matching, { name: "JUPITER_API_KEY", type: "plain_text", text: "PRIVATE_SECRET_MUST_NOT_RETURN" }], []).handler), temp)
     const missing = try inspected(asFetch(cloudflare(matching.filter((binding) => binding.name !== "RPC_URL_BASE"), []).handler), temp)
     const extra = try inspected(asFetch(cloudflare([...matching, { name: "UNKNOWN", type: "plain_text", text: "PRIVATE_URL_MUST_NOT_RETURN" }], []).handler), temp)
     const wrongKind = try inspected(asFetch(cloudflare(matching.map((binding) => binding.name === "RPC_URL_SOLANA" ? { ...binding, type: "plain_text" } : binding), []).handler), temp)
@@ -516,16 +518,18 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     try same({
       calls,
       bindings: report?.bindings,
+      withOptional: typeof withOptional === "string" ? withOptional : withOptional.bindings,
       settings: report?.settings.every((setting: { readonly present: boolean; readonly matchesReviewedConfiguration: boolean }) => setting.present && setting.matchesReviewedConfiguration),
       providers: [report?.solanaPrimary, report?.solanaRecovery, report?.solanaKeyPresent, report?.sourceMatchesCheckout],
       private: [written, afterWrongKind].some((text) => text.includes("PRIVATE_") || text.includes("private-token")),
       mode,
-      refused: [missing, extra, wrongKind],
+      refused: [missing, extra, wrongKind, optionalWrongKind],
       defaulted: typeof defaulted === "string" ? defaulted : [defaulted.bindings, defaulted.solanaPrimary, defaulted.solanaRecovery, defaulted.sourceMatchesCheckout],
       sourceDefaultsUnproved: [unmatched, recoveryWrongKind],
     }, {
       calls: ["GET slop-fee-converter/deployments true", `GET versions/${versionId} true`, "GET slop-fee-converter/deployments true"],
       bindings: { missing: [], extra: [], wrongKind: [] },
+      withOptional: { missing: [], extra: [], wrongKind: [] },
       settings: true,
       providers: ["opaque-secret-binding", "opaque-secret-binding", true, true],
       private: false,
@@ -534,6 +538,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
         "The deployed fee Worker bindings differ from the reviewed configuration: missing RPC_URL_BASE; extra none; wrong kind none",
         "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra UNKNOWN; wrong kind none",
         "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra none; wrong kind RPC_URL_SOLANA",
+        "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra none; wrong kind JUPITER_API_KEY",
       ],
       defaulted: [{ missing: [], extra: [], wrongKind: [] }, "solana-public-default", "allnodes-publicnode-default", true],
       sourceDefaultsUnproved: [

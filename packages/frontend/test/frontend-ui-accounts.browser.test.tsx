@@ -245,6 +245,7 @@ describe("Replace a payout wallet without losing the current", () => {
     await site.click(change);
     await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
     await site.click(named("button", "Register"));
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) as unknown });
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/account#wallets");
     await shown(evmCard).toMatchObject({ text: expect.stringContaining(second) as unknown });
@@ -289,7 +290,7 @@ describe("Replace a payout wallet without losing the current", () => {
 
 // spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
 describe("Payout authorization", () => {
-  // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
+  // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
   it("restores on reload", { timeout: 150_000 }, async () => {
     await site.allow(
       "^console Applying inline style violates the following Content Security Policy directive 'style-src 'self''",
@@ -313,8 +314,12 @@ describe("Payout authorization", () => {
     const { vault, asset } = await site.vault({ projectId: project });
     await site.finalize();
     await site.sql("INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES('payout-consent-award',?,?,'base-mainnet','base',?,?,6,'1000000','20000',?,'reserved',?)", project, actor, vault, asset, "b".repeat(64), now);
+    await site.sql("INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(?,'2026-10','{}',?,?,'1000000',1,?)", project, "c".repeat(64), "d".repeat(64), now);
+    await site.sql("INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) VALUES(?,'2026-10','automatic',NULL,0,'{}',?,'base-mainnet',?,'1000000',?,?)", project, "c".repeat(64), vault, now, now);
+    await site.sql("INSERT INTO monthly_payment_obligations(project_id,period,github_user_id,github_login,gross_base,fee_base,source_digest,network,vault,created_at) VALUES(?,'2026-10',?,?,'1000000','20000',?,'base-mainnet',?,?)", project, actor, users.kai.login, "b".repeat(64), vault, now);
 
     await site.open("/earnings");
+    await shown(named("region", "Awards and payments")).toMatchObject({ visible: true, text: expect.stringContaining("October 2026") as unknown });
     const authorize = named("button", "Authorize payout wallet");
     const pending = { text: "Authorized · pending", exact: true };
     const finalized = { text: "Wallet bound", exact: true };
@@ -334,7 +339,7 @@ describe("Payout authorization", () => {
     await shown(pending).toMatchObject({ visible: true });
     await shown(authorize).toMatchObject({ count: 0 });
     expect(await signs()).toBe(1);
-    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 200, body: { payments: [{ bindingStatus: "pending", state: "reserved" }] } });
+    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 200, body: { payments: [{ bindingStatus: "pending", contributionMonth: "2026-10", state: "reserved" }] } });
 
     await site.backendRpc(false);
     await site.open("/earnings");
@@ -374,6 +379,27 @@ describe("Payout authorization", () => {
     expect(wallets.some((wallet: unknown) => typeof wallet === "object" && wallet !== null && "chain" in wallet && "address" in wallet && "authorized" in wallet && wallet.chain === "base" && wallet.address === replacement.toLowerCase() && wallet.authorized === true)).toBe(true);
     await shown(finalized).toMatchObject({ count: 0 });
     expect(await signs()).toBe(1);
+
+    await site.sql(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES('unlinked-paid','unlinked-kit',?,'base-mainnet','base',?,'0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',6,'1000000','20000',?,'paid',?,'0x1111111111111111111111111111111111111111111111111111111111111111')",
+      actor,
+      `0x${"3".repeat(40)}`,
+      "e".repeat(64),
+      now,
+    );
+    await site.open("/earnings");
+    await shown(named("region", "Awards and payments")).toMatchObject({ visible: true, text: expect.stringContaining("unlinked-kit") as unknown });
+    const awardsText = (await site.read(named("region", "Awards and payments"))).text;
+    expect(awardsText).toContain("October 2026");
+    expect(awardsText).not.toContain("unlinked-kit ·");
+    const combined = await site.fetch("GET", "/api/v1/payments/me");
+    expect(combined.status).toBe(200);
+    const combinedPayments = typeof combined.body === "object" && combined.body !== null && "payments" in combined.body && Array.isArray(combined.body.payments) ? combined.body.payments : [];
+    expect(combinedPayments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "payout-consent-award", contributionMonth: "2026-10", state: "reserved" }),
+      expect.objectContaining({ id: "unlinked-paid", contributionMonth: null, state: "paid" }),
+    ]));
+    await accessible();
   });
 });
 

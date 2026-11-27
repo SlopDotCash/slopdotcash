@@ -12,7 +12,7 @@ export {
   ATTRIBUTION_RULES_VERSION, IMPLEMENTATION_MEMO_RULES_VERSION, type AttributionLog, type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult,
   type AttributionPullDependency, type AttributionReferenceDependency, type AuthorRow, type CollectionMemoFile, type CommitLineRow, type LiveAnswer, MemoInvalid, MemoRefused,
   type MemoSession, type MemoStats, type OpenedMemo, type RulesSource, attributionAuditOneIn, attributionChangedCodeAuditOneIn, attributionRefreshAge, attributionRefreshMs,
-  attributionRulesVersion, auditSample, canonicalJson, collectionMemoFormat, collectionMemoStatsLines, implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn,
+  attributionRulesDigest, attributionRulesHash, attributionRulesSources, attributionRulesVersion, auditSample, canonicalJson, collectionMemoFormat, collectionMemoStatsLines, implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn,
   implementationMemoRulesVersion, openMemoFromEnv, rulesDigest, sameFence, slowAttributionMs, watchAttribution, writeMemo,
 } from "../memo/memo.vibe"
 export { type ImplementationCollected, type ImplementationRequest, implementationFacts, publishedJournalReader } from "../implementation/facts.vibe"

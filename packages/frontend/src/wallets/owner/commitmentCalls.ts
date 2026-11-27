@@ -6,11 +6,25 @@ import type { MonthlySetting } from "./ownerDecisions.ts";
 
 export type { MonthlySetting };
 
+export interface DeploymentUpgrade {
+  readonly vaultImplementation: string;
+  readonly vaultImplementationCodeSha256: string;
+  readonly factoryImplementation: string;
+  readonly factoryImplementationCodeSha256: string;
+}
+
 export interface Deployment {
   readonly network: string;
   readonly vault: string;
   readonly owner: string;
   readonly asset: string;
+  readonly codeSha256?: string | null | undefined;
+  readonly factory?: string | null | undefined;
+  readonly factoryCodeSha256?: string | null | undefined;
+  readonly registrar?: string | null | undefined;
+  readonly feeRecipient?: string | null | undefined;
+  readonly bindingDelaySeconds?: string | null | undefined;
+  readonly evmUpgrade?: DeploymentUpgrade | null | undefined;
 }
 
 export interface CommitmentCall {
@@ -39,11 +53,33 @@ export const monthlyCapMessages = {
 export const MONTHLY_CAP_CALL = escrowGetter("monthlyCap");
 export const MONTHLY_ENABLED_CALL = escrowGetter("monthlyEnabled");
 
+function deploymentUpgradeOf(value: unknown): DeploymentUpgrade | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { vaultImplementation, vaultImplementationCodeSha256, factoryImplementation, factoryImplementationCodeSha256 } = value as Record<string, unknown>;
+  return typeof vaultImplementation === "string" && typeof vaultImplementationCodeSha256 === "string" && typeof factoryImplementation === "string" && typeof factoryImplementationCodeSha256 === "string"
+    ? { vaultImplementation, vaultImplementationCodeSha256, factoryImplementation, factoryImplementationCodeSha256 }
+    : undefined;
+}
+
 /** @throws {never} */
 export function deploymentOf(value: unknown): Deployment | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const { network, vault, owner, asset } = value as Record<string, unknown>;
-  return typeof network === "string" && typeof vault === "string" && typeof owner === "string" && typeof asset === "string" ? { network, vault, owner, asset } : undefined;
+  const { network, vault, owner, asset, codeSha256, factory, factoryCodeSha256, registrar, feeRecipient, bindingDelaySeconds, evmUpgrade } = value as Record<string, unknown>;
+  if (typeof network !== "string" || typeof vault !== "string" || typeof owner !== "string" || typeof asset !== "string") return undefined;
+  const upgrade = deploymentUpgradeOf(evmUpgrade);
+  return {
+    network,
+    vault,
+    owner,
+    asset,
+    ...(typeof codeSha256 === "string" ? { codeSha256 } : {}),
+    ...(typeof factory === "string" ? { factory } : {}),
+    ...(typeof factoryCodeSha256 === "string" ? { factoryCodeSha256 } : {}),
+    ...(typeof registrar === "string" ? { registrar } : {}),
+    ...(typeof feeRecipient === "string" ? { feeRecipient } : {}),
+    ...(typeof bindingDelaySeconds === "string" ? { bindingDelaySeconds } : {}),
+    ...(upgrade !== undefined ? { evmUpgrade: upgrade } : {}),
+  };
 }
 
 /** @throws {RangeError} */

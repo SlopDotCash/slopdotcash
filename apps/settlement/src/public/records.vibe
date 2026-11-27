@@ -229,10 +229,10 @@ function feeEvidence(gross: bigint, fee: bigint | undefined) {
   }
 }
 
-function linkedMonth(row: PaidRow, gross: bigint): string | null {
-  if (row.contribution_month === null || row.monthly_fee === null || !decimalCursor.test(row.monthly_fee)) return null
-  if (row.monthly_fee === row.fee_base) return row.contribution_month
-  return feeEvidence(gross, parseBaseUnits(row.fee_base)) && feeEvidence(gross, parseBaseUnits(row.monthly_fee)) ? row.contribution_month : null
+export function linkedContributionMonth(contributionMonth: string | null, monthlyFee: string | null, gross: bigint, feeBase: string): string | null {
+  if (contributionMonth === null || !monthText.test(contributionMonth) || monthlyFee === null || !decimalCursor.test(monthlyFee)) return null
+  if (monthlyFee === feeBase) return contributionMonth
+  return feeEvidence(gross, parseBaseUnits(feeBase)) && feeEvidence(gross, parseBaseUnits(monthlyFee)) ? contributionMonth : null
 }
 
 function publicPayment(row: PaidRow, chain: Chain, gross: bigint, net: bigint): PublicVaultPayment {
@@ -241,7 +241,7 @@ function publicPayment(row: PaidRow, chain: Chain, gross: bigint, net: bigint): 
     projectId: row.project_id,
     network: row.network,
     chain,
-    contributionMonth: linkedMonth(row, gross),
+    contributionMonth: linkedContributionMonth(row.contribution_month, row.monthly_fee, gross, row.fee_base),
     assetAddress: row.asset_address,
     assetDecimals: row.asset_decimals,
     netBase: net.toString(),

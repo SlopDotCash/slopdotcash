@@ -40,7 +40,7 @@ env:
 jobs:
   sandbox-qualification:
     name: Qualify deployed staging sandbox
-    if: inputs.operation == 'sandbox-qualification' && github.ref == 'refs/heads/staging'
+    if: inputs.operation == 'sandbox-qualification' && github.ref == 'refs/heads/develop'
     environment: slop-staging
     concurrency:
       group: slop-staging

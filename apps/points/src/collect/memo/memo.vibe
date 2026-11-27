@@ -11,6 +11,18 @@ export const attributionAuditOneIn = auditOneIn
 export const attributionChangedCodeAuditOneIn = changedCodeAuditOneIn
 export const attributionRulesVersion = 1
 export const ATTRIBUTION_RULES_VERSION = attributionRulesVersion
+export const attributionRulesDigest = "835923728682f6b214ee99ebff18a34cba828cb31e3b6b02cb250c59bb524763"
+export const attributionRulesSources: ReadonlyArray<RulesSource> = [
+  { path: "apps/slopbot/src/value/collect/attributionMemo.vibe" },
+  { path: "apps/slopbot/src/value/collect/discussion.vibe" },
+  { path: "apps/slopbot/src/value/collect/inputs.vibe" },
+  { path: "apps/slopbot/src/value/evidence/collect.vibe" },
+  { path: "apps/slopbot/src/value/evidence/references.vibe" },
+  { path: "apps/slopbot/src/value/retained/binding.ts" },
+  { path: "apps/slopbot/src/value/retained/copy.vibe" },
+  { path: "apps/slopbot/src/value/retained/copyRules.ts" },
+  { path: "apps/slopbot/src/value/retained/reference.vibe" },
+]
 export const implementationMemoAuditOneIn = 50
 export const implementationMemoChangedCodeAuditOneIn = 10
 export const implementationMemoRulesVersion = 1
@@ -375,6 +387,10 @@ export effect function rulesDigest(root: string, sources: ReadonlyArray<RulesSou
     parts.push([path, region, source.slice(start, stop + end.length)])
   }
   return try sha256Hex(JSON.stringify(parts))
+}
+
+export effect function attributionRulesHash(root: string, sources = attributionRulesSources) {
+  return try rulesDigest(root, sources, "attribution-rules")
 }
 
 export effect function watchAttribution<A, E, R>(pull: string, run: A!E!R, describe: (value: A) => string, log: AttributionLog = {}): A!E!R {

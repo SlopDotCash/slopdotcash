@@ -2,7 +2,7 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { privateFile } from "@repo/platform/program"
 import type { Environment } from "../../gen/fees__runtime.effect.vibe"
-import { databaseBinding, expectedSecrets } from "../runtime/networks.vibe"
+import { databaseBinding, expectedSecrets, optionalSecrets } from "../runtime/networks.vibe"
 import { parsedJson } from "../kernels/verified.vibe"
 
 export error InspectionFailed { message: string }
@@ -59,6 +59,7 @@ export function expectedBindings(vars: Readonly<Record<string, string>>, environ
     { name: databaseBinding, kind: "d1", required: true },
     ...Object.keys(vars).map((name) => ({ name, kind: "plain_text", required: true }) satisfies ExpectedBinding),
     ...expectedSecrets(environment).map((name) => ({ name, kind: "secret_text", required: !(sourceMatched && name in sourceDefaults) }) satisfies ExpectedBinding),
+    ...optionalSecrets.map((name) => ({ name, kind: "secret_text", required: false }) satisfies ExpectedBinding),
   ]
 }
 

@@ -13,7 +13,7 @@ export interface Names {
 }
 
 export const protectedRepository = "SlopDotCash/slopdotcash"
-export const protectedWorkflow = `${protectedRepository}/.github/workflows/vetting-recovery-qualification.yml@refs/heads/staging`
+export const protectedWorkflow = `${protectedRepository}/.github/workflows/vetting-recovery-qualification.yml@refs/heads/develop`
 export const stagingEnvironment = "slop-staging"
 
 export const databaseBindings = ["EVIDENCE_DATABASE", "RESTORED_DB"] as const
@@ -108,11 +108,11 @@ export effect function protectedRun(source: string, run: string) {
   }
   const exact = (try variable("GITHUB_ACTIONS")) === "true"
     && (try variable("GITHUB_EVENT_NAME")) === "workflow_dispatch"
-    && (try variable("GITHUB_REF")) === "refs/heads/staging"
+    && (try variable("GITHUB_REF")) === "refs/heads/develop"
     && (try variable("GITHUB_REPOSITORY")) === protectedRepository
     && (try variable("GITHUB_WORKFLOW_REF")) === protectedWorkflow
     && (try variable("GITHUB_SHA")) === source
     && (try variable("VETTING_QUALIFICATION_MODE")) === "execute"
     && !run.endsWith("-0")
-  if (!exact) throw new RecoveryRefused({ message: "Exact protected staging qualification is required" })
+  if (!exact) throw new RecoveryRefused({ message: "Exact protected develop qualification is required" })
 }

@@ -4,7 +4,7 @@ import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { positiveBudgetFits } from "@repo/settlement/kernels/budget"
 import type { Environment, Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts"
 import { apply, initial, readinessEntryApplies, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
-import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, definitions, evmNetworks, expectedSecrets, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
+import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, allowedSecrets, definitions, evmNetworks, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
 import { jupiter, kyberswap } from "./pins.ts"
 
 export interface NativeLimits { readonly perTransaction: bigint; readonly perDay: bigint; readonly additionalFeeReserve: bigint }
@@ -454,8 +454,8 @@ export effect function isolateRuntime(vars: FeeVars, secrets: ReadonlyArray<stri
 
 export effect function preflight(release: Release) {
   const environment = try environmentOf(release.vars)
-  const expected: ReadonlyArray<string> = expectedSecrets(environment)
-  if (release.secretInventory.some((name) => !expected.includes(name))) throw new ConfigInvalid({ name: "secrets", issue: "the fee-converter Worker secret inventory contains unexpected entries" })
+  const allowed: ReadonlyArray<string> = allowedSecrets(environment)
+  if (release.secretInventory.some((name) => !allowed.includes(name))) throw new ConfigInvalid({ name: "secrets", issue: "the fee-converter Worker secret inventory contains unexpected entries" })
   const config = try decodeConfig(release.vars, release.secretInventory)
   const settings = try decodeReadiness(release.vars)
   if (!sameReadiness(settings, release.ownerApproval)) throw new ConfigInvalid({ name: "FEE_READY", issue: "FEE_READY and FEE_REPLACEMENT_ACTIVE differ from the owner's authenticated approval" })

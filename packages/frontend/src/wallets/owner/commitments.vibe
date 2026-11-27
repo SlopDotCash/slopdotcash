@@ -11,7 +11,7 @@ import { WalletFailed } from "../core/discovery.vibe"
 import { type EvmConnection, evmRequest, sendTransaction } from "../core/evm.vibe"
 import type { SolanaConnection } from "../core/solana.vibe"
 import { type Deployment, type MonthlySetting, type ProjectReward, MONTHLY_CAP_CALL, MONTHLY_ENABLED_CALL, awardCommitted, baseUnits, evmChainIdOf, commitmentCall, deploymentOf, settingCall, settingOf, vaultMonthlyCap } from "./commitmentCalls.ts"
-import { type Call, callPlan, reviewedVaultOf, samePlannedCall } from "./evmCalls.ts"
+import { type Call, callPlan, recordedVaultReviewOf, reviewedVaultOf, samePlannedCall } from "./evmCalls.ts"
 import { type EvmVault, VaultActionRefused, readVault, readWalletTransaction, requireVaultWallet } from "./evmVault.vibe"
 import { expectedOf, vaultEvents } from "./evmEvidence.ts"
 import { settingTarget } from "./ownerDecisions.ts"
@@ -84,7 +84,7 @@ export effect function requestCommitment(projectId: string, period: string, revi
 
 export function evmVaultOf(deployment: Deployment, purpose: VaultPurpose = "OrdinaryPurpose"): EvmVault | undefined {
   const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
-  const review = reviewedVaultOf(deployment.network, purpose)
+  const review = recordedVaultReviewOf(deployment, purpose) ?? reviewedVaultOf(deployment.network, purpose)
   return network?.family === "evm" && review !== undefined ? { network: deployment.network, chainId: evmChainIdOf(network.chainId), vault: deployment.vault, asset: deployment.asset, owner: deployment.owner, review } : undefined
 }
 

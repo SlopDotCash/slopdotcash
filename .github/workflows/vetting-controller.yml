@@ -6,7 +6,7 @@ on:
   workflow_run:
     workflows: [slop.cash]
     types: [completed]
-    branches: [main, staging]
+    branches: [main, develop]
 permissions:
   contents: read
 env:
@@ -72,9 +72,9 @@ jobs:
               attempt=$((attempt + 1))
             done
           }
-          refs="main staging"
+          refs="main develop"
           if [ "$TRIGGER_EVENT" = workflow_run ]; then
-            case "$RELEASE_REF" in main|staging) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
+            case "$RELEASE_REF" in main|develop) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
           fi
           for ref in $refs; do
             matches="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/$ref")"
@@ -98,7 +98,7 @@ jobs:
             # checkout (PRD section 8, operator decision of 23 November 2026).
             case "$ref" in
               main) site="https://slop.cash" ;;
-              staging) site="https://staging.slop.cash" ;;
+              develop) site="https://staging.slop.cash" ;;
             esac
             inputs="$(mktemp)"
             if ! curl -fsS --max-time 30 "$site/scanner-inputs.json" -o "$inputs" \
@@ -123,7 +123,7 @@ jobs:
             fi
           done
   scan:
-    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}

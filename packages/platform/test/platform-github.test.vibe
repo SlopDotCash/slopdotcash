@@ -132,12 +132,34 @@ function failureOf(error: GitHubFailure) {
   return { failure: error._tag }
 }
 
-effect function failedWith(fake: Fake, failure: ScriptedFailure) {
-  try sync(() => fake.failNext(/\/users\/octo$/u, failure))
-  return try readOcto(fake)
+type Alter = Parameters<Fake["alterNext"]>[1]
+type Altered = Awaited<ReturnType<Alter>>
+
+function requestIdFailure(error: GitHubFailure) {
+  return error._tag === "GitHubRefused" || error._tag === "RateLimited"
+    ? { failure: error._tag, status: error.status, requestId: error.requestId ?? null }
+    : { failure: error._tag }
 }
 
-effect function readOcto(fake: Fake) {
+effect function failedRequestId(fake: Fake, failure: ScriptedFailure, requestId: string) {
+  const alter: Alter = async (response) => {
+    const headers = new Headers([...response.headers])
+    headers.set("x-github-request-id", requestId)
+    return new Response(new Uint8Array(await response.arrayBuffer()), { status: response.status, headers }) as unknown as Altered
+  }
+  try sync(() => {
+    fake.failNext(/\/users\/octo$/u, failure)
+    fake.alterNext(/\/users\/octo$/u, alter)
+  })
+  return try readOcto(fake, requestIdFailure)
+}
+
+effect function failedWith(fake: Fake, failure: ScriptedFailure) {
+  try sync(() => fake.failNext(/\/users\/octo$/u, failure))
+  return try readOcto(fake, failureOf)
+}
+
+effect function readOcto<A>(fake: Fake, onFailure: (error: GitHubFailure) => A) {
   const token = try orDie(Effect.try(() => fake.tokens.user("octo")))
   const client = github({ token: Redacted.make(token), userAgent: "slop-platform-test" })
   const read = effect {
@@ -145,7 +167,7 @@ effect function readOcto(fake: Fake) {
       return { read: (try (try GitHub).json("/users/octo", Login)).login }
     }
   }
-  return provideService(Effect.provide(read, FetchHttpClient.layer), FetchHttpClient.Fetch, fake.fetch) catch (error) => failureOf(error)
+  return provideService(Effect.provide(read, FetchHttpClient.layer), FetchHttpClient.Fetch, fake.fetch) catch (error) => onFailure(error)
 }
 
 function sentTo(fake: Fake, path: string) {
@@ -269,7 +291,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const hinted = try failedWith(harness.fake, { rateLimit: { secondary: true, retryAfterSeconds: 45 } })
     const unrelated = try failedWith(harness.fake, { status: 403, message: "Resource not accessible by integration" })
     const exhausted = try failedWith(harness.fake, { rateLimit: { secondary: false, retryAfterSeconds: -60 } })
-    const read = try readOcto(harness.fake)
+    const read = try readOcto(harness.fake, failureOf)
     try Effect.try(() => assert.deepStrictEqual({ unhinted, hinted, unrelated, exhausted, read, sent: sentTo(harness.fake, "/users/octo") - before }, {
       unhinted: secondaryLimitMessages.map(() => ({ failure: "RateLimited", status: 403, wait: 60_000, retryAfterSeconds: null, secondary: true })),
       hinted: { failure: "RateLimited", status: 403, wait: 45_000, retryAfterSeconds: 45, secondary: true },
@@ -277,6 +299,18 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       exhausted: { failure: "RateLimited", status: 403, wait: null, retryAfterSeconds: 0, secondary: false },
       read: { read: "octo" },
       sent: 6,
+    }))
+    const captured = {
+      refused: try failedRequestId(harness.fake, { status: 403, message: "Forbidden" }, " C0A8:1234:56789A:BCDEF0:67213E21 "),
+      limited: try failedRequestId(harness.fake, { rateLimit: { secondary: true, retryAfterSeconds: 30 } }, "C0A8:1234:RATE:LIMIT:01"),
+      spaced: try failedRequestId(harness.fake, { status: 403, message: "Forbidden" }, "bad request id"),
+      oversized: try failedRequestId(harness.fake, { status: 422, message: "Validation Failed" }, "a".repeat(129)),
+    }
+    try Effect.try(() => assert.deepStrictEqual(captured, {
+      refused: { failure: "GitHubRefused", status: 403, requestId: "C0A8:1234:56789A:BCDEF0:67213E21" },
+      limited: { failure: "RateLimited", status: 403, requestId: "C0A8:1234:RATE:LIMIT:01" },
+      spaced: { failure: "GitHubRefused", status: 403, requestId: null },
+      oversized: { failure: "GitHubRefused", status: 422, requestId: null },
     }))
   })
 

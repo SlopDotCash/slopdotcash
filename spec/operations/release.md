@@ -4,7 +4,7 @@ PRD sections 11 and 12 and CLAUDE.md "Deployment" require reviewed
 development changes, trusted quality checks, source equivalence and
 independent deployed-byte verification. Each machine owns one release run
 for one environment. Production publishes `main` through the main-only
-`slop-production` GitHub environment. Staging publishes `staging` with
+`slop-production` GitHub environment. Staging publishes `develop` with
 independent identity, storage and secrets. The pinned source is
 `.github/workflows/deploy.yml`, `scripts/check-staging-order.mjs`,
 `scripts/restore-leaderboard-discussions.py` and the legacy `release/*`
@@ -82,7 +82,7 @@ pure val selfRun = 1
 pure def liveHead(r: Release): int = r.lock.head
 pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == ReleaseWorkflow and r.lock.holderRun == selfRun
 pure def headAhead(r: Release): bool = not(r.configured) or r.lock.lineage.includes(r.source)
-pure def requiredBranch(environment: Environment): str = if (environment == Production) "main" else "staging"
+pure def requiredBranch(environment: Environment): str = if (environment == Production) "main" else "develop"
 pure def requiredGithubEnvironment(environment: Environment): str = if (environment == Production) "slop-production" else "slop-staging"
 pure def admissibleRef(environment: Environment, ref: RunRef): bool =
   (ref.kind == BranchPush or ref.kind == WorkflowDispatch) and ref.repository == canonicalRepository
@@ -340,12 +340,13 @@ superseded no-op: "Partial publication: Worker/services from <sha> were
 published, but main changed to <head>. Pages was not published". Between the
 first service and that check production does not stop for a moved head.
 Staging may publish a checked
-ancestor of a newer `staging` tip, but refuses when any release attempt
+ancestor of a newer `develop` tip, but refuses when any release attempt
 recorded in staging's deployment history is not an ancestor of, or equal to,
 its source: a newer attempted revision owns publication, and a failed
 attempt counts because it may already have changed a Worker or the database.
 Deployment records created by the vetting controller and the
-qualification workflows are not release attempts and are ignored. A head
+qualification workflows, along with retired pre-cutover `development` and
+`staging` records, are not release attempts and are ignored. A head
 whose lineage no longer contains the tested source fails closed. So a
 staging deployment never moves to a revision that is not a descendant of the
 one deployed before it.
@@ -664,9 +665,9 @@ These sets bound simulation only.
 ```quint
 pure val goodRef: RunRef = { kind: BranchPush, branch: "main", repository: canonicalRepository, githubEnvironment: "slop-production" }
 pure val refValues = Set(goodRef, { ...goodRef, kind: WorkflowDispatch },
-  { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" },
-  { kind: WorkflowDispatch, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" },
-  { ...goodRef, kind: PullRequestRef }, { ...goodRef, kind: TagRef }, { ...goodRef, branch: "develop" },
+  { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" },
+  { kind: WorkflowDispatch, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" },
+  { ...goodRef, kind: PullRequestRef }, { ...goodRef, kind: TagRef }, { ...goodRef, branch: "staging" },
   { ...goodRef, repository: "fork/slopdotcash" })
 pure val environmentValues = Set(Production, Staging)
 pure val byValues = Set(TrustedWorkflow, HealthJob, Owner)
@@ -710,7 +711,7 @@ pure val matchesLiveValues = Set(true, false)
 pure val trustedAttempt: CheckpointAttempt = { runId: 41, branch: "main", event: WorkflowDispatch,
   workflow: ".github/workflows/deploy.yml", completed: true, ageHours: 47, responses: 1 }
 pure val attemptValues = Set(trustedAttempt, { ...trustedAttempt, responses: 0 }, { ...trustedAttempt, ageHours: 49 },
-  { ...trustedAttempt, branch: "staging" }, { ...trustedAttempt, event: PullRequestRef }, { ...trustedAttempt, completed: false })
+  { ...trustedAttempt, branch: "develop" }, { ...trustedAttempt, event: PullRequestRef }, { ...trustedAttempt, completed: false })
 pure val servedValues = Set({ deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true },
   { deployment: 1, digest: 7, environment: Staging, dnsTlsHeaders: true },
   { deployment: 1, digest: 8, environment: Production, dnsTlsHeaders: true })
@@ -842,7 +843,7 @@ pure val eval_witness_sometimesRecoveredUnpublished = (
   ("publishSite", TrustedWorkflow),
   ("proveUnpublished", { environment: Production, sinceAttempt: 1, entries: List() }, TrustedWorkflow))
 pure val eval_witness_sometimesStaging = (
-  ("configure", Staging, { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("configure", Staging, { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
   ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
   ("build", 7, TrustedWorkflow),
   ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
@@ -858,7 +859,7 @@ pure val eval_witness_sometimesStaging = (
   ("reconcilePublication", { environment: Staging, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) }, TrustedWorkflow),
   ("verifyServed", { deployment: 1, digest: 7, environment: Staging, dnsTlsHeaders: true }, TrustedWorkflow))
 pure val eval_witness_sometimesStagingAncestorPublished = (
-  ("configure", Staging, { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("configure", Staging, { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
   ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
   ("build", 7, TrustedWorkflow),
   ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
@@ -887,7 +888,7 @@ pure val eval_witness_sometimesSubmissionFeeBound = (
   ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
   ("publishService", SubmissionFee, { ...F::liveAll, buybackMode: F::Off }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow))
 pure val eval_witness_sometimesStagingDryRunBound = (
-  ("configure", Staging, { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("configure", Staging, { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
   ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
   ("build", 7, TrustedWorkflow),
   ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
@@ -896,7 +897,7 @@ pure val eval_witness_sometimesStagingDryRunBound = (
   ("beginPublication", { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, TrustedWorkflow),
   ("publishService", FeeConverter, { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() }, 1, { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 0 }) }, reviewedSubmissionFee, TrustedWorkflow))
 pure val eval_witness_sometimesStagingRollbackRefused = (
-  ("configure", Staging, { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("configure", Staging, { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
   ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
   ("build", 7, TrustedWorkflow),
   ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),
@@ -960,7 +961,7 @@ pure val eval_witness_sometimesInheritanceRefused = (
   ("acquireLock", TrustedWorkflow),
   ("refuseInheritance", { latestUpload: { versionId: 2, rotationLineage: 0 }, activeVersions: List({ versionId: 1, rotationLineage: 1 }) }, TrustedWorkflow))
 pure val eval_witness_sometimesNonReleaseRecordIgnored = (
-  ("configure", Staging, { kind: BranchPush, branch: "staging", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
+  ("configure", Staging, { kind: BranchPush, branch: "develop", repository: canonicalRepository, githubEnvironment: "slop-staging" }, true, TrustedWorkflow),
   ("collectData", Staging, 1, 1, 1, TrustedWorkflow),
   ("build", 7, TrustedWorkflow),
   ("recordGates", Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser), 1, 7, TrustedWorkflow),

@@ -16491,7 +16491,7 @@
     },
     {
       "path": "spec/operations/publicationLock.md",
-      "sha256": "ff489769fcb5b7872dbe51b7226115a4cb690900d729bdf5c56000d868663444",
+      "sha256": "ab14670cbd1dc2ae4d23f78ca03b165d06e70640fa092c0e9f6ec9aff58230fd",
       "module": "operations__publicationLock",
       "stories": [
         {
@@ -16614,7 +16614,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "07a3d9f01b25309c4d360cdd9c2b67744a5f15ab35e68496ba8eb083da6f8166",
+      "sha256": "bf9f85f3b15b780f793a9e699a18d5eba700f20687e1f4c33dd360a92454958a",
       "module": "operations__release",
       "stories": [
         {
@@ -16790,7 +16790,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Workers publish before the static site, each only when its own release variable is enabled",
-          "line": 417,
+          "line": 418,
           "definitions": [
             "feeVariable",
             "row",
@@ -16815,7 +16815,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key",
-          "line": 503,
+          "line": 504,
           "definitions": [
             "FeeMode",
             "SubmissionFeeConfig",
@@ -16829,7 +16829,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 555,
+          "line": 556,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16844,7 +16844,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 597,
+          "line": 598,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16864,7 +16864,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 632,
+          "line": 633,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16879,7 +16879,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 660,
+          "line": 661,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16963,13 +16963,13 @@
         },
         {
           "target": "./escrowQualification.md",
-          "line": 657
+          "line": 658
         }
       ]
     },
     {
       "path": "spec/operations/releaseCoverage.md",
-      "sha256": "2e30afc0bc38cdbc3fb5e1511b3f77747404d4a9db9db95f4f3f2ef6567adff3",
+      "sha256": "cf8e7ae4b032269407d1500c08bd3544451b08f1a69778640a41db029c91def8",
       "module": "operations__releaseCoverage",
       "stories": [
         {
@@ -17447,18 +17447,18 @@
     },
     {
       "path": "spec/operations/stagingOrder.md",
-      "sha256": "2e8ce7c1cf074aa477af1597a3e4f75c6b1aaeb0dfb13db5b8c6a419ee0b7ca3",
+      "sha256": "a2c2fc4f5ea369bf9d998add5f33062ca259f67dba71a995f28f1138c0bab5c0",
       "module": "operations__stagingOrder",
       "stories": [
         {
           "heading": "Story: Allow staging publication only from one complete, fresh history read",
-          "line": 28
+          "line": 29
         }
       ],
       "rules": [
         {
           "heading": "Story: Allow staging publication only from one complete, fresh history read / A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline",
-          "line": 30,
+          "line": 31,
           "definitions": [
             "OrderPhase",
             "StagingOrder",
@@ -17497,7 +17497,7 @@
         },
         {
           "heading": "Story: Allow staging publication only from one complete, fresh history read / Simulation samples cover quota and other refusals, short and long delays, and both deadlines",
-          "line": 102,
+          "line": 103,
           "definitions": [
             "candidateValues",
             "jobDeadlineValues",

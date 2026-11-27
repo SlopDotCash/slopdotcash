@@ -2,6 +2,7 @@
 import { millisOf } from "@repo/platform/clock"
 import { SessionStore, storageKeys } from "../platform/storage.vibe"
 import { currentAddress } from "./address.ts"
+import { isLoginPathname } from "./loginReturn.ts"
 
 export interface SavedFlow {
   readonly flow: unknown
@@ -27,7 +28,7 @@ export effect function clearLocalFlow() {
 function returnSearch(): string {
   const address = currentAddress()
   const parameters = new URLSearchParams(address.search)
-  if (parameters.has("next") || address.pathname.replace(/\/+$/u, "") === "/login") return address.search
+  if (parameters.has("next") || isLoginPathname(address.pathname)) return address.search
   parameters.set("next", `${address.pathname}${address.search}${address.hash}`)
   return `?${parameters.toString()}`
 }

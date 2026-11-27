@@ -4779,7 +4779,7 @@ import { seededGithub, slopbotFake } from fakes
       return [first, later]
     })
     const withoutSettings = try workflowToken(() => ({}))
-    const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/staging"))
+    const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/develop"))
     try same({ withoutSettings, staging }, {
       withoutSettings: [[fetched("original")], [fetched("original")]],
       staging: [[fetched("original")], [fetched("original")]],

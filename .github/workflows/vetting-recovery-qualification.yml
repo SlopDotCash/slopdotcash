@@ -20,7 +20,7 @@ env:
   TURBO_CACHE: "local:rw"
 jobs:
   qualification:
-    if: github.ref == 'refs/heads/staging'
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: slop-staging

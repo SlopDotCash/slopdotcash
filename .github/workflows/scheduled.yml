@@ -24,9 +24,8 @@ jobs:
   production-watch:
     name: Production watch
     if: >-
-      github.ref == 'refs/heads/main' &&
-      ((github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
-      (github.event_name == 'workflow_dispatch' && inputs.operation == 'production-watch'))
+      (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'production-watch')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -35,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/main' || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
@@ -49,9 +48,8 @@ jobs:
   intake-watch:
     name: Private intake health watch
     if: >-
-      github.ref == 'refs/heads/main' &&
-      ((github.event_name == 'schedule' && github.event.schedule == '47 * * * *') ||
-      (github.event_name == 'workflow_dispatch' && inputs.operation == 'intake-watch'))
+      (github.event_name == 'schedule' && github.event.schedule == '47 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'intake-watch')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -60,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/main' || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
@@ -74,9 +72,8 @@ jobs:
   referral-roots:
     name: Referral root watch
     if: >-
-      github.ref == 'refs/heads/main' &&
-      ((github.event_name == 'schedule' && github.event.schedule == '47 * * * *') ||
-      (github.event_name == 'workflow_dispatch' && inputs.operation == 'referral-roots'))
+      (github.event_name == 'schedule' && github.event.schedule == '47 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'referral-roots')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -85,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'refs/heads/main' || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:

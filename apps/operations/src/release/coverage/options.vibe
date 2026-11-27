@@ -24,7 +24,7 @@ export effect function selectCoverage(run: Run, facts: RunFacts) {
 }
 
 function refusalOf(request: Requests) {
-  if (request.usePublishedData && !explicitManual(request)) return "Published data is limited to manual main or staging releases."
+  if (request.usePublishedData && !explicitManual(request)) return "Published data is limited to manual main or develop releases."
   if (request.dataFromRun && !(explicitManual(request) && request.target === "Main" && request.usePublishedData)) return "Invalid collected data request"
   return "Discussion resume requires a fresh main release."
 }

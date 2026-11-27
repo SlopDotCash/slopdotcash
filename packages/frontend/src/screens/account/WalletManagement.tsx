@@ -59,6 +59,7 @@ type FamilyCardProps = Pick<WalletManagementProps, "panel" | "onConfirmChange" |
 
 function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSaved, onCopy }: FamilyCardProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const pendingFocusRef = useRef(false);
   const label = familyLabels[family];
   const rows = familyChains(family).map((chain) => ({
     chain,
@@ -123,7 +124,13 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
             ) : null}
           </div>
           <Button
-            ref={triggerRef}
+            ref={(node) => {
+              triggerRef.current = node;
+              if (node !== null && !node.disabled && pendingFocusRef.current) {
+                pendingFocusRef.current = false;
+                node.focus();
+              }
+            }}
             variant="secondary"
             size="icon"
             loading={busy}
@@ -164,8 +171,9 @@ function FamilyCard({ account, family, panel, onPick, onConfirmChange, onKeepSav
               <Button
                 variant="secondary"
                 onClick={() => {
-                  onKeepSaved();
                   triggerRef.current?.focus();
+                  if (document.activeElement !== triggerRef.current) pendingFocusRef.current = true;
+                  onKeepSaved();
                 }}
               >
                 Keep saved
