@@ -60,6 +60,19 @@ effect function marked(githubId: string, verificationId: string, nextState: "Sen
   return settled !== false
 }
 
+export effect function withdrawForUnsubscribeToken(tokenHash: string) {
+  const settled = send({ kind: "unsubscribe", tokenHash }, { kind: "session", hash: "" }) catch effect (error) => match (error) {
+    when Rejected: false;
+    when Conflict: throw new RowMismatch({ text: "email unsubscribe", issue: "the stored account changed during unsubscribe" });
+    when DatabaseFailure: throw error;
+    when ConstraintViolation: throw error;
+    when RowMismatch: throw error;
+    when NotAState: throw new RowMismatch({ text: "email unsubscribe", issue: "the stored account rows are not a valid accounts state" });
+    when EmailUnavailable: throw new RowMismatch({ text: "email unsubscribe", issue: "email enrollment could not be read" });
+  }
+  return settled !== false
+}
+
 export const EmailConsentLive = Layer.effect(EmailConsent, effect {
   const db = try D1
   return {
@@ -75,6 +88,7 @@ export const EmailEnrollmentLive = Layer.effect(EmailEnrollment, effect {
     unsubscribeIssued: (issued) => effect {
       return sql`INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) SELECT ${issued.tokenHash}, ${issued.version}, ${issued.issuedAt} WHERE EXISTS (SELECT 1 FROM notification_email_destinations WHERE destination_version = ${issued.version}) ON CONFLICT(token_hash) DO NOTHING`
     },
+    withdrawForUnsubscribeToken: (tokenHash) => provideService(withdrawForUnsubscribeToken(tokenHash), D1, db),
     pendingVerification: (read) => provideService(pending(read.githubId, read.verificationId, read.tokenHash), D1, db),
     markVerification: (mark) => provideService(marked(mark.githubId, mark.verificationId, mark.nextState), D1, db),
   } satisfies EmailEnrollment.Shape

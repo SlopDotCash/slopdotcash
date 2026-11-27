@@ -388,9 +388,8 @@ function cannedFor({ canned }: Session, method: string, path: string): Canned | 
   return canned.get(holdKey(method, path)) ?? canned.get(holdKey("*", path));
 }
 
-async function routed(route: Route) {
-  const into = current();
-  const backendNow = backend();
+async function routed(route: Route, into: Session, backendNow: Started) {
+  if (session !== into) return route.abort("aborted").catch(() => undefined);
   const url = new URL(route.request().url());
   const canned = url.origin === site ? cannedFor(into, route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
@@ -449,14 +448,15 @@ export async function close() {
 
 async function reset(context: BrowserCommandContext) {
   await close();
-  started = await open(await prepare());
+  const backendNow = await open(await prepare());
+  started = backendNow;
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const made: Session = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, downloaded: undefined };
   session = made;
   watch(opened, made);
-  await opened.route("**/*", routed);
+  await opened.route("**/*", (route) => routed(route, made, backendNow));
 }
 
 async function tab(name: string): Promise<Page> {

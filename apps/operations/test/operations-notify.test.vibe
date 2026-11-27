@@ -74,7 +74,7 @@ const unreached = () => die(new Error("the notify journey reached another area's
 
 const Ports = Layer.mergeAll(
   Layer.succeed(EmailConsent, { destination: unreached, enrollment: unreached }),
-  Layer.succeed(EmailEnrollment, { registered: unreached, unsubscribeIssued: unreached, pendingVerification: unreached, markVerification: unreached }),
+  Layer.succeed(EmailEnrollment, { registered: unreached, unsubscribeIssued: unreached, withdrawForUnsubscribeToken: unreached, pendingVerification: unreached, markVerification: unreached }),
   Layer.succeed(Registry, { project: unreached, byRepository: unreached, byPath: unreached, active: unreached, pausedProjects: unreached, fence: unreached, appendVaultRegistration: unreached }),
   Layer.succeed(ProjectAudience, { listedBy: unreached, owners: unreached }),
   Layer.succeed(ContributorAudience, { affected: unreached }),

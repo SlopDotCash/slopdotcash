@@ -161,6 +161,7 @@ const BackendPorts = Layer.mergeAll(
       unsubscribeIssued: (issued) => effect {
         return sql`INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) VALUES (${issued.tokenHash}, ${issued.version}, ${issued.issuedAt}) ON CONFLICT (token_hash) DO NOTHING`
       },
+      withdrawForUnsubscribeToken: () => die(new Error("delivery does not consume unsubscribe tokens")),
       pendingVerification: (read) => effect {
         const found = try db.all(sql`SELECT email AS address, state FROM notification_email_verifications
           WHERE id = ${read.verificationId} AND github_id = ${read.githubId} AND token_hash = ${read.tokenHash}

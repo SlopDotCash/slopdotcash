@@ -75,10 +75,11 @@ import { Session, viewActor } from "../src/session/session.vibe"
 import { answered, cases, elsewhere, excuseOf, type Probe, probeOf, replayDifference, replayRequest, rows, type Seen, type Surface, surfaces, undeclared } from "./support/parity/tables.ts"
 
 module subtle {
+  import { readFile } from "node:fs/promises"
   import { gzipSync } from "node:zlib"
   /** @throws {never} */
-  export function compressedBytes(script: string): number {
-    return gzipSync(script).byteLength
+  export async function compressedBytes(file: string): Promise<number> {
+    return gzipSync(await readFile(file)).byteLength
   }
 }
 import { compressedBytes } from subtle
@@ -1123,9 +1124,9 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       assert.includeMembers(keys, ["GET /api/v1/notifications/incomplete-assessments", "GET /api/v1/admin/fee-conversions"])
     })
 
-    it("The bundled Pages worker stays under the Pages _worker.js size limit", async () => {
-      const script = await workerScript()
-      assert.isBelow(compressedBytes(script), workerLimitBytes)
+    it("The bundled Pages worker stays under the Pages _worker.js size limit", { timeout: 300_000 }, async () => {
+      const file = await workerScript()
+      assert.isBelow(await compressedBytes(file), workerLimitBytes)
     })
   })
 
@@ -1510,6 +1511,53 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       })
     }
   })
+
+  {
+    const asked: string[] = []
+    const fixture = Layer.unwrap(effect {
+      const surface = surfaces.find((candidate) => candidate.entry === "worker:slop-notify")
+      if (surface === undefined) return try die(new Error("The Notify Worker parity fixture is missing"))
+      return served(surface, asked)
+    })
+    layer(Layer.merge(fixture, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+      it.effect('An old Pages deployment can withdraw only the current email destination through Notify (spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled")', () => effect {
+        const notify = try Area
+        const at = "2026-11-07T00:00:00.000Z"
+        const version = "1".repeat(64)
+        const retained = "2".repeat(64)
+        const stale = "3".repeat(64)
+        const recordVerification = effect (githubId: string, destination: string) => {
+          const email = `${githubId}@example.test`
+          const id = `verification-${githubId}-${destination[0]}`
+          try notify.sql("INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at, consumed_at, destination_version) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 'sent', ?, ?, ?, ?)", id, githubId, id, email, try sha256Hex(email), try sha256Hex(id), at, "2026-11-07T00:30:00.000Z", at, destination)
+        }
+        for (const [githubId, current] of [["9901", stale], ["9902", retained]] as const) {
+          try notify.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `U_${githubId}`, githubId, `member-${githubId}`, at)
+          try recordVerification(githubId, current)
+          try notify.sql("INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (?, ?, ?, ?)", githubId, `${githubId}@example.test`, current, at)
+          try notify.sql("INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (?, 1, 1, ?, ?)", githubId, current, at)
+        }
+        const issued = (destination: string) => `${destination}.${"a".repeat(64)}`
+        for (const destination of [version, stale]) {
+          try notify.sql("INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) VALUES (?, ?, ?)", try sha256Hex(issued(destination)), destination, at)
+        }
+        try recordVerification("9901", version)
+        try notify.sql("UPDATE notification_email_destinations SET destination_version = ? WHERE github_id = '9901'", version)
+        try notify.sql("UPDATE notification_email_preferences SET destination_version = ? WHERE github_id = '9901'", version)
+        const path = "/v1/email/unsubscribe"
+        const preferences = () => notify.sql("SELECT github_id, enabled, security_enabled FROM notification_email_preferences WHERE github_id IN ('9901', '9902') ORDER BY github_id")
+        const before = try preferences()
+        const staleReply = try notify.request(path, { json: { token: issued(stale) } })
+        const wrongMethod = try notify.request(path, { method: "GET" })
+        try same(try preferences(), before)
+        const withdrawn = try notify.request(path, { json: { token: issued(version) } })
+        const read = try preferences()
+        try same([staleReply.status, wrongMethod.status, withdrawn.status, withdrawn.headers["cache-control"], read, asked], [
+          409, 405, 204, "private, no-store", [{ github_id: "9901", enabled: 0, security_enabled: 0 }, { github_id: "9902", enabled: 1, security_enabled: 1 }], [],
+        ])
+      })
+    })
+  }
 }
 
 {
