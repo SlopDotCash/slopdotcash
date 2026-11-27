@@ -1183,7 +1183,7 @@
     },
     {
       "path": "spec/backend/email.md",
-      "sha256": "48c2cff3c58ad513a0a3f441377553c53d6c3396143d7e1d65b084458eb303ad",
+      "sha256": "6964ca5d333cc10132d6e3b6611e7c592eda23d05ce78653820460f4d9c8c4cb",
       "module": "backend__email",
       "stories": [
         {
