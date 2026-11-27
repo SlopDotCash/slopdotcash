@@ -348,6 +348,37 @@ effect function resolveTokenScales(instance: Instance, rows: ReadonlyArray<Conve
   return scales
 }
 
+function decodeHoldings(instance: Instance, names: Names, tokens: ReadonlyArray<string>, modelRows: ReadonlyArray<Row>): Array<Holding> {
+  return tokens.map((address, index) => {
+    const token = index + 1
+    const seen = instance.tokens[index]
+    const finalized = (kind: SendKind) => (row: Row) => row.kind === kind && row.state === "Finalized"
+    const sold = sum(modelRows, token, finalized("Conversion"), (row) => row.amountIn)
+    const claimed = sum(modelRows, token, finalized("Claim"), (row) => row.output)
+    const openClaims = sum(modelRows, token, (row) => row.kind === "Claim" && isOpen(row), (row) => row.amountIn)
+    const asset = seen?.asset ?? "ProjectToken"
+    const open = sum(modelRows, token, (row) => row.kind === "Conversion" && isOpen(row), (row) => row.amountIn)
+    const topUps = asset === "NativeAsset" ? seen?.topUps ?? 0 : 0
+    const observedBalance = Math.max(seen?.balance ?? 0, open)
+    const feeIncome = asset === "NativeAsset" ? (seen?.received ?? 0) + claimed : Math.max((seen?.received ?? 0) + claimed, sold + observedBalance)
+    const vaultObserved = Math.max(seen?.vaultObserved ?? 0, openClaims)
+    const accrued = Math.max(0, Math.min(seen?.accrued ?? (vaultObserved - openClaims), vaultObserved - openClaims))
+    return {
+      token,
+      asset,
+      balance: asset === "NativeAsset" ? feeIncome + topUps - sold : observedBalance,
+      feeIncome,
+      topUps,
+      sold,
+      usdcOut: sum(modelRows, token, finalized("Conversion"), (row) => row.output),
+      vault: seen?.vault === undefined ? 0 : names.number("vault", seen.vault),
+      vaultObserved,
+      accrued,
+      claimed,
+    }
+  })
+}
+
 export effect function decodeJournal(instance: Instance, names: Names, [locks, conversions, replaced, reservations, steps, proven]: ReadonlyArray<Rows>) {
   const network = instance.network
   const epoch = instance.epoch
@@ -555,34 +586,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const importedRows = new Set(modelGas.filter((entry) => entry.imported).map((entry) => entry.row))
   const current = nextRun - 1
   const runValue = modelRows.reduce((total, row) => row.runId === current && !importedRows.has(row.id) && ((row.state === "Quoted" && !row.live) || (row.kind === "Conversion" && row.attempts.length > 0)) ? total + row.valueMicro : total, 0)
-  const holdings: Array<Holding> = tokens.map((address, index) => {
-    const token = index + 1
-    const seen = instance.tokens[index]
-    const finalized = (kind: SendKind) => (row: Row) => row.kind === kind && row.state === "Finalized"
-    const sold = sum(modelRows, token, finalized("Conversion"), (row) => row.amountIn)
-    const claimed = sum(modelRows, token, finalized("Claim"), (row) => row.output)
-    const openClaims = sum(modelRows, token, (row) => row.kind === "Claim" && isOpen(row), (row) => row.amountIn)
-    const asset = seen?.asset ?? "ProjectToken"
-    const open = sum(modelRows, token, (row) => row.kind === "Conversion" && isOpen(row), (row) => row.amountIn)
-    const topUps = asset === "NativeAsset" ? seen?.topUps ?? 0 : 0
-    const observedBalance = Math.max(seen?.balance ?? 0, open)
-    const feeIncome = asset === "NativeAsset" ? (seen?.received ?? 0) + claimed : Math.max((seen?.received ?? 0) + claimed, sold + observedBalance)
-    const vaultObserved = Math.max(seen?.vaultObserved ?? 0, openClaims)
-    const accrued = Math.max(0, Math.min(seen?.accrued ?? (vaultObserved - openClaims), vaultObserved - openClaims))
-    return {
-      token,
-      asset,
-      balance: asset === "NativeAsset" ? feeIncome + topUps - sold : observedBalance,
-      feeIncome,
-      topUps,
-      sold,
-      usdcOut: sum(modelRows, token, finalized("Conversion"), (row) => row.output),
-      vault: seen?.vault === undefined ? 0 : names.number("vault", seen.vault),
-      vaultObserved,
-      accrued,
-      claimed,
-    }
-  })
+  const holdings = decodeHoldings(instance, names, tokens, modelRows)
 
   const state = try decodeState({
     runtime: instance.held.runtime,

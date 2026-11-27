@@ -1625,8 +1625,19 @@ lemma NotifyCaseFacts(inbox: operations__notifications_Inbox, key: int, c: secur
             == (operations__notifications_noticeExists(inbox, k, t) || (k == key && t in caseRecipients(c))))
   ensures c.reporter in caseRecipients(c)
 {
-  FoldSaveFacts(inbox, key, caseRecipients(c));
-  assert caseRecipients(c)[0] == c.reporter;
+  hide *;
+  reveal notifyCase, caseRecipients;
+  var rs := caseRecipients(c);
+  FoldSaveFacts(inbox, key, rs);
+  assert notifyCase(inbox, key, c) == Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs);
+  forall k, t
+    ensures operations__notifications_noticeExists(notifyCase(inbox, key, c), k, t)
+      == (operations__notifications_noticeExists(inbox, k, t) || (k == key && t in rs))
+  {
+    assert operations__notifications_noticeExists(Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs), k, t)
+      == (operations__notifications_noticeExists(inbox, k, t) || (k == key && t in rs));
+  }
+  assert rs[0] == c.reporter;
 }
 
 // An inbox whose notices begin with every earlier notice keeps each of them unchanged.
