@@ -1,10 +1,10 @@
 // spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { isoNow } from "@repo/platform/clock"
-import { Refused, handle, handleRaw, json } from "@repo/platform/http"
+import { Refused, handle, handleRaw, json, methodNotAllowed } from "@repo/platform/http"
 import { type Refusal, type Route, cacheControl } from "@repo/platform/route"
 import { actorDirectTransfers, actorVaultPayments, directHistoryHeader, paymentsMe, poolFunding as poolFundingRoute, projectDirectTransfers, projectVaultPayments, receivedTotals as receivedRoute, vaultPayments } from "../client/public.vibe"
-import { getPaymentsActorsByGithubIdVaultPayments as actorParity, getPaymentsMe as accountParity, getPaymentsProjectsByIdVault as vaultParity } from "../client/refusals.vibe"
+import { getPaymentsActorsByGithubIdVaultPayments as actorParity, getPaymentsMe as accountParity, getPaymentsProjectsByIdVault as vaultParity, getPoolFunding as poolParity } from "../client/refusals.vibe"
 import { projectDeposits, projectTotals as totalsRoute, projectVault, staleAfterMs, vaultEdgeSeconds } from "../client/vault.vibe"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { projectVaultSnapshots } from "../vault/totals.vibe"
@@ -27,6 +27,7 @@ const refusals = {
 const projectId = /^[a-z0-9][a-z0-9-]*$/u
 const actorId = /^[1-9]\d{0,15}$/u
 const receivedEdgeSeconds = 60
+const poolMethodRefused = poolParity.otherMethods.methodNotAllowedPublicMaxAge60SMaxage60
 
 effect function served<A, E extends { readonly _tag: string }, R>(program: A!E!R) {
   return program catch effect (error) => {
@@ -107,6 +108,7 @@ export const publicRoutes = Layer.mergeAll(
     return try directHistory({ kind: "actor", githubUserId }, input.query)
   }),
   handle(poolFundingRoute, () => poolFunding()),
+  methodNotAllowed([poolFundingRoute, { ...poolFundingRoute, method: "HEAD" }], succeed(json({ error: poolMethodRefused.error }, poolMethodRefused.status, poolMethodRefused.headers))),
   handle(totalsRoute, (input) => effect {
     return try served(projectTotals(try projectOf(input.params)))
   }),
