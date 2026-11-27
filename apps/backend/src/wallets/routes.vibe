@@ -24,6 +24,10 @@ function refused(row: Row, message?: string) {
   return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
 }
 
+function tracedRefusal(row: Row & { readonly headers: Readonly<Record<string, string>> }) {
+  return new Refused({ status: row.status, code: row.error, message: row.message ?? "", headers: row.headers })
+}
+
 const traceContract = { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }
 const oneMinute = "public, max-age=60, must-revalidate"
 const immutable = "public, max-age=31536000, immutable"
@@ -205,14 +209,14 @@ effect function currentForActor(githubId: string, query: URLSearchParams) {
 effect function publicClaim(claimId: string) {
   if (!validIdentifier(claimId)) throw refused(getWalletClaimsById.invalidRequestInvalidClaimId)
   const claim = try claimById(claimId)
-  if (claim === undefined) throw refused(getWalletClaimsById.notFoundWalletClaimNotFound)
+  if (claim === undefined) throw tracedRefusal(getWalletClaimsById.notFoundWalletClaimNotFound)
   return traced(walletClaimView(claim), 200, immutable)
 }
 
 effect function publicPossession(claimId: string) {
   if (!validIdentifier(claimId)) throw refused(getWalletClaimsByIdPossession.invalidRequestInvalidClaimId)
   const claim = try claimById(claimId)
-  if (claim === undefined) throw refused(getWalletClaimsByIdPossession.notFoundWalletClaimNotFound)
+  if (claim === undefined) throw tracedRefusal(getWalletClaimsByIdPossession.notFoundWalletClaimNotFound)
   if (claim.chain !== "solana") throw refused(getWalletClaimsByIdPossession.unsupportedChain)
   return traced(possessionView(claim.wallet_address, try attestationOf(claim.id)), 200, oneMinute)
 }

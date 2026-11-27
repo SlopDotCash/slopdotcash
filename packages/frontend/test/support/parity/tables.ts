@@ -5,7 +5,7 @@ import { Schema } from "effect";
 import { repoRoot } from "@repo/platform/testing/paths";
 import { retired } from "@repo/operations/retired";
 import { type AmendedRefusal, type Amendment, amendments } from "./amendments.ts";
-import { type OldEntry, type WorkerSuccessor, successors } from "./entries.ts";
+import { type OldEntry, type WorkerSuccessor, protectedMonthsReplayToken, successors } from "./entries.ts";
 
 const parity = join(repoRoot, "reference/parity");
 
@@ -303,7 +303,12 @@ export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<
 /** @throws {TypeError} */
 export function replayRequest(replay: ReplayCase): Probe {
   const url = new URL(replay.request.url);
-  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
+  const { method, body } = replay.request;
+  const headers = method === "DELETE" && replay.route === "GET /api/v1/operator/protected-point-months" &&
+    replay.request.headers.authorization === "Bearer <POINTS_PROTECTION_TOKEN>"
+    ? { ...replay.request.headers, authorization: `Bearer ${protectedMonthsReplayToken}` }
+    : replay.request.headers;
+  return { path: `${url.pathname}${url.search}`, method, headers, ...body == null ? {} : { body } };
 }
 
 function rowOrigin(row: Row, successor: WorkerSuccessor): string {

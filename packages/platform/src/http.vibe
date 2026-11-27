@@ -304,10 +304,18 @@ function withCors(response: HttpServerResponse.HttpServerResponse, origin: strin
   return credentials ? HttpServerResponse.setHeader(varied, "access-control-allow-credentials", "true") : varied
 }
 
-effect function crossOriginAdmitted(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
+function corsOriginRefusal(route: AnyRoute, requestOrigin: string) {
+  const policy = route.corsOriginPolicy
+  return policy?.requireListedAt === requestOrigin ? policy.refusal : undefined
+}
+
+effect function crossOriginAdmitted(route: AnyRoute, origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
   const origin = request.headers.origin
-  if (origins === undefined || origin === undefined || origin === originOf(request)) return
-  if (allowedOrigin(origins, request) === undefined) throw refusedBy(admission.corsOrigin)
+  if (origins === undefined || origin === undefined) return
+  const requestOrigin = originOf(request)
+  const refusal = corsOriginRefusal(route, requestOrigin)
+  if (origin === requestOrigin && refusal === undefined) return
+  if (allowedOrigin(origins, request) === undefined) throw refusedBy(refusal ?? admission.corsOrigin)
 }
 
 effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpServerResponse!E!R) {
@@ -315,7 +323,7 @@ effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpSe
   let origins: ReadonlyArray<string> | undefined = undefined
   const response = try answered(effect {
     origins = try corsOrigins(route)
-    try crossOriginAdmitted(origins, request)
+    try crossOriginAdmitted(route, origins, request)
     return try program
   }, routingOf(route))
   return withCors(response, allowedOrigin(origins, request), route.corsCredentials === true)
@@ -323,13 +331,13 @@ effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpSe
 
 const bearerToken = /^Bearer (\S+)$/u
 
-effect function bearerOf(request: HttpServerRequest.HttpServerRequest) {
+effect function bearerOf(request: HttpServerRequest.HttpServerRequest, refusal: Refusal = admission.bearer) {
   const token = bearerToken.exec(request.headers.authorization ?? "")?.[1]
-  if (token === undefined) throw refusedBy(admission.bearer)
+  if (token === undefined) throw refusedBy(refusal)
   const bearers = try Effect.serviceOption(Bearers)
   if (Option.isNone(bearers)) return try die(new Error("A bearer route is served without Bearers"))
   return bearers.value.verify(Redacted.make(token)) catch effect (error) => {
-    if (error._tag === "Unauthenticated") throw refusedBy(admission.bearer)
+    if (error._tag === "Unauthenticated") throw refusedBy(refusal)
     throw error
   }
 }
@@ -353,7 +361,7 @@ effect function credentialOf(route: AnyRoute, requireJson: boolean, originRefusa
       if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy(originRefusal)
       return undefined
     }
-    case "bearer": return try bearerOf(request)
+    case "bearer": return try bearerOf(request, route.unauthenticated)
     case "service": return try signerOf(request, route.limitKib * 1024, route.signersUnconfiguredHeaders)
     default: return undefined
   }
@@ -429,7 +437,7 @@ effect function preflighted(group: ReadonlyArray<AnyRoute>) {
   const origin = request.headers.origin
   const route = group.find((candidate) => candidate.method === request.headers["access-control-request-method"])
   if (route === undefined) throw refusedBy(admission.corsMethod)
-  if (origin === undefined || allowedOrigin(try corsOrigins(route), request) === undefined) throw refusedBy(admission.corsOrigin)
+  if (origin === undefined || allowedOrigin(try corsOrigins(route), request) === undefined) throw refusedBy(corsOriginRefusal(route, originOf(request)) ?? admission.corsOrigin)
   const allowed = corsHeadersOf(route)
   const requested = (request.headers["access-control-request-headers"] ?? "").split(",").map((header) => header.trim().toLowerCase()).filter((header) => header !== "")
   if (requested.some((header) => !allowed.includes(header))) throw refusedBy(admission.corsHeaders)

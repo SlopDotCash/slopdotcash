@@ -1,6 +1,7 @@
 // spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Story: Recover a wallet through the operator without giving the operator authority"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { deploymentOrigins } from "@repo/platform/config"
+import { getWalletClaimsCurrent, postWalletClaims } from "./refusals.vibe"
 
 export schema WalletClaimView {
   readonly schemaVersion: number
@@ -100,19 +101,26 @@ const traceBrowserOrigins = {
 } satisfies Readonly<Record<"production" | "staging", ReadonlyArray<string>>>
 
 const traceCors = [...new Set(Object.values(traceBrowserOrigins).flat())]
+const walletOriginRefusal = postWalletClaims.originNotAllowed
+const walletOriginPolicy = {
+  requireListedAt: deploymentOrigins("production").api,
+  refusal: { status: walletOriginRefusal.status, code: walletOriginRefusal.error, message: "", headers: walletOriginRefusal.headers },
+}
+const walletAuthRefusal = getWalletClaimsCurrent.unauthorizedAuthenticationFailed
+const walletUnauthenticated = { status: walletAuthRefusal.status, code: walletAuthRefusal.error, message: walletAuthRefusal.message, headers: walletAuthRefusal.headers }
 
 const publicRead = { browserSeconds: 60, mustRevalidate: true } as const
 
 export const registerWallet = route({ method: "POST", path: "/api/v1/payments/wallets/register", access: "sessionWrite", limitKib: 4, request: RegisterFields, answer: RegisteredWallet, rejected: "stale_wallet_claim", cache: "private" })
 export const walletChallenge = route({ method: "POST", path: "/api/v1/payments/wallets/challenge", access: "sessionWrite", limitKib: 4, request: ChallengeFields, answer: WalletChallenge, rejected: "claim_not_current", cache: "private" })
 export const authorizeWallet = route({ method: "POST", path: "/api/v1/payments/wallets/authorize", access: "sessionWrite", limitKib: 4, request: AuthorizeFields, answer: WalletAuthorized, rejected: "claim_not_current", cache: "private" })
-export const currentWalletClaim = route({ method: "GET", path: "/api/v1/wallet-claims/current", access: "bearer", limitKib: 1, request: undefined, answer: WalletClaimView, rejected: "not_found", cache: "no-store", cors: traceCors, corsHeaders: ["authorization"] })
+export const currentWalletClaim = route({ method: "GET", path: "/api/v1/wallet-claims/current", access: "bearer", limitKib: 1, request: undefined, answer: WalletClaimView, rejected: "not_found", cache: "no-store", cors: traceCors, corsHeaders: ["authorization"], unauthenticated: walletUnauthenticated })
 export const actorWalletClaim = route({ method: "GET", path: "/api/v1/wallet-claims/actors/:githubId/current", access: "public", limitKib: 1, request: undefined, answer: Schema.NullOr(WalletClaimView), rejected: "not_found", cache: publicRead, cors: traceCors, corsHeaders: ["authorization"] })
 export const walletClaim = route({ method: "GET", path: "/api/v1/wallet-claims/:id", access: "public", limitKib: 1, request: undefined, answer: WalletClaimView, rejected: "not_found", cache: { browserSeconds: 31536000, immutable: true }, cors: traceCors, corsHeaders: ["authorization"] })
-export const walletPossession = route({ method: "GET", path: "/api/v1/wallet-claims/:id/possession", access: "public", limitKib: 1, request: undefined, answer: PossessionView, rejected: "not_found", cache: publicRead, cors: traceCors, corsHeaders: ["authorization"] })
-export const createWalletClaim = route({ method: "POST", path: "/api/v1/wallet-claims", access: "bearer", limitKib: 64, request: BearerClaimFields, answer: WalletClaimView, rejected: "stale_wallet_claim", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"] })
-export const possessionChallenge = route({ method: "POST", path: "/api/v1/wallet-claims/:id/possession-challenge", access: "bearer", limitKib: 1, request: undefined, answer: Schema.Union([PossessionChallengeIssued, PossessionView]), rejected: "possession_challenge_unavailable", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"] })
-export const possessionProof = route({ method: "POST", path: "/api/v1/wallet-claims/:id/possession", access: "bearer", limitKib: 64, request: PossessionFields, answer: PossessionView, rejected: "possession_challenge_unavailable", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"] })
-export const operatorWalletClaim = route({ method: "POST", path: "/api/v1/operator/wallet-claims", access: "bearer", limitKib: 64, request: OperatorClaimFields, answer: WalletClaimView, rejected: "claim_conflict", cache: "no-store" })
+export const walletPossession = route({ method: "GET", path: "/api/v1/wallet-claims/:id/possession", access: "public", limitKib: 1, request: undefined, answer: PossessionView, rejected: "not_found", cache: publicRead, cors: traceCors, corsHeaders: ["authorization"], corsOriginPolicy: walletOriginPolicy })
+export const createWalletClaim = route({ method: "POST", path: "/api/v1/wallet-claims", access: "bearer", limitKib: 64, request: BearerClaimFields, answer: WalletClaimView, rejected: "stale_wallet_claim", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"], corsOriginPolicy: walletOriginPolicy, unauthenticated: walletUnauthenticated })
+export const possessionChallenge = route({ method: "POST", path: "/api/v1/wallet-claims/:id/possession-challenge", access: "bearer", limitKib: 1, request: undefined, answer: Schema.Union([PossessionChallengeIssued, PossessionView]), rejected: "possession_challenge_unavailable", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"], corsOriginPolicy: walletOriginPolicy, unauthenticated: walletUnauthenticated })
+export const possessionProof = route({ method: "POST", path: "/api/v1/wallet-claims/:id/possession", access: "bearer", limitKib: 64, request: PossessionFields, answer: PossessionView, rejected: "possession_challenge_unavailable", cache: "no-store", cors: traceCors, corsHeaders: ["authorization", "content-type"], corsOriginPolicy: walletOriginPolicy, unauthenticated: walletUnauthenticated })
+export const operatorWalletClaim = route({ method: "POST", path: "/api/v1/operator/wallet-claims", access: "bearer", limitKib: 64, request: OperatorClaimFields, answer: WalletClaimView, rejected: "claim_conflict", cache: "no-store", unauthenticated: walletUnauthenticated })
 
 export const api: ReadonlyArray<AnyRoute> = [registerWallet, walletChallenge, authorizeWallet, currentWalletClaim, actorWalletClaim, walletClaim, walletPossession, createWalletClaim, possessionChallenge, possessionProof, operatorWalletClaim]
