@@ -34609,7 +34609,7 @@
     },
     {
       "path": "spec/slopbot/historyReadAhead.md",
-      "sha256": "f71fe23c54297820d96a3b9d0a97c649fc25a993d4740d980401493344cadccd",
+      "sha256": "4dad975edc4d5ea4ce608cc2cc790d77b433ff48590d35b0beb44bddd4e44e4a",
       "module": "slopbot__historyReadAhead",
       "stories": [
         {
@@ -34652,7 +34652,7 @@
         },
         {
           "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each empty warmed page once and reads every other page itself",
-          "line": 99,
+          "line": 100,
           "definitions": [
             "decidedOutcomes",
             "canAdvance",
@@ -34680,7 +34680,7 @@
         },
         {
           "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a bounded window, a non-empty page and a dropped one",
-          "line": 155,
+          "line": 164,
           "definitions": [
             "concurrencyValues",
             "outcomeCountValues",
@@ -36257,7 +36257,7 @@
     },
     {
       "path": "spec/slopbot/routing.md",
-      "sha256": "23c2b0b27de9be7402ed22bd73da0b1ce03291153bd228e5d4e1e2617b8d9a0d",
+      "sha256": "4e68b27091b6e9ed197227b4d8592856ddde5886f00578ed56be39f3767cfa48",
       "module": "slopbot__routing",
       "stories": [
         {
@@ -37736,7 +37736,7 @@
     },
     {
       "path": "spec/slopbot/workUnits.md",
-      "sha256": "f269014ba2fcecb3b4e3ca6ca75a21814138396598fb33bb5f810f35b3b16080",
+      "sha256": "b9e884a6011bf2558db8d092756b6397f3d97e930f0801582e163cdc20a507cc",
       "module": "slopbot__workUnits",
       "stories": [
         {
