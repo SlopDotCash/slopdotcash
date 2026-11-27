@@ -216,15 +216,15 @@ const Built = Layer.effect(World, effect {
 })
 
 const localOrigin = "http://localhost:8787"
+let backendRoutesScript: Promise<string> | undefined
 
 function backendAt(site: { readonly origin?: string; readonly vars?: Readonly<Record<string, string>> }) {
   return Layer.provideMerge(Layer.unwrap(effect {
     const world = try World
     const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+    const script = try promise(() => backendRoutesScript ??= bundle(new URL("../../points", import.meta.url).pathname, { config: "test/support/backendRoutes/vite.config.ts", entry: "backendRoutes" }))
     return areaLayer({
-      root: new URL("../../points", import.meta.url).pathname,
-      config: "test/support/backendRoutes/vite.config.ts",
-      entry: "backendRoutes",
+      script,
       ...site.origin === undefined ? {} : { origin: site.origin },
       d1: { SLOP_DB: "slop-private" },
       vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl, ...site.vars },

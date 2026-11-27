@@ -250,7 +250,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const normalisedSha = try promise(() => digest(normalised))
     const [pending] = try promise(() => rows(world, "SELECT id FROM security_intake_rate_admissions WHERE actor_github_id=?", "8080"))
     const retryObject = try promise(() => storedObject(world, `security-reports/${String(pending?.id)}/1-${normalisedSha}.json`))
-    const off = try acquireRelease(promise(() => started("off")), (running) => promise(() => running.mf.dispose()))
+    const off = try acquireRelease(promise(() => started("off", world.workerScript)), (running) => promise(() => running.mf.dispose()))
     const offSubmit = try submit(off, "stored-off-key-00001", "intake-fixture", report, "5150")
     const offReadiness = try promise(() => request(off, "/api/v1/security-programs/intake-fixture/intake"))
     const offAttempt = `ss_${(try promise(() => digest(`5150\nstored-off-key-00001\n${normalisedSha}`))).slice(0, 32)}`
