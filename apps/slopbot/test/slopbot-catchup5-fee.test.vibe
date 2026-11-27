@@ -664,4 +664,60 @@ layer(World, { timeout: "240 seconds" })((it) => {
       unread: { n: standingCoverBatch },
     })
   })
+  it.effect('Asked pull requests whose installation was removed or that can no longer be read are looked at again a day later, so they do not take every run from a paid fee that waits for its held review (spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes")', () => effect {
+    const { fees } = try FeeWorld
+    const tRun = Date.parse("2027-01-10T00:00:00.000Z")
+    const runs = 5
+    const goneInstallation = installationId + 2
+    const goneRepository = repositoryId + 2
+    const unreadRepository = repositoryId + 3
+    const left = 25
+    const unread = 20
+    const withdrawnPull = left + 1
+    const paidWaiting = try opened("Paid while other projects left", tRun - day)
+    const gateInsert = `INSERT INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
+      VALUES (?, ?, ?, ?, 'left', ?, 'fee-needed', NULL, ?, NULL)`
+    const itemInsert = `INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at, paid_at, paid_network, paid_deposit_id)
+      VALUES (?, ?, ?, ?, '2000000', '2026-12-01T00:00:00.000Z', ?, ?, ?)`
+    const itemOf = (repository: number, number: number) => `0x${`${repository}${number}`.padStart(64, "0")}`
+    try Effect.promise(() => fees.db.batch([
+      fees.db.prepare("UPDATE slopbot_fee_gates SET next_check_at = NULL").bind(),
+      fees.db.prepare("UPDATE submission_fee_items SET outcome = 'refunded' WHERE outcome IS NULL").bind(),
+      fees.db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, removed_at, source_updated_at) VALUES (?, 102, 'left', 'User', ?, ?, 1)").bind(goneInstallation, iso(t0), iso(t0 + day)),
+      ...Array.from({ length: left }, (_, index) => fees.db.prepare(gateInsert).bind(goneRepository, index + 1, goneInstallation, "left", "asked", "2026-12-02T00:00:00.000Z")),
+      ...Array.from({ length: left }, (_, index) => fees.db.prepare(itemInsert).bind(goneRepository, index + 1, "left-project", itemOf(goneRepository, index + 1), null, null, null)),
+      ...Array.from({ length: unread }, (_, index) => fees.db.prepare(gateInsert).bind(unreadRepository, index + 1, installationId, "ada", "asked", "2026-12-02T00:00:00.000Z")),
+      ...Array.from({ length: unread }, (_, index) => fees.db.prepare(itemInsert).bind(unreadRepository, index + 1, "left-project", itemOf(unreadRepository, index + 1), null, null, null)),
+      fees.db.prepare(gateInsert).bind(goneRepository, withdrawnPull, goneInstallation, "left", "paid", "2026-12-01T00:00:00.000Z"),
+      fees.db.prepare(itemInsert).bind(goneRepository, withdrawnPull, "left-project", itemOf(goneRepository, withdrawnPull), null, null, null),
+      fees.db.prepare(gateInsert).bind(repositoryId, paidWaiting, installationId, "ada", "asked", "2026-12-03T00:00:00.000Z"),
+      fees.db.prepare(itemInsert).bind(repositoryId, paidWaiting, projectId, itemOf(repositoryId, paidWaiting), iso(tRun - hour), "base-mainnet", paidWaiting),
+    ]))
+    let heldReview = false
+    for (let run = 0; run < runs; run++) {
+      const millis = tRun + run * 5 * 60_000
+      fees.sent.length = 0
+      try at(millis, dispatchFeeChecks())
+      for (const job of [...fees.sent]) {
+        if (job.kind !== "submission_fee") continue
+        const checked = try at(millis + 1000, refreshSubmissionFee(job))
+        if (job.repositoryId === repositoryId && job.number === paidWaiting && checked.review) heldReview = true
+      }
+    }
+    const lastRun = tRun + (runs - 1) * 5 * 60_000
+    const count = effect (sql: string, ...values: ReadonlyArray<string | number>) => {
+      return (try Effect.promise(() => fees.db.prepare(sql).bind(...values).all())).results[0]
+    }
+    const undecided = try count("SELECT COUNT(*) AS n FROM slopbot_fee_gates g JOIN submission_fee_items i ON i.repository_id = g.repository_id AND i.pull_number = g.pull_number WHERE g.repository_id IN (?, ?) AND g.state = 'asked' AND i.paid_at IS NULL AND i.outcome IS NULL", goneRepository, unreadRepository)
+    const aDayAhead = try count("SELECT COUNT(*) AS n FROM slopbot_fee_gates WHERE repository_id IN (?, ?) AND state = 'asked' AND next_check_at > ? AND next_check_at <= ?", goneRepository, unreadRepository, iso(tRun + day), iso(lastRun + day + hour))
+    const withdrawnHeld = try count("SELECT COUNT(*) AS n FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ? AND state = 'paid' AND next_check_at <= ?", goneRepository, withdrawnPull, iso(lastRun + 10 * 60_000))
+    const waiting = try seen(paidWaiting)
+    try same({ gate: waiting.gate, heldReview, undecided, aDayAhead, withdrawnHeld }, {
+      gate: "paid",
+      heldReview: true,
+      undecided: { n: left + unread },
+      aDayAhead: { n: left + unread },
+      withdrawnHeld: { n: 1 },
+    })
+  })
 })
