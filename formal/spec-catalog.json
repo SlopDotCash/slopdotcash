@@ -27174,22 +27174,22 @@
     },
     {
       "path": "spec/settlement/keeperLifecycle.md",
-      "sha256": "77898bdb47b8abfd2a6cb6697729e938524ef74f1753b4782cb8ed4240d0aefc",
+      "sha256": "0096f403a12b778ae526a7f4fe00370312175b787ca09a135c2f7c1c840b14bd",
       "module": "settlement__keeperLifecycle",
       "stories": [
         {
           "heading": "Story: Connect internal requests to one live core run",
-          "line": 20
+          "line": 24
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry",
-          "line": 103
+          "line": 107
         }
       ],
       "rules": [
         {
           "heading": "Story: Connect internal requests to one live core run / Public and wrong internal routes cannot start work",
-          "line": 22,
+          "line": 26,
           "definitions": [
             "KeeperMode",
             "Caller",
@@ -27224,7 +27224,7 @@
         },
         {
           "heading": "Story: Connect internal requests to one live core run / Off and failed preflight settle without invoking a signer",
-          "line": 82,
+          "line": 86,
           "definitions": [
             "settleRun",
             "matchesRun",
@@ -27236,7 +27236,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Native fee liability and nonce become durable with the exact signed bytes",
-          "line": 105,
+          "line": 109,
           "definitions": [
             "SignerReport",
             "GasEvidence",
@@ -27257,7 +27257,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / An unmined send is replaced only by fee, same nonce and content, after activation",
-          "line": 154,
+          "line": 158,
           "definitions": [
             "latestAttempt",
             "originalAttempt",
@@ -27278,7 +27278,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee",
-          "line": 199,
+          "line": 203,
           "definitions": [
             "replacementWaitSeconds",
             "replacementDue",
@@ -27288,7 +27288,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block",
-          "line": 216,
+          "line": 220,
           "definitions": [
             "extraFeeReserved",
             "extraFeeValues"
@@ -27296,7 +27296,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Core completion and per-request result delivery have independent lifetimes",
-          "line": 234,
+          "line": 238,
           "definitions": [
             "canItemFailure",
             "itemFailure",
@@ -27313,7 +27313,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Restart abandons only ephemeral work and unresolved callers from that instance",
-          "line": 266,
+          "line": 270,
           "definitions": [
             "canRestart",
             "restart",
@@ -27357,19 +27357,19 @@
       "references": [
         {
           "target": "./keeperRpc.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "./keeperScan.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "../operations/paymentJobs.md",
-          "line": 12
+          "line": 16
         },
         {
           "target": "./feeReplacement.md",
-          "line": 157
+          "line": 161
         }
       ]
     },
@@ -27436,7 +27436,7 @@
     },
     {
       "path": "spec/settlement/keeperScan.md",
-      "sha256": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a",
+      "sha256": "abb9e02a84d556af4e3083d4df30c1b436fd24d9eb950958043d19c21bbbed49",
       "module": "settlement__keeperScan",
       "stories": [
         {
@@ -27464,7 +27464,7 @@
         },
         {
           "heading": "Story: Preserve the operation that failed during a keeper run / Returning to scanning requires successful receipt verification and indexing",
-          "line": 54,
+          "line": 65,
           "definitions": [
             "canBeginReceipt",
             "beginReceipt",
@@ -27508,7 +27508,7 @@
         },
         {
           "target": "./keeperDiagnostics.md",
-          "line": 60
+          "line": 71
         }
       ]
     },
