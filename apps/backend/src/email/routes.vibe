@@ -14,6 +14,7 @@ import { EmailUnavailable, type Intent, send } from "../accounts/store/store.vib
 import { emailConsent, emailPreference, emailUnsubscribe, emailVerification, emailVerify } from "../client/email.vibe"
 import { getNotificationsEmail, postNotificationsEmail, postNotificationsEmailVerification, postNotificationsEmailVerify } from "../client/refusals.vibe"
 import { presentedTokenHash } from "../session.vibe"
+import { withdrawForUnsubscribeToken } from "./live.vibe"
 import { type Eligibility, eligibility, enrollmentAvailable, sendVerification } from "./mailService.vibe"
 
 schema PreferenceView { enabled: number; security_enabled: number | null; destination_version: string | null; revision: number }
@@ -273,11 +274,7 @@ effect function unsubscribe(query: URLSearchParams) {
   const value = oneClick ? try oneClickToken(query) : try boundedObject(bodyBytes)
   const token = value?.token
   if (value === undefined || Object.keys(value).join() !== "token" || typeof token !== "string" || !unsubscribeToken.test(token)) return privateBare(rows.invalidRequestS400)
-  const withdrawn = send({ kind: "unsubscribe", tokenHash: try sha256Hex(token) }, { kind: "session", hash: "" }) catch effect (error) => match (error) {
-    when Rejected: undefined;
-    default: throw error;
-  }
-  if (withdrawn === undefined) return privateBare(unsubscribeRows.unsubscribeInvalid)
+  if (!(try withdrawForUnsubscribeToken(try sha256Hex(token)))) return privateBare(unsubscribeRows.unsubscribeInvalid)
   return privateJson({ enabled: false, securityEnabled: false })
 }
 

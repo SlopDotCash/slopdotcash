@@ -41,7 +41,7 @@ parser (`src/lib/login-return.ts`) turns the requested `next` value into a
 same-origin path starting with exactly one `/` and holding no backslash
 (`next=earnings` is its alias for `/earnings`), and `ForeignOrMalformed`
 otherwise; that parse is a shell obligation over the raw value. This machine
-decides the rest: only a same-origin path that is not the login page itself
+decides the rest: only a same-origin path that is not the login page itself, in any form that resolves to it ("/login" or "/login/"),
 is kept, and anything else returns to `/`, so the saved destination is never
 empty and never loops back to sign-in. A private report draft is never a
 permitted draft across an account change: authentication erases it (below).
@@ -51,18 +51,19 @@ ends the browser session exactly like sign-out.
 ```quint
 type ParsedNext = SameOriginPath({ path: str }) | ForeignOrMalformed
 pure val loginPath = "/login"
+pure def isLoginPath(p: str): bool = p == loginPath or p == "/login/"
 pure def returnFor(request: ParsedNext): str = match request {
-  | SameOriginPath(p) => if (p.path != "" and p.path != loginPath) p.path else "/"
+  | SameOriginPath(p) => if (p.path != "" and not(isLoginPath(p.path))) p.path else "/"
   | _ => "/"
 }
 pure def canSaveReturn(b: BrowserSession, request: ParsedNext): bool = b.navigation.actor == 0
 pure def saveReturn(b: BrowserSession, request: ParsedNext): BrowserSession = { ...b, returnPath: returnFor(request) }
-pure def alwaysReturnPathSafe(b: BrowserSession): bool = b.returnPath != "" and b.returnPath != loginPath
+pure def alwaysReturnPathSafe(b: BrowserSession): bool = b.returnPath != "" and not(isLoginPath(b.returnPath))
 pure def stepServerEndClearsPrivateState(before: BrowserSession, via: str, after: BrowserSession): bool =
   via == "serverSessionEnded" implies after.draft == D::initial and after.details.opened.size() == 0 and after.navigation.actor == 0
 pure def stepSignInKeepsReturnPath(before: BrowserSession, via: str, after: BrowserSession): bool =
   via == "authenticate" implies after.returnPath == before.returnPath
-pure val requestValues = Set(SameOriginPath({ path: "/inbox" }), SameOriginPath({ path: "/login" }),
+pure val requestValues = Set(SameOriginPath({ path: "/inbox" }), SameOriginPath({ path: "/login" }), SameOriginPath({ path: "/login/" }),
   SameOriginPath({ path: "" }), ForeignOrMalformed)
 pure def sometimesSafeReturnKept(b: BrowserSession): bool = b.navigation.actor > 0 and b.returnPath == "/inbox"
 ```

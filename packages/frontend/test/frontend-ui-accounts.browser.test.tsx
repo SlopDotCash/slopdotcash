@@ -64,6 +64,12 @@ describe("Resume an authorized destination after signing in", () => {
     await site.click(named("button", "Continue with GitHub"));
     await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).not.toBe("/login");
     expect(new URL(await site.where()).origin).toBe(origin);
+
+    await signOut(users.ada.login);
+    await site.github(users.ada.login);
+    await site.open(`/login?next=${encodeURIComponent("/login/")}`);
+    await site.click(named("button", "Continue with GitHub"));
+    await at("/");
   });
 });
 

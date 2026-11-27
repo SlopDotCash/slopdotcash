@@ -136,6 +136,13 @@ export const notifyPostV1EmailVerification = {
   },
 } as const
 
+export const notifyPostV1EmailUnsubscribe = {
+  ...withStatus503,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
 export const notifyPostV1SecurityNotificationsDispatch = {
   ...withStatus503PrivateNoStore,
   otherMethods: {

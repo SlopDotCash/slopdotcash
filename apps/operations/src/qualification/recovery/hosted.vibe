@@ -315,6 +315,7 @@ export effect function hostedQualification(hosted: Hosted) {
     const work = owned.queues[0]
     if (work === undefined) throw refused("The work queue is not owned by this run")
     const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+    if (queue.queue_id !== work.queue_id || queue.queue_name !== work.queue_name) throw refused("Queue ownership changed")
     const [consumer, ...others] = queue.consumers
     const scripts = [consumer?.script, consumer?.script_name].filter((script) => script !== undefined)
     if (
@@ -360,6 +361,7 @@ export effect function hostedQualification(hosted: Hosted) {
         const work = owned.queues[0]
         if (work === undefined) throw refused("The work queue is not owned by this run")
         const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+        if (queue.queue_id !== work.queue_id || queue.queue_name !== work.queue_name) throw refused("Queue ownership changed")
         if (queue.consumers.length > 0) {
           try assertBindings()
           try api("remove consumer", "DELETE", `queues/${work.queue_id}/consumers/${consumerId ?? ""}`)

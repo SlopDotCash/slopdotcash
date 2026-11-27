@@ -1,7 +1,5 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
-import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { D1, first, sql } from "@repo/platform/d1"
 import { answered, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
@@ -10,6 +8,7 @@ import {
   notifyPostV1ActivityNotificationsEligibility,
   notifyPostV1ActivityNotificationsReconcile,
   notifyPostV1EmailCapabilities,
+  notifyPostV1EmailUnsubscribe,
   notifyPostV1EmailVerification,
   notifyPostV1SecurityNotificationsDispatch,
   notifyPostV1SecurityNotificationsReconcile,
@@ -69,6 +68,7 @@ function plainJson(body: unknown) {
 const security = { ...notifyPostV1SecurityNotificationsDispatch, ...notifyPostV1SecurityNotificationsReconcile }
 const activity = { ...notifyPostV1ActivityNotificationsEligibility, ...notifyPostV1ActivityNotificationsDispatch, ...notifyPostV1ActivityNotificationsReconcile }
 const verification = notifyPostV1EmailVerification
+const unsubscribeRows = notifyPostV1EmailUnsubscribe
 
 export effect function internalRequest() {
   const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
@@ -136,24 +136,21 @@ effect function verified() {
   return answer({ status: (try sendVerification(body, pilot, settings.from)) ? 204 : 409, headers: plain })
 }
 
-const unsubscribeTokenPattern = /^[a-f0-9]{64}\.[a-f0-9]{64}$/u
-
-schema IssuedUnsubscribe { destination_version: string }
-
-effect function unsubscribed() {
-  const body = try jsonBody(emailUnsubscribePath.limitKib)
-  const token = body.token
-  if (Object.keys(body).join() !== "token" || typeof token !== "string") return answer(verification.status400)
-  if (!unsubscribeTokenPattern.test(token)) return answer({ status: 409, headers: plain })
-  const issued = try first(IssuedUnsubscribe, sql`SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash = ${try sha256Hex(token)}`)
-  if (issued === undefined) return answer({ status: 409, headers: plain })
-  const version = issued.destination_version
-  const result = try (try D1).run(sql`UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, updated_at = ${try isoNow()} WHERE destination_version = ${version} AND EXISTS (SELECT 1 FROM notification_email_destinations d WHERE d.github_id = notification_email_preferences.github_id AND d.destination_version = ${version})`)
-  return answer({ status: result > 0 ? 204 : 409, headers: plain })
-}
-
 effect function capabilities() {
   return plainJson({ enrollmentAvailable: enrollmentOpen((try NotifySettings).activity) })
+}
+
+effect function unsubscribe() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const limitBytes = emailUnsubscribePath.limitKib * 1024
+  const length = request.headers["content-length"]
+  if (length !== undefined && !/^\d+$/u.test(length)) return answer(unsubscribeRows.status500)
+  const bytes = try provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(limitBytes))
+  const body: unknown = try Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)))
+  if (typeof body !== "object" || body === null || Array.isArray(body) || !("token" in body) || typeof body.token !== "string" || Object.keys(body).join() !== "token") return answer(unsubscribeRows.status400)
+  if (!/^[a-f0-9]{64}\.[a-f0-9]{64}$/u.test(body.token)) return answer(unsubscribeRows.status409)
+  const hash = try sha256Hex(body.token)
+  return answer((try (try EmailEnrollment).withdrawForUnsubscribeToken(hash)) ? { status: 204, headers: plain } : unsubscribeRows.status409)
 }
 
 effect function securityPilot() {
@@ -201,7 +198,7 @@ export const notifyRoutes = Layer.mergeAll(
   }),
   served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
   served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
-  served(emailUnsubscribePath, verification.status500, verification.otherMethods.status405, () => unsubscribed()),
+  served(emailUnsubscribePath, unsubscribeRows.status500, unsubscribeRows.otherMethods.status405, () => unsubscribe()),
   served(projectApplicationsPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("application")),
   served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
   served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),
