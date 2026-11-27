@@ -14,7 +14,8 @@ import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weigh
 export schema PayloadRow { readonly payload: string }
 schema CurrentBatchRow { readonly digest: string; readonly generated_at: string }
 schema CoveredRow { readonly covered: number }
-schema MonthlyRepositories { readonly repositories: ReadonlyArray<RegistryRepository> }
+schema MonthlyReward { readonly rewardStartAt?: string }
+schema MonthlyRepositories { readonly reward?: MonthlyReward; readonly repositories: ReadonlyArray<RegistryRepository> }
 
 const decodePayload = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
 
@@ -75,8 +76,13 @@ export effect function closedLedger(month: ProjectMonth) {
     throw new RowMismatch({ text: `project ${month.projectId} manifest`, issue: "its repository scope is not readable" })
   }
   if (manifest.repositories.length === 0) return undefined
-  for (const repository of manifest.repositories) if (!(try coversMonth(batch.digest, repository, from, until))) return undefined
-  const stored = try rows(PayloadRow, sql`SELECT r.payload FROM points_revisions r WHERE json_extract(r.payload, '$.award.projectId') = ${month.projectId} AND json_extract(r.payload, '$.award.occurredAt') >= ${from} AND json_extract(r.payload, '$.award.occurredAt') < ${until} AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id) ORDER BY r.source_key`)
+  const rewardStartAt = manifest.reward?.rewardStartAt
+  if (rewardStartAt !== undefined && instantOf(rewardStartAt) === null) {
+    throw new RowMismatch({ text: `project ${month.projectId} manifest`, issue: "its reward start is not an exact UTC instant" })
+  }
+  const opens = rewardStartAt !== undefined && rewardStartAt > from ? rewardStartAt : from
+  for (const repository of manifest.repositories) if (!(try coversMonth(batch.digest, repository, opens, until))) return undefined
+  const stored = try rows(PayloadRow, sql`SELECT r.payload FROM points_revisions r WHERE json_extract(r.payload, '$.award.projectId') = ${month.projectId} AND json_extract(r.payload, '$.award.occurredAt') >= ${opens} AND json_extract(r.payload, '$.award.occurredAt') < ${until} AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id) ORDER BY r.source_key`)
   const revisions = []
   for (const row of stored) revisions.push(try revisionOf(row.payload))
   if ((try currentPointsBatch())?.digest !== batch.digest) return undefined
