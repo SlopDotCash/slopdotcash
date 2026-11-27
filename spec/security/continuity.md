@@ -27,7 +27,9 @@ login. The reporter's Inbox consents never exceed the consents of the
 account's email enrollment, so the same step withdraws both consents of the
 reporter's Inbox. Closure never changes the cases, holds, award, vault
 obligation or direct journal, and never removes a notice; that frame
-condition guards against later edits of the closure step. A reserved award
+condition guards against later edits of the closure step. The account service
+keeps its shared clock at or above the launch clock so every recorded closure
+time is positive. A reserved award
 is still paid after closure.
 
 ```quint
@@ -68,7 +70,8 @@ pure def alwaysInboxConsentFollowsEnrollment(s: Continuity): bool =
   and (N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.security implies reporterMember(s).email.preference.security)
 pure def alwaysClosedReporterWithdrawsConsent(s: Continuity): bool = reporterClosed(s) implies
   not(N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.activity) and not(N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.security)
-pure def alwaysAccountRules(s: Continuity): bool = A::alwaysClosedPrivate(s.accounts) and A::alwaysSessionsBelongToOpenMembers(s.accounts)
+pure def alwaysAccountRules(s: Continuity): bool = A::alwaysClosedPrivate(s.accounts)
+  and A::alwaysSessionsBelongToOpenMembers(s.accounts) and A::alwaysClockShared(s.accounts)
 pure def stepClosureKeepsObligations(before: Continuity, via: str, after: Continuity): bool = via == "closeReporter" implies
   after.award.bounty == before.award.bounty and after.award.settlement == before.award.settlement
     and after.award.direct == before.award.direct and after.award.shown == before.award.shown
@@ -85,7 +88,8 @@ arrives as a newer verified authority snapshot for every case of the
 project, naming only real actors. It changes no hold, chosen amount,
 commitment, vault obligation or direct journal term; that frame condition
 guards against later edits of the role step. With the settlement unchanged,
-the payout of a reserved award stays possible: its paid notice can always be
+the payout of a reserved award stays possible: every case keeps a real reporter
+and real authority actors, so a reserved award's paid notice can always be
 saved for the reporter and every current approver. A committed vault-backed
 award is still paid after the whole role set changed. A direct award's
 request prepared before the change is still credited. A replaced technical
@@ -100,9 +104,11 @@ pure def canReplaceRoles(s: Continuity, snapshot: C::Authority): bool = PA::canO
 pure def replaceRoles(s: Continuity, snapshot: C::Authority): Continuity =
   { ...withAward(PA::observeAuthority(s.award, snapshot), s),
     changedAfterCommit: s.changedAfterCommit or C::committed(PA::caseOf(s.award, 1)) or C::committed(PA::caseOf(s.award, 2)) }
-pure def alwaysReservedAwardCanNotifyPaid(s: Continuity): bool = s.award.vaultCase > 0 implies B::known(s.award.vaultCase)
-  and realActors(PA::caseOf(s.award, s.award.vaultCase).authority)
-  and PA::recipientsValid(s.award.inbox, PA::noticeKey(PA::AwardPaid, s.award.vaultCase), PA::caseOf(s.award, s.award.vaultCase))
+pure def alwaysReservedAwardCanNotifyPaid(s: Continuity): bool =
+  B::caseIds.every(id => realActors(PA::caseOf(s.award, id).authority) and PA::caseOf(s.award, id).reporter > 0)
+  and (s.award.vaultCase > 0 implies B::known(s.award.vaultCase)
+    and realActors(PA::caseOf(s.award, s.award.vaultCase).authority)
+    and PA::recipientsValid(s.award.inbox, PA::noticeKey(PA::AwardPaid, s.award.vaultCase), PA::caseOf(s.award, s.award.vaultCase)))
 pure def stepRolesKeepCommitments(before: Continuity, via: str, after: Continuity): bool = via == "replaceRoles" implies
   after.award.bounty.holds == before.award.bounty.holds and after.award.bounty.reserved == before.award.bounty.reserved
     and after.award.settlement == before.award.settlement and after.award.direct.terms == before.award.direct.terms
@@ -127,6 +133,9 @@ pure def sometimesPaidAfterRoleSetChanged(s: Continuity): bool = s.changedAfterC
 ```
 
 ### The award settles through the same composed steps
+
+The composed award state retains every invariant of [private award
+settlement](../settlement/privateAward.md) through every continuity step.
 
 ```quint
 pure def canDeposit(s: Continuity, amount: M::Amount, asset: str, receipt: int, finalized: bool): bool =
@@ -156,6 +165,14 @@ pure def updateDelivery(s: Continuity, update: SC::DeliveryUpdate): Continuity =
 pure def canReconcile(s: Continuity, evidence: SC::FinalizedPayment): bool = PA::canReconcile(s.award, evidence)
 pure def reconcile(s: Continuity, evidence: SC::FinalizedPayment): Continuity = withAward(PA::reconcile(s.award, evidence), s)
 pure def alwaysAwardRules(s: Continuity): bool = PA::alwaysVaultAwardReserved(s.award) and PA::alwaysPaidNotified(s.award)
+  and PA::alwaysHoldsKeepCaseRules(s.award) and PA::alwaysFundsSnapshotObserved(s.award)
+  and PA::alwaysCaseRevisionsCounted(s.award) and PA::alwaysVaultTargetMatchesAward(s.award)
+  and PA::alwaysBountyReserveIsVaultReserve(s.award) and PA::alwaysBountyCoverIsVaultFree(s.award)
+  and PA::alwaysCoverAmountsValid(s.award) and PA::alwaysDirectJournalBound(s.award)
+  and PA::alwaysNothingAuthorizedBeforeAdmission(s.award) and PA::alwaysShownAmountsExact(s.award)
+  and PA::alwaysCommittedWithinTerms(s.award) and PA::alwaysShownCaseReceived(s.award)
+  and PA::alwaysAwardNoticesArePrivateCaseNotices(s.award) and PA::alwaysCommitmentNotified(s.award)
+  and PA::alwaysPaidNoticeOnlyWhenPaid(s.award)
 ```
 
 ### Simulation samples

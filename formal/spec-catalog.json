@@ -22714,7 +22714,7 @@
     },
     {
       "path": "spec/security/continuity.md",
-      "sha256": "bbbeeb3d9c6c68ef8ac7d8296054fc2870fdbcd5aa0bd22871ea4c8f932d79fc",
+      "sha256": "eced8b68b7dc50548506b801eefa8e7d24dc0e18eaf8b0fcddbf252411405969",
       "module": "security__continuity",
       "stories": [
         {
@@ -22748,7 +22748,7 @@
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / A transfer or role loss replaces the roles and keeps every commitment",
-          "line": 81,
+          "line": 84,
           "definitions": [
             "realActors",
             "canReplaceRoles",
@@ -22766,7 +22766,7 @@
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / The award settles through the same composed steps",
-          "line": 129,
+          "line": 135,
           "definitions": [
             "canDeposit",
             "deposit",
@@ -22789,7 +22789,7 @@
         },
         {
           "heading": "Story: Keep every private case and obligation through account and role changes / Simulation samples",
-          "line": 161,
+          "line": 178,
           "definitions": [
             "sampleAccount",
             "consentedEmail",
@@ -22860,7 +22860,7 @@
         },
         {
           "target": "./cases.md",
-          "line": 94
+          "line": 98
         }
       ]
     },
@@ -24483,7 +24483,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "beda2e8f123d3445baea734b595307bfe90475dbe12a04e7acbc9a86e349b4c0",
+      "sha256": "0d6a4d03dee6b31d8dced10528a500ba5d80d960000f37e97e00912e468cd477",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -24492,15 +24492,15 @@
         },
         {
           "heading": "Story: Keep the report text private",
-          "line": 139
+          "line": 144
         },
         {
           "heading": "Story: Exclusions inform advice without deciding",
-          "line": 180
+          "line": 187
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt",
-          "line": 226
+          "line": 235
         }
       ],
       "rules": [
@@ -24533,7 +24533,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / Routing saves one private case notice per eligible technical recipient",
-          "line": 79,
+          "line": 84,
           "definitions": [
             "routeKey",
             "ownerRecipients",
@@ -24548,7 +24548,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / An intake outage keeps every received case and its receipt notice",
-          "line": 117,
+          "line": 122,
           "definitions": [
             "canObserveAvailability",
             "observeAvailability",
@@ -24559,7 +24559,7 @@
         },
         {
           "heading": "Story: Keep the report text private / Report bodies stay out of every record and never reach a public issue",
-          "line": 141,
+          "line": 146,
           "definitions": [
             "digestOf",
             "lawDigestNamesStoredBytes",
@@ -24577,7 +24577,7 @@
         },
         {
           "heading": "Story: Exclusions inform advice without deciding / The receipt-time exclusion context reaches screening, assessment and appeal triage",
-          "line": 182,
+          "line": 189,
           "definitions": [
             "canClaimScreening",
             "claimScreening",
@@ -24604,7 +24604,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Created and reconciled copies bind the earliest canonical GHSA",
-          "line": 228,
+          "line": 237,
           "definitions": [
             "canClaimSend",
             "claimSend",
@@ -24632,7 +24632,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A verified GitHub receipt links only the retained case",
-          "line": 275,
+          "line": 286,
           "definitions": [
             "canReadReceipt",
             "readReceipt",
@@ -24650,7 +24650,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A legacy direct report is received only from a checked GitHub receipt",
-          "line": 309,
+          "line": 326,
           "definitions": [
             "directTerms",
             "canReceiveDirect",
@@ -24662,7 +24662,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Simulation samples",
-          "line": 348,
+          "line": 365,
           "definitions": [
             "bodyValues",
             "digestOfValues",
@@ -24742,31 +24742,31 @@
         },
         {
           "target": "./reportDeposit.md",
-          "line": 86
+          "line": 91
         },
         {
           "target": "./screening.md",
-          "line": 184
+          "line": 191
         },
         {
           "target": "./assessment.md",
-          "line": 184
+          "line": 191
         },
         {
           "target": "./cases.md",
-          "line": 185
+          "line": 192
         },
         {
           "target": "./journey.md",
-          "line": 186
+          "line": 193
         },
         {
           "target": "./terms.md",
-          "line": 187
+          "line": 194
         },
         {
           "target": "./forwarding.md",
-          "line": 231
+          "line": 240
         }
       ]
     },
@@ -26049,7 +26049,7 @@
     },
     {
       "path": "spec/settlement/composition.md",
-      "sha256": "5d1b4d1035ca779fca97fe41a9417610a980d283d3077ab12743d7f6b959dcb5",
+      "sha256": "29a58ae190a4cf3265eb1325127c98dea2be196b5ca38833948b2c631934e65b",
       "module": "settlement__composition",
       "stories": [
         {
@@ -26108,7 +26108,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners / Simulation samples exercise independent actor and wallet identities",
-          "line": 149,
+          "line": 152,
           "definitions": [
             "amountValues",
             "grossValues",
@@ -28384,7 +28384,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "cc146b14c21ca15eeb7bcb6cd9d59a0486fc86fdc3c589d7f1f1633e6c63bddc",
+      "sha256": "18382b3e8f91756fb1454657d8ec5961242c92776d147ad750ff273f95d9e6c0",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -28605,21 +28605,21 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Every cut keeps its reason bounds, its change and exactly one Inbox notice",
-          "line": 534,
+          "line": 536,
           "definitions": [
             "alwaysCutsRecorded"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The public cut list is exactly each contributor's latest change when that change is a cut",
-          "line": 546,
+          "line": 551,
           "definitions": [
             "alwaysPublicCutsCurrent"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff",
-          "line": 556,
+          "line": 561,
           "definitions": [
             "alwaysAutomaticHonoursCutNotice",
             "alwaysFreezeAfterCutNotice",
@@ -28628,7 +28628,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Obligations follow the frozen shares exactly, excluding only banned accounts",
-          "line": 575,
+          "line": 580,
           "definitions": [
             "alwaysObligationsMatchShares",
             "alwaysEveryPayableShareAccounted",
@@ -28641,7 +28641,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Frozen amounts, recorded triggers and obligation progress never move backwards",
-          "line": 598,
+          "line": 603,
           "definitions": [
             "frozenPhase",
             "stepFrozenStable",
@@ -28656,7 +28656,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Proposals, changes, cuts, freezes, exclusions and payments are reachable",
-          "line": 624,
+          "line": 629,
           "definitions": [
             "sometimesWalletlessReserve",
             "sometimesCompleted",
