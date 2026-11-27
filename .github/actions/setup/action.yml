@@ -68,13 +68,13 @@ runs:
         path: ${{ runner.temp }}/dafny-4.11.0-x64-ubuntu-22.04.zip
         key: dafny-release-${{ runner.os }}-${{ runner.arch }}-a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179
     - name: Install Foundry
-      if: inputs.verification == 'true'
+      if: inputs.verification == 'true' && !startsWith(inputs.job, 'simulate-')
       uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
       with:
         version: v1.7.1
         cache: false
     - name: Install solc and z3
-      if: inputs.verification == 'true'
+      if: inputs.verification == 'true' && !startsWith(inputs.job, 'simulate-')
       shell: bash
       run: |
         set -euo pipefail

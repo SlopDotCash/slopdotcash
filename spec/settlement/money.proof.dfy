@@ -1157,6 +1157,49 @@ lemma SubtractSuffixValue(a: seq<int>, b: seq<int>, work: seq<int>, current: Sub
   }
 }
 
+lemma MulNonNeg(x: int, y: int)
+  requires x >= 0 && y >= 0
+  ensures x * y >= 0
+  decreases x
+{
+  if x > 0 {
+    MulNonNeg(x - 1, y);
+  }
+}
+
+lemma SubtractHighZero(a: seq<int>, b: seq<int>)
+  requires validAmount(a) && validAmount(b) && compareAmounts(a, b) >= 0 && |a| < |b|
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b[|a|..])) == 0
+{
+  var h := (n: int, d: int) => 1000*n + d;
+  var p := (n: int, d: int) => 1000*n;
+  var wa := Std.Collections.Seq.FoldLeft(p, 1, a);
+  var va := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a));
+  var vb := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b));
+  AmountValueOrder(a, b);
+  AmountValueConsRange(a);
+  var lo := b[..|a|];
+  var hi := b[|a|..];
+  assert lo + hi == b;
+  assert forall d :: d in lo ==> d in b;
+  assert forall d :: d in hi ==> d in b;
+  PowerLengthOnly(a, lo, 1);
+  AmountValueConsRange(lo);
+  AmountValueConsRange(hi);
+  AmountValueConcat(lo, hi);
+  var vl := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(lo));
+  var vh := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(hi));
+  assert 0 <= vl && 0 <= vh;
+  assert vb == vl + wa * vh;
+  if vh > 0 {
+    MulNonNeg(wa, vh - 1);
+    assert wa * vh == wa + wa * (vh - 1);
+    assert wa * vh >= wa;
+  }
+  assert vh == 0;
+}
+
 lemma AmountValueSubtract(a: seq<int>, b: seq<int>)
   requires validAmount(a) && validAmount(b) && compareAmounts(a, b) >= 0
   ensures var h := (n: int, d: int) => 1000*n + d;
@@ -1172,24 +1215,7 @@ lemma AmountValueSubtract(a: seq<int>, b: seq<int>)
   assert vb <= va;
   AmountValueConsRange(a);
   if |a| < |b| {
-    var lo := b[..|a|];
-    var hi := b[|a|..];
-    assert lo + hi == b;
-    assert forall d :: d in lo ==> d in b;
-    assert forall d :: d in hi ==> d in b;
-    PowerLengthOnly(a, lo, 1);
-    AmountValueConsRange(lo);
-    AmountValueConsRange(hi);
-    AmountValueConcat(lo, hi);
-    var vl := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(lo));
-    var vh := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(hi));
-    assert 0 <= vl && 0 <= vh;
-    assert vb == vl + wa * vh;
-    if vh > 0 {
-      assert wa * (vh - 1) >= 0;
-      assert wa * vh >= wa;
-    }
-    assert vh == 0;
+    SubtractHighZero(a, b);
   }
   var f := (acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))]));
   var result := Std.Collections.Seq.FoldLeft(f, SubtractFold(0, 0, []), a);
@@ -1611,11 +1637,13 @@ lemma CandidateFitsFloor(digit: int, bit: int, expected: int, base: int, amount:
 {
   var candidate := digit+bit;
   if candidate <= expected {
-    assert (expected - candidate) * base >= 0;
+    MulNonNeg(expected - candidate, base);
+    assert (expected - candidate) * base == expected * base - candidate * base;
     assert candidate*base <= expected*base;
   } else {
     assert expected+1 <= candidate;
-    assert (candidate - (expected + 1)) * base >= 0;
+    MulNonNeg(candidate - (expected + 1), base);
+    assert (candidate - (expected + 1)) * base == candidate * base - (expected + 1) * base;
     assert (expected+1)*base <= candidate*base;
   }
 }
@@ -1861,10 +1889,14 @@ lemma lawFullOrdinaryConservation_ensures(a: seq<int>)
     AmountValueConsRange(result.quotient);
     if rem > 0 {
       assert positiveAmount(result.remainder);
-      AmountValueAdd(result.quotient,[1]);
+      assert fee == addAmounts(result.quotient, [1]);
+      assert reverseAmount([1]) == [1];
+      assert Std.Collections.Seq.FoldLeft(h, 0, [1]) == 1;
+      AmountValueAdd(result.quotient, [1]);
       assert charged == q+1;
     } else {
       assert rem == 0 && !positiveAmount(result.remainder);
+      assert fee == result.quotient;
       assert charged == q;
     }
     assert amount == 50*q+rem && charged <= amount;
