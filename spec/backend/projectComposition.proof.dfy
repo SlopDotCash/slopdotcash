@@ -62,7 +62,7 @@ lemma publishUpdate_ensures(c: Registry, by_: int, change: backend__projects_Own
 
 lemma WithAppendsShape(change: backend__projects_OwnerChange, e: security__enforcement_Enforcement)
   ensures withAppends(change, e).repositories == e.repositories + seq(|change.appends|, i requires 0 <= i < |change.appends| => change.appends[i].facts.repository)
-  ensures withAppends(change, e) == e.(repositories := withAppends(change, e).repositories, latest := withAppends(change, e).latest)
+  ensures withAppends(change, e) == e.(repositories := withAppends(change, e).repositories, latest := withAppends(change, e).latest, identities := withAppends(change, e).identities)
   decreases |change.appends|
 {
   if |change.appends| > 0 {
@@ -77,7 +77,7 @@ lemma WithAppendsShape(change: backend__projects_OwnerChange, e: security__enfor
 
 lemma WithExceptionAppendsShape(exception: backend__projects_Exception, e: security__enforcement_Enforcement)
   ensures withExceptionAppends(exception, e).repositories == e.repositories + seq(|exception.appended|, i requires 0 <= i < |exception.appended| => exception.appended[i].repositoryId)
-  ensures withExceptionAppends(exception, e) == e.(repositories := withExceptionAppends(exception, e).repositories, latest := withExceptionAppends(exception, e).latest)
+  ensures withExceptionAppends(exception, e) == e.(repositories := withExceptionAppends(exception, e).repositories, latest := withExceptionAppends(exception, e).latest, identities := withExceptionAppends(exception, e).identities)
   decreases |exception.appended|
 {
   if |exception.appended| > 0 {
