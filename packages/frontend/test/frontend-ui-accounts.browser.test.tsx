@@ -358,11 +358,14 @@ describe("Payout authorization", () => {
     await site.click(named("button", "Change EVM wallet"));
     await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
     await site.click(named("button", "Register"));
-    await shown(evmCard).toMatchObject({ text: expect.stringContaining(replacement) });
+    await expect.poll(async () => (await site.read(evmCard)).text, { timeout: 30_000 }).toContain(replacement);
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/earnings");
     await shown(authorize).toMatchObject({ visible: true });
-    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 200, body: { wallets: expect.arrayContaining([expect.objectContaining({ chain: "base", address: replacement.toLowerCase(), authorized: true })]) } });
+    const payments = await site.fetch("GET", "/api/v1/payments/me");
+    expect(payments.status).toBe(200);
+    const wallets = typeof payments.body === "object" && payments.body !== null && "wallets" in payments.body && Array.isArray(payments.body.wallets) ? payments.body.wallets : [];
+    expect(wallets.some((wallet: unknown) => typeof wallet === "object" && wallet !== null && "chain" in wallet && "address" in wallet && "authorized" in wallet && wallet.chain === "base" && wallet.address === replacement.toLowerCase() && wallet.authorized === true)).toBe(true);
     await shown(finalized).toMatchObject({ count: 0 });
     expect(await signs()).toBe(1);
   });

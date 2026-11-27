@@ -31521,7 +31521,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "95e5090c833aa1bb8cb2dc9db0df2533d43d49c3dee627f661b06ca13c40914d",
+      "sha256": "07bf9142f22bd9493cc210c703a25b13d99acbbddad51bfbbeed284d4257208b",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31714,7 +31714,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 411,
+          "line": 417,
           "definitions": [
             "actorValues",
             "attemptValues",
@@ -36393,7 +36393,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "f7984563d4247e5ef79935b8c8bee22daa42a8b3d7224473b73b7f71bed5c0bd",
+      "sha256": "226e036503fb24a219d18bb03c967a5df6b61ef5789e275ef9f8d6581c6dd4f3",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36424,7 +36424,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Absence is proved only by a hash-verified tree, never by a 404",
-          "line": 75,
+          "line": 78,
           "definitions": [
             "TreeRead",
             "PathLookup",
@@ -36441,7 +36441,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / A blob, tree or binary claim counts only when its git object hash matches the bytes read",
-          "line": 120,
+          "line": 123,
           "definitions": [
             "ObjectKind",
             "ObjectRead",
@@ -36463,7 +36463,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals",
-          "line": 181,
+          "line": 184,
           "definitions": [
             "LineSource",
             "FileLines",
@@ -36483,7 +36483,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 251,
+          "line": 254,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36497,7 +36497,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 291,
+          "line": 294,
           "definitions": [
             "CensusPull",
             "CensusQuery",

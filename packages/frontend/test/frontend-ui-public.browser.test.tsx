@@ -1055,7 +1055,7 @@ interface Mined {
   readonly logs: ReadonlyArray<{ address: string; topics: string[]; data: string }>;
 }
 
-function fakeChain(options: { atomic: boolean; unclear?: boolean; batchError?: object }) {
+function fakeChain(options: { atomic: boolean; unclear?: boolean; batchError?: Error }) {
   let chain = 1n;
   let finalized = 0n;
   const allowances = new Map<string, bigint>();
@@ -1297,9 +1297,9 @@ describe("Pay from a wallet and follow the deposit to final", () => {
   });
 
   it.each([
-    { reply: "direct capability refusal", error: { code: 5700, message: "Wallet capability unavailable" }, fallback: true, retained: false, retry: true },
-    { reply: "nested capability code", error: { code: -32603, message: "The reply was lost", cause: { code: 5700 } }, fallback: false, retained: true, retry: true },
-    { reply: "user decline", error: { code: 4001, message: "Declined" }, fallback: false, retained: false, retry: false },
+    { reply: "direct capability refusal", error: Object.assign(new Error("Wallet capability unavailable"), { code: 5700 }), fallback: true, retained: false, retry: true },
+    { reply: "nested capability code", error: Object.assign(new Error("The reply was lost"), { code: -32603, cause: { code: 5700 } }), fallback: false, retained: true, retry: true },
+    { reply: "user decline", error: Object.assign(new Error("Declined"), { code: 4001 }), fallback: false, retained: false, retry: false },
   ])("fee deposit batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, fallback, retained, retry }) => {
     const key = feeDepositKey(pullItem);
     const chain = fakeChain({ atomic: true, batchError: error });

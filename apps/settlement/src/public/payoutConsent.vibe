@@ -61,8 +61,7 @@ effect function statusOf(row: PayoutConsentRow, actor: bigint, rows: ReadonlyArr
     if (consent.chainId === row.chainId && expiresAt !== undefined && expiresAt <= Number.MAX_SAFE_INTEGER)
       retained.push({ version: consent.version, expiresAt: Number(expiresAt) })
   }
-  const projected = payoutBindingStatus(binding !== undefined, claimBound, binding?.read.version.toString() ?? "", now, retained)
-  return match (projected) {
+  return match (payoutBindingStatus(binding !== undefined, claimBound, binding?.read.version.toString() ?? "", now, retained)) {
     when "ConsentPending": "pending" as const;
     when "BindingFinalized": "finalized" as const;
     when "BindingUnavailable": "unavailable" as const;

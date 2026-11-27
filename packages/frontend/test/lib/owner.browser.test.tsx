@@ -158,7 +158,7 @@ function fakeChain(options: {
   readonly wallet?: string;
   readonly factoryObservation?: FactoryObservation;
   readonly lockBatch?: LockBatchReport;
-  readonly batchRefusal?: () => unknown;
+  readonly batchRefusal?: () => Error;
 }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
@@ -546,9 +546,9 @@ describe("Atomic batch deposit", () => {
   });
 
   it.each([
-    { reply: "direct capability refusal", error: { code: 5700, message: "Wallet capability unavailable" }, phase: "Separate", resumed: "Unreviewed", failure: "BatchStopped", retained: false },
-    { reply: "nested capability code", error: { code: -32603, message: "The reply was lost", cause: { code: 5700 } }, phase: "Uncertain", resumed: "Uncertain", failure: "BatchStopped", retained: true },
-    { reply: "user decline", error: { code: 4001, message: "Declined" }, phase: "Declined", resumed: "Unreviewed", failure: "WalletDeclined", retained: false },
+    { reply: "direct capability refusal", error: Object.assign(new Error("Wallet capability unavailable"), { code: 5700 }), phase: "Separate", resumed: "Unreviewed", failure: "BatchStopped", retained: false },
+    { reply: "nested capability code", error: Object.assign(new Error("The reply was lost"), { code: -32603, cause: { code: 5700 } }), phase: "Uncertain", resumed: "Uncertain", failure: "BatchStopped", retained: true },
+    { reply: "user decline", error: Object.assign(new Error("Declined"), { code: 4001 }), phase: "Declined", resumed: "Unreviewed", failure: "WalletDeclined", retained: false },
   ])("registered vault batch fallback handles $reply and preserves the saved intent when uncertain", async ({ error, phase, resumed, failure, retained }) => {
     let savedAtPrompt: string | null = null;
     const chain = fakeChain({ atomic: true, send: "mine", batchRefusal: () => {

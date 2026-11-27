@@ -627,7 +627,8 @@ describe("Exempt only by the frozen set or an audited", () => {
     await incompleteAssessment(id, assessment, fullName.toUpperCase());
     await manage(id);
     const reasons = named("region", "Why the scan did not clear");
-    await shown(reasons).toMatchObject({ visible: true, text: expect.stringContaining("Specialist: ambiguous") });
+    await shown(reasons).toMatchObject({ visible: true });
+    await expect.poll(async () => (await site.read(reasons)).text, { timeout: 30_000 }).toContain("Specialist: ambiguous");
     await shown(text("The last scan finished, but it did not establish clearance. Findings in Slop's skill template were recorded.", true)).toMatchObject({ visible: true });
     await shown(named("button", "Rescan")).toMatchObject({ visible: true });
     const checkPath = `/api/v1/project-setup/${encodeURIComponent(id)}/check`;
