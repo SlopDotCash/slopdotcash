@@ -479,25 +479,244 @@ pure val decisionValues = Set(E::Declined, E::UploadFailed, E::HumanOnly, E::Sto
 pure val intakeValues = Set(IH::Observed({ enabled: true, verifiedAt: 1 }), IH::NoObservation)
 pure val checkedAtValues = Set(2, 86400003)
 pure val readyValues = Set(true, false)
-pure val weight_observe = 12
-pure val weight_selectWork = 40
-pure val weight_beginWork = 40
-pure val weight_inspectRisk = 40
+pure val weight_observe = 2
+pure val weight_selectWork = 4
+pure val weight_beginWork = 4
+pure val weight_inspectRisk = 4
 pure val findingValues = Set(InspectClear, RiskReported, InspectUnavailable)
-pure val weight_recordTests = 40
-pure val weight_setAttribution = 30
-pure val weight_confirmSubmissionRead = 40
-pure val weight_submit = 40
-pure val weight_recordRun = 5
-pure val weight_recordMerge = 20
-pure val weight_observeStanding = 2
-pure val weight_recordClose = 50
-pure val weight_reopen = 50
-pure val weight_appeal = 50
-pure val weight_review = 20
-pure val weight_observeEvidence = 2
-pure val weight_requestChanges = 30
-pure val weight_pushUpdate = 20
-pure val weight_declareChangeType = 40
-pure val weight_recordEvidenceField = 40
+pure val weight_recordTests = 4
+pure val weight_setAttribution = 3
+pure val weight_confirmSubmissionRead = 4
+pure val weight_submit = 4
+pure val weight_recordRun = 2
+pure val weight_recordMerge = 2
+pure val weight_observeStanding = 1
+pure val weight_recordClose = 5
+pure val weight_reopen = 5
+pure val weight_appeal = 5
+pure val weight_review = 2
+pure val weight_observeEvidence = 1
+pure val weight_requestChanges = 3
+pure val weight_pushUpdate = 2
+pure val weight_declareChangeType = 4
+pure val weight_recordEvidenceField = 4
+pure val eval_witness_sometimesSubmittedNonUiWithLogs = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::NonUi),
+  ("recordEvidenceField", 1, SC::RuntimeLogs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"))
+pure val eval_witness_sometimesSubmittedWithFailedEvidenceAndStaleIntake = (
+  ("observeEvidence", 1, E::Declined, IH::NoObservation, 2),
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"))
+pure val eval_witness_sometimesSubmittedHumanOnly = (
+  ("observeEvidence", 1, E::HumanOnly, IH::NoObservation, 2),
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"))
+pure val eval_witness_sometimesSubmittedWithoutRun = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("readContributionGuide", 1, false),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"))
+pure val eval_witness_sometimesAccepted = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordMerge", githubCollector, openView))
+pure val eval_witness_sometimesAcceptedWithoutCredit = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("observeStanding", standingService, 1, 1, true),
+  ("recordMerge", githubCollector, openView))
+pure val eval_witness_sometimesAppealed = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordClose", githubCollector, SlopbotClose),
+  ("appeal", 1))
+pure val eval_witness_sometimesAppealedAfterSecondClosure = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordClose", githubCollector, SlopbotClose),
+  ("appeal", 1),
+  ("reopen", githubCollector, false),
+  ("recordClose", githubCollector, SlopbotClose),
+  ("appeal", 1))
+pure val eval_witness_sometimesReopened = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordClose", githubCollector, SlopbotClose),
+  ("reopen", githubCollector, true))
+pure val eval_witness_sometimesAuthorCloseReopened = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordClose", githubCollector, AuthorClose),
+  ("reopen", githubCollector, false))
+pure val eval_witness_sometimesMergedWhileChangesRequested = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("requestChanges", githubCollector),
+  ("recordMerge", githubCollector, openView))
+pure val eval_witness_sometimesUncollectedMergeUncredited = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordMerge", githubCollector, { ...openView, paused: true }))
+pure val eval_witness_sometimesBannedCannotStart = (
+  ("observe", 1, clearObservation),
+  ("observeStanding", standingService, 1, 1, true))
+pure val eval_witness_sometimesStoppedForRisk = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("reportRisk", 1))
+pure val eval_witness_sometimesRiskBlocksReselection = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, RiskReported),
+  ("abandon", 1),
+  ("observe", 1, clearObservation))
+pure val eval_witness_sometimesReselectedAfterFreshScan = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, RiskReported),
+  ("abandon", 1),
+  ("observe", 1, { ...clearObservation, cleanScan: 1 }),
+  ("selectWork", 1))
+pure val eval_witness_sometimesInspectionUnavailable = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectUnavailable))
+pure val eval_witness_sometimesStoppedByProject = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("observe", 1, { ...clearObservation, view: { ...openView, paused: true } }))
+pure val eval_witness_sometimesIssueRefused = ("agentWrite", 1, OpenIssue, ShellOnly)
+pure val eval_witness_sometimesStarred = ("agentWrite", 1, StarRepository, BrowserOrComputerUse)
+pure val eval_witness_sometimesSelfReviewUncredited = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("review", 1, "a", true, { provider: "p", model: "m", client: "c" }))
+pure val eval_witness_sometimesRevised = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("pushUpdate", 1, true))
+pure val eval_witness_sometimesRunRecorded = (
+  ("observe", 1, clearObservation),
+  ("selectWork", 1),
+  ("inspectRisk", 1, InspectClear),
+  ("beginWork", 1),
+  ("recordTests", 1, true, true),
+  ("declareChangeType", 1, SC::Docs),
+  ("observe", 1, clearObservation),
+  ("confirmSubmissionRead", 1),
+  ("setAttribution", 1, "a", "a", "a", true),
+  ("submit", 1, "PR_a"),
+  ("recordRun", slopServer, openedA))
 ```

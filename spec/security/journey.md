@@ -210,10 +210,61 @@ pure val seenRevisionValues = Set(1, 2, 3, 4, 5, 6)
 pure val startedAtMsValues = Set(1000000)
 pure val inputValues = Set(P::standardOffer.excludedFindings, List()).fold(Set(), (inputs, owner) =>
   inputs.union(S::inputValues.map(i => { ...i, exclusions: { defaults: T::slopDefaultExclusionCount, owner: owner } })))
-pure val weight_commitReceipt = 10
-pure val weight_begin = 6
-pure val weight_verifyObject = 8
-pure val weight_publish = 3
-pure val weight_finishScreening = 20
-pure val weight_claimSend = 10
+pure val weight_commitReceipt = 2
+pure val weight_begin = 2
+pure val weight_verifyObject = 2
+pure val weight_publish = 1
+pure val weight_finishScreening = 4
+pure val weight_claimSend = 2
+pure val eval_witness_sometimesPaidCase = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1))
+pure val eval_witness_sometimesUnpaidAfterPause = (
+  ("publish", 7, { actor: 7, project: "umia", projectRevision: 1 }, { ...P::standardOffer, status: P::Paused }, 2),
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1))
+pure val eval_witness_sometimesPausedAfterPaidReceipt = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("publish", 7, { actor: 7, project: "umia", projectRevision: 1 }, { ...P::standardOffer, status: P::Paused }, 2))
+pure val eval_witness_sometimesRouted = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("reviewReport", 2, 1, 1, S::Forward),
+  ("route", 2, 1))
+pure val eval_witness_sometimesHumanForwarded = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("reviewReport", 2, 1, 1, S::Forward))
+pure val eval_witness_sometimesRevisedThenDecided = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("requestInformation", 2, 1),
+  ("replace", 1, 1, "revised", 2),
+  ("decide", 2, 1, { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false }))
+pure val eval_witness_sometimesAssessmentShown = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("reviewReport", 2, 1, 1, S::Forward),
+  ("observeQualified", 1),
+  ("startAssessment", 2, 1),
+  ("finishAssessment", 1, true, 1000, 1))
+pure val eval_witness_sometimesSendInFlight = (
+  ("begin", 1, 1, 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("reviewReport", 2, 1, 1, S::Forward),
+  ("claimSend", { id: 1, revision: 1, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, 1000000, 1))
 ```

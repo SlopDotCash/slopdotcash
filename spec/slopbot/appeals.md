@@ -336,10 +336,29 @@ pure val decisionValues = Set({ item: "pr", revision: "head", actor: 6, role: Cu
   { item: "pr", revision: "older", actor: 6, role: CurrentMaintainer }, { item: "pr", revision: "head", actor: 7, role: NotMaintainer })
 pure val confidenceHundredthsValues = Set(50, 89, 90, 97)
 pure val observedAtValues = Set(0, 10, 604800, 604810, 691210)
-pure val weight_open = 6
-pure val weight_draft = 6
-pure val weight_accept = 6
-pure val weight_observeBan = 3
-pure val weight_dispatchDue = 4
-pure val weight_escalateOverdue = 4
+pure val weight_open = 2
+pure val weight_draft = 2
+pure val weight_accept = 2
+pure val weight_observeBan = 1
+pure val weight_dispatchDue = 2
+pure val weight_escalateOverdue = 2
+pure val eval_witness_sometimesSiblingHeldAtTriage = (
+  ("open", 5, spamSubject),
+  ("observeBan", NotBanned, 5),
+  ("observeSibling", SiblingDenied, 5),
+  ("draft", false, 95, 5),
+  ("escalateByCriteria", 5)
+)
+pure val eval_witness_sometimesEscalatedByCriteria = (
+  ("open", 5, { ...spamSubject, category: F::Scam, debit: 240 }),
+  ("observeBan", NotBanned, 5),
+  ("observeSibling", NoSiblingHold, 5),
+  ("draft", false, 95, 5),
+  ("escalateByCriteria", 5)
+)
+pure val eval_witness_sometimesBanEscalatedBeforeDraft = (
+  ("open", 5, spamSubject),
+  ("observeBan", Banned, 5),
+  ("escalateBanAtAnswer", 5, { actor: 6, item: "pr", role: CurrentMaintainer })
+)
 ```

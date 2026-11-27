@@ -208,14 +208,14 @@ pure val signatureValues = Set("", "sig1")
 pure val candidateValues = Set("sig2")
 pure val readValues = Set({ ...WA::noAttempt, identity: "s1", bytesId: preparedBytes }, { ...WA::noAttempt, identity: "s2", bytesId: preparedBytes },
   { ...WA::noAttempt, identity: "s1", bytesId: preparedBytes, hash: "sig1" })
-pure val weight_receivePlan = 6
-pure val weight_observeHeight = 4
-pure val weight_send = 6
-pure val weight_walletReply = 8
-pure val weight_verify = 4
-pure val weight_verifyReply = 8
-pure val weight_checkHistory = 8
-pure val weight_historyReply = 12
+pure val weight_receivePlan = 3
+pure val weight_observeHeight = 2
+pure val weight_send = 3
+pure val weight_walletReply = 4
+pure val weight_verify = 2
+pure val weight_verifyReply = 4
+pure val weight_checkHistory = 4
+pure val weight_historyReply = 6
 pure val eval_witness_sometimesFreshPlanAfterExpiry = (
   ("signIn", 1, 1),
   ("receivePlan", 1, 1, 3, server),
@@ -225,4 +225,39 @@ pure val eval_witness_sometimesFreshPlanAfterExpiry = (
   ("checkHistory", 1, 1),
   ("historyReply", 1, 1, NoPaymentFound, server),
   ("receivePlan", 1, 2, 5, server))
+pure val eval_witness_sometimesVerified = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Signed, "sig1", true, adapter),
+  ("verify", 1),
+  ("verifyReply", 1, 1, FinalizedMatch, server))
+pure val eval_witness_sometimesHistoryFound = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Signed, "sig1", true, adapter),
+  ("observeHeight", 4, heightReader),
+  ("checkHistory", 1, 1),
+  ("historyReply", 1, 1, PaymentFound, server))
+pure val eval_witness_sometimesCandidate = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Uncertain, "", true, adapter),
+  ("enterCandidate", { ...WA::noAttempt, identity: "s1", bytesId: preparedBytes }, "sig2", 1))
+pure val eval_witness_sometimesCandidateBesideSignature = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Signed, "sig1", true, adapter),
+  ("enterCandidate", { ...WA::noAttempt, identity: "s1", bytesId: preparedBytes, hash: "sig1" }, "sig2", 1))
+pure val eval_witness_sometimesHistoryIncomplete = (
+  ("signIn", 1, 1),
+  ("receivePlan", 1, 1, 3, server),
+  ("send", "s1", true, 1),
+  ("walletReply", "s1", WA::Signed, "sig1", true, adapter),
+  ("observeHeight", 4, heightReader),
+  ("checkHistory", 1, 1),
+  ("historyReply", 1, 1, ScanIncomplete, server))
 ```

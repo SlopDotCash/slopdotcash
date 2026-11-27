@@ -308,15 +308,93 @@ pure val requestIdValues = Set(1, 2, 3)
 pure val runIdValues = Set(1, 2, 3)
 pure val instanceValues = Set(2, 3)
 pure val bytesValues = Set(1, 2, 3)
-pure val weight_replace = 6
-pure val weight_request = 6
-pure val weight_dispatch = 7
-pure val weight_selectMode = 8
-pure val weight_checkIdentity = 8
-pure val weight_stageAttempt = 6
-pure val weight_commitAttempt = 7
-pure val weight_broadcast = 8
-pure val weight_finish = 5
-pure val weight_deliver = 5
-pure val weight_inspectScheduled = 6
+pure val weight_replace = 2
+pure val weight_request = 2
+pure val weight_dispatch = 2
+pure val weight_selectMode = 3
+pure val weight_checkIdentity = 3
+pure val weight_stageAttempt = 2
+pure val weight_commitAttempt = 2
+pure val weight_broadcast = 3
+pure val weight_finish = 2
+pure val weight_deliver = 2
+pure val weight_inspectScheduled = 2
+pure val eval_witness_sometimesCoalesced = (
+  ("configure", executeConfig),
+  ("request", 1, InternalTick),
+  ("request", 2, InternalTick),
+  ("dispatch", 1),
+  ("dispatch", 2))
+pure val eval_witness_sometimesCommitted = (
+  ("configure", executeConfig),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("indexReads", 1),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true))
+pure val eval_witness_sometimesHeldAcrossMidnight = (
+  ("configure", executeConfig),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true),
+  ("observeDay", 1))
+pure val eval_witness_sometimesGasSettled = (
+  ("configure", executeConfig),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true),
+  ("recordGasEvidence", 1, { bytes: 1, finalized: true, charged: 50000 }))
+pure val eval_witness_sometimesReplacedThenSettled = (
+  ("configure", { ...executeConfig, replacementActivated: true }),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true),
+  ("replace", 1, 2, 700, 5000, 0),
+  ("recordGasEvidence", 1, { bytes: 1, finalized: true, charged: 50000 }))
+pure val eval_witness_sometimesOriginalWinsAfterReplacement = (
+  ("configure", { ...executeConfig, replacementActivated: true }),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true),
+  ("replace", 1, 2, 700, 5000, 0),
+  ("recordGasEvidence", 1, { bytes: 1, finalized: true, charged: 50000 }))
+pure val eval_witness_sometimesReplayed = (
+  ("configure", executeConfig),
+  ("request", 1, InternalTick),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("stageAttempt", 1, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { wallet: "gas", expectedWallet: "gas" }),
+  ("commitAttempt", 1, true),
+  ("broadcast", 1, 1),
+  ("restart", 2, executeConfig),
+  ("request", 2, InternalTick),
+  ("dispatch", 2),
+  ("selectMode", 2),
+  ("checkIdentity", 2, true),
+  ("broadcast", 2, 1))
+pure val eval_witness_sometimesPartial = (
+  ("configure", executeConfig),
+  ("request", 1, Cron),
+  ("dispatch", 1),
+  ("selectMode", 1),
+  ("checkIdentity", 1, true),
+  ("itemFailure", 1),
+  ("finish", 1),
+  ("deliver", 1, true),
+  ("inspectScheduled", 1, true))
 ```

@@ -233,4 +233,12 @@ pure val evidenceValues = Set(
   { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "wrong", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true },
   { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(97), fee: List(2), height: 1, finalized: true, succeeded: true },
   { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: false, succeeded: true })
+pure val eval_witness_sometimesPaid = (
+  ("configure", PrivateFull, DirectFull, List(100), initial.target, "owner"),
+  ("releaseFullRail", { rail: DirectFull, decision: "owner-decision", reviewedRevision: 1, qualificationRun: "run" }, "platform-owner"),
+  ("bind", "wallet", 1, "recipient"),
+  ("journal", 1, "owner"),
+  ("submit", "owner"),
+  ("reconcile", { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "", principal: List(100), fee: List(0), height: 1, finalized: true, succeeded: true }, "owner")
+)
 ```

@@ -313,13 +313,94 @@ pure val upholdValues = Set(true, false)
 pure val decisionValues = Set(
   { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false },
   { finding: C::Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false })
-pure val weight_decideReport = 16
-pure val weight_failCalls = 10
-pure val weight_saveVersion = 6
-pure val weight_setMode = 6
-pure val weight_advance = 6
-pure val weight_appeal = 8
-pure val weight_decide = 4
-pure val weight_finishScreening = 8
-pure val weight_claimScreening = 8
+pure val weight_decideReport = 4
+pure val weight_failCalls = 3
+pure val weight_saveVersion = 2
+pure val weight_setMode = 2
+pure val weight_advance = 2
+pure val weight_appeal = 2
+pure val weight_decide = 1
+pure val weight_finishScreening = 2
+pure val weight_claimScreening = 2
+pure val eval_witness_sometimesDryRunRecorded = (
+  ("advance", 900000, 1),
+  ("decideReport", SameDigest({ earlier: 7 }), 1))
+pure val eval_witness_sometimesDigestDuplicateClosed = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", SameDigest({ earlier: 7 }), 1))
+pure val eval_witness_sometimesTwoCallDuplicateClosed = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: { ...clean, duplicateOf: 7 }, second: { ...clean, duplicateOf: 7 } }), 1))
+pure val eval_witness_sometimesPublishedLineClosed = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: { ...clean, line: 1 }, second: { ...clean, line: 1 } }), 1))
+pure val eval_witness_sometimesProofRequested = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1))
+pure val eval_witness_sometimesNoProofClosed = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1),
+  ("advance", 1209600000, 1),
+  ("decideReport", NoCallNeeded, 1))
+pure val eval_witness_sometimesProofStillMissing = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1),
+  ("saveVersion", 1, "revised", false),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1))
+pure val eval_witness_sometimesLossAcknowledged = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: { ...clean, lossPlausible: true, line: 1, severity: 5 }, second: { ...clean, lossPlausible: true, line: 1, severity: 5 } }), 1))
+pure val eval_witness_sometimesDisagreementAcknowledged = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: clean, second: missing }), 1))
+pure val eval_witness_sometimesGithubAcknowledged = (
+  ("setMode", Live, 1),
+  ("reachGithub", 1),
+  ("advance", 900000, 1),
+  ("decideReport", NoCallNeeded, 1))
+pure val eval_witness_sometimesUnavailableAcknowledged = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("failCalls", 1),
+  ("advance", 21600000, 1),
+  ("failCalls", 1),
+  ("advance", 21600000, 1),
+  ("failCalls", 1),
+  ("advance", 21600000, 1),
+  ("decideReport", NoCallNeeded, 1))
+pure val eval_witness_sometimesFileCountsAsProof = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1),
+  ("saveVersion", 1, "revised", true),
+  ("advance", 900000, 1),
+  ("decideReport", Calls({ first: missing, second: missing }), 1))
+pure val eval_witness_sometimesRoutineAppealReturned = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", SameDigest({ earlier: 7 }), 1),
+  ("appeal", 1))
+pure val eval_witness_sometimesOwnerDecidedAfterReturn = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", SameDigest({ earlier: 7 }), 1),
+  ("appeal", 1),
+  ("decide", 2, { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false }))
+pure val eval_witness_sometimesModeratorAfterReturn = (
+  ("setMode", Live, 1),
+  ("advance", 900000, 1),
+  ("decideReport", SameDigest({ earlier: 7 }), 1),
+  ("appeal", 1),
+  ("decide", 2, { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("appeal", 1))
+pure val eval_refuse_canAdvance = { ms: 0 }
 ```

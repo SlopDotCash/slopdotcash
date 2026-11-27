@@ -283,12 +283,12 @@ pure val proofValues = Set(
   { requestId: 3, challengeId: 1, claim: 1, recoveredSigner: "wallet-b", messageDigest: "message-a" },
   { requestId: 3, challengeId: 1, claim: 1, recoveredSigner: "wallet-a", messageDigest: "message-b" },
   { requestId: 3, challengeId: 1, claim: 1, recoveredSigner: "", messageDigest: "message-a" })
-pure val weight_selectChain = 10
-pure val weight_register = 20
-pure val weight_issue = 25
-pure val weight_readProof = 40
-pure val weight_consume = 35
-pure val weight_commitAuthorization = 40
+pure val weight_selectChain = 2
+pure val weight_register = 4
+pure val weight_issue = 5
+pure val weight_readProof = 8
+pure val weight_consume = 7
+pure val weight_commitAuthorization = 8
 ```
 
 ## Story: Recover a wallet through the operator without giving the operator authority
@@ -433,8 +433,8 @@ pure def sometimesPossessionAttested(b: WalletRegistration): bool = b.attestatio
 pure def sometimesChallengeBurnedWithoutAttestation(b: WalletRegistration): bool =
   b.possessionChallenges.some(c => c.consumed) and b.attestations.length() == 0
 pure val recoveredSignerValues = Set("wallet-a", "wallet-b", "")
-pure val weight_issuePossessionChallenge = 10
-pure val weight_attestPossession = 10
+pure val weight_issuePossessionChallenge = 2
+pure val weight_attestPossession = 2
 ```
 
 ### The effective claim and held deliveries follow the authorized claim

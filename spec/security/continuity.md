@@ -194,11 +194,11 @@ pure val evidenceValues = Set(PA::awardReceipt(1))
 pure val updateValues = Set(SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }))
 pure val sessionValues = Set(1)
 pure val confirmationValues = Set("octo")
-pure val weight_closeReporter = 4
-pure val weight_replaceRoles = 4
-pure val weight_decideAward = 10
-pure val weight_showAmounts = 10
-pure val weight_reconcile = 8
+pure val weight_closeReporter = 2
+pure val weight_replaceRoles = 2
+pure val weight_decideAward = 4
+pure val weight_showAmounts = 4
+pure val weight_reconcile = 3
 pure val eval_witness_sometimesClosedWhileReserved = (
   ("deposit", List(4), "asset", 1, true, 1),
   ("observeFunds", 2, 1),
@@ -208,4 +208,31 @@ pure val eval_witness_sometimesClosedWhileReserved = (
   ("showAmounts", 1, 2, 1, List(4)),
   ("decideAward", 1, 2, 1, List(4)),
   ("closeReporter", 1, 1, "octo"))
+pure val eval_witness_sometimesPaidAfterClosure = (
+  ("deposit", List(4), "asset", 1, true, 1),
+  ("observeFunds", 2, 1),
+  ("replaceRoles", C::staff, 1),
+  ("receive", 1, C::SlopReceived, PA::awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("closeReporter", 1, 1, "octo"),
+  ("updateDelivery", SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }), 1),
+  ("reconcile", PA::awardReceipt(1), 1))
+pure val eval_witness_sometimesTriagerRevokedByRoleChange = (
+  ("replaceRoles", C::staff, 1),
+  ("receive", 1, C::SlopReceived, PA::awardTerms, 1, 1),
+  ("assignTriager", 1, 2, 1, 10),
+  ("replaceRoles", { ...C::staff, epoch: 2, technical: List(8), financial: List(6), moderators: List(9) }, 1))
+pure val eval_witness_sometimesPaidAfterRoleSetChanged = (
+  ("deposit", List(4), "asset", 1, true, 1),
+  ("observeFunds", 2, 1),
+  ("replaceRoles", C::staff, 1),
+  ("receive", 1, C::SlopReceived, PA::awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("replaceRoles", { ...C::staff, epoch: 2, technical: List(8), financial: List(6), moderators: List(9) }, 1),
+  ("updateDelivery", SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }), 1),
+  ("reconcile", PA::awardReceipt(1), 1))
 ```

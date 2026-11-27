@@ -215,6 +215,12 @@ pure val sourceValues = Set(unchangedSource, { ...unchangedSource, headSha: "h2"
 pure val bValues = bindingValues
 pure val confidenceHundredthsValues = Set(40, 89, 95)
 pure val observedAtValues = Set(0, 604800, 691200)
-pure val weight_open = 6
-pure val weight_draft = 6
+pure val weight_open = 2
+pure val weight_draft = 2
+pure val eval_witness_sometimesUncertainEscalated = (
+  ("open", 5, singleBinding, { digest: "d1", bytesMatchDigest: true, project: 1, repository: 7, item: "pr", number: 3 }, { actor: 5, item: "pr", role: PrAuthor }, { project: 1, repository: 7, registry: RegisteredActive }),
+  ("observeBan", NotBanned, 5),
+  ("draft", true, 40, unchangedSource, 5),
+  ("escalateDraft", 5)
+)
 ```

@@ -316,16 +316,31 @@ pure val failureValues = Set(
   { attempt: 1, root: "root", height: 0, canonicalFailure: true },
   { attempt: 1, root: "wrong", height: 2, canonicalFailure: true },
   { attempt: 1, root: "root", height: 2, canonicalFailure: false })
-pure val weight_observe = 10
-pure val weight_qualifyUpgrade = 20
-pure val weight_pinImplementation = 20
-pure val weight_admitRetained = 25
-pure val weight_check = 25
-pure val weight_approve = 25
-pure val weight_ownerSign = 25
-pure val weight_finalize = 20
-pure val weight_retireFailedAttempt = 20
-pure val weight_refuseNetwork = 20
+pure val weight_observe = 2
+pure val weight_qualifyUpgrade = 4
+pure val weight_pinImplementation = 4
+pure val weight_admitRetained = 5
+pure val weight_check = 5
+pure val weight_approve = 5
+pure val weight_ownerSign = 5
+pure val weight_finalize = 4
+pure val weight_retireFailedAttempt = 4
+pure val weight_refuseNetwork = 4
+pure val eval_witness_sometimesObservedThenReleased = (
+  ("pinImplementation", { revision: 1, implementation: "v2", network: Evm }, "owner"),
+  ("observe", 1, "owner"),
+  ("qualifyUpgrade", { implementation: "v2", height: 1 }, "owner"),
+  ("admitRetained", retainedSample, "owner"),
+  ("check", "root", List(5), 1, 1, "owner"),
+  ("approve", "attester"),
+  ("ownerSign", 1, "owner"),
+  ("retireFailedAttempt", { attempt: 1, root: "root", height: 2, canonicalFailure: true }, "owner"),
+  ("check", "root", List(5), 2, 1, "owner"),
+  ("approve", "attester"),
+  ("ownerSign", 2, "owner"),
+  ("observe", 3, "owner"),
+  ("finalize", { attempt: 2, root: "root", height: 3, releasedAmount: List(6), settledAmount: List(0), finalized: true, succeeded: true }, "owner")
+)
 pure val requestRevisionValues = Set(0, 1, 2)
 pure val revisionValues = Set(0, 1, 2)
 ```

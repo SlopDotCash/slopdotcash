@@ -393,13 +393,132 @@ pure val quoteValues = Set(
   { route: RouteFound, amount: 25000000, takeAmount: 22500000, costBps: 1000, nativeFee: 1000000 },
   { route: NoRouteResult, amount: 500000000, takeAmount: 0, costBps: 0, nativeFee: 0 },
   { route: RouteFound, amount: 500000000, takeAmount: 450000000, costBps: 1001, nativeFee: 1000000 })
-pure val weight_publishWorker = 4
-pure val weight_verifyReadiness = 4
-pure val weight_recordIncome = 6
-pure val weight_approveOrder = 5
-pure val weight_order = 6
-pure val weight_settleApproval = 5
-pure val weight_settleOrder = 5
-pure val weight_observeArrival = 5
-pure val weight_decide = 5
+pure val weight_publishWorker = 3
+pure val weight_verifyReadiness = 3
+pure val weight_recordIncome = 4
+pure val weight_approveOrder = 3
+pure val weight_order = 4
+pure val weight_settleApproval = 3
+pure val weight_settleOrder = 3
+pure val weight_observeArrival = 3
+pure val weight_decide = 3
+pure val eval_witness_sometimesBridgePending = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("decide", { route: RouteFound, amount: 20000000, takeAmount: 19800000, costBps: 100, nativeFee: 1000000 }, R::Worker))
+pure val eval_witness_sometimesBridgeDryQuoted = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::DryRun }, R::ReleaseWorkflow),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("decide", { route: RouteFound, amount: 500000000, takeAmount: 495000000, costBps: 100, nativeFee: 1000000 }, R::Worker))
+pure val eval_witness_sometimesBridgeSkipped = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("decide", { route: RouteFound, amount: 500000000, takeAmount: 450000000, costBps: 1001, nativeFee: 1000000 }, R::Worker))
+pure val eval_witness_sometimesApprovalRefusedCostChange = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("loseSend", 21, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker))
+pure val eval_witness_sometimesMinimumBridgeOrdered = (
+  ("selectSource", R::Solana, R::Worker),
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Solana, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Solana, id: 4 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("order", { orderId: 5, tx: 25, amount: 25000000, takeAmount: 22500000, costBps: 1000, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 25000000 }, R::Worker))
+pure val eval_witness_sometimesOrderCreationFailed = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: false, finalized: true }, R::Worker))
+pure val eval_witness_sometimesInTransit = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: true, finalized: true }, R::Worker))
+pure val eval_witness_sometimesRefunded = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: true, finalized: true }, R::Worker),
+  ("observeRefund", { order: 1, amount: 500000000, beneficiary: "fees", height: 3, finalized: true }, R::Worker))
+pure val eval_witness_sometimesCancellingReported = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: true, finalized: true }, R::Worker),
+  ("observeCancelling", { order: 1, height: 4, finalized: true }, R::Worker),
+  ("advanceClock", buybackStart + 3600001, R::Worker),
+  ("reportUnfilled", R::Worker))
+pure val eval_witness_sometimesArrivalRetained = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 1), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: true, finalized: true }, R::Worker),
+  ("observeArrival", { order: 1, amount: 495000000, receiver: "fees", height: 2, finalized: true }, R::Worker),
+  ("closeOrder", R::Worker))
+pure val eval_witness_sometimesSecondCycle = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Base, R::Owner),
+  ("verifyReadiness", R::Robinhood, R::Owner),
+  ("recordIncome", { kind: ConversionOutput, network: R::Base, id: 1 }, List(0, 0, 0, 2), buybackStart, R::Worker),
+  ("approveOrder", { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 21, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleOrder", { tx: 22, succeeded: true, finalized: true }, R::Worker),
+  ("observeArrival", { order: 1, amount: 495000000, receiver: "fees", height: 2, finalized: true }, R::Worker),
+  ("closeOrder", R::Worker),
+  ("approveOrder", { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker),
+  ("settleApproval", { tx: 26, succeeded: true, finalized: true }, R::Worker),
+  ("order", { orderId: 3, tx: 27, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000000, balance: 600000000 }, R::Worker))
 ```

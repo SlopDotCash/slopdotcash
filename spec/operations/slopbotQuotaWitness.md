@@ -183,4 +183,46 @@ pure def sometimesRefusedRevocationExpires(w: QuotaWitness): bool = w.grant == E
 pure def sometimesLostMintExpires(w: QuotaWitness): bool = w.grant == ExpiredGrant and w.scope == NoScope
 pure def sometimesCancelledLeavesGrantUntilExpiry(w: QuotaWitness): bool =
   w.phase == WitnessDone and w.grant == UnknownGrant and w.scope != NoScope and not(w.verified) and not(w.revoked204)
+pure val eval_witness_sometimesNonMainRefused = ("begin", { ...admitted, onMain: false })
+pure val eval_witness_sometimesForeignCommitRefused = ("begin", { ...admitted, commitRequested: true })
+pure val eval_witness_sometimesWrongGrantRevoked = (
+  ("begin", admitted),
+  ("issue", MintWrongGrant),
+  ("cleanup", true))
+pure val eval_witness_sometimesReceiptWritten = (
+  ("begin", admitted),
+  ("issue", MintMetadata),
+  ("observe", goodReading, false),
+  ("cleanup", true),
+  "writeReceipt")
+pure val eval_witness_sometimesCommitReceiptWritten = (
+  ("begin", { ...admitted, commitRequested: true, workflowRepository: true }),
+  ("issue", MintMetadataContents),
+  ("observe", goodCommitReading, true),
+  ("cleanup", true),
+  "writeReceipt")
+pure val eval_witness_sometimesMissingCommitRevokedWithoutReceipt = (
+  ("begin", { ...admitted, commitRequested: true, workflowRepository: true }),
+  ("issue", MintMetadataContents),
+  ("observe", goodCommitReading, false),
+  ("cleanup", true))
+pure val eval_witness_sometimesInvalidQuotaRevokedWithoutReceipt = (
+  ("begin", admitted),
+  ("issue", MintMetadata),
+  ("observe", { ...goodReading, totalCount: 2 }, false),
+  ("cleanup", true))
+pure val eval_witness_sometimesRefusedRevocationExpires = (
+  ("begin", admitted),
+  ("issue", MintMetadata),
+  ("observe", goodReading, false),
+  ("cleanup", false),
+  "expire")
+pure val eval_witness_sometimesLostMintExpires = (
+  ("begin", admitted),
+  ("issue", MintLost),
+  "expire")
+pure val eval_witness_sometimesCancelledLeavesGrantUntilExpiry = (
+  ("begin", admitted),
+  ("issue", MintMetadata),
+  "cancel")
 ```

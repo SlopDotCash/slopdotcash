@@ -278,10 +278,39 @@ pure val payoutsValues = Set(List(),
   List({ id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false },
     { id: 2, project: 2, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: true, banned: false, held: false }))
 // These weights prioritize complete paths; all invalid values remain in the input sets.
-pure val weight_capture = 20
-pure val weight_configure = 15
-pure val weight_enableDryRun = 15
-pure val weight_startMonth = 25
-pure val weight_accrueNext = 30
-pure val weight_fileMonth = 30
+pure val weight_capture = 3
+pure val weight_configure = 2
+pure val weight_enableDryRun = 2
+pure val weight_startMonth = 3
+pure val weight_accrueNext = 4
+pure val weight_fileMonth = 4
+pure val eval_witness_sometimesFiled = (
+  ("capture", 1, 1, 2, 3, true, false, false, "owner"),
+  ("configure", List(0, 0, 1), true, "owner"),
+  ("enableDryRun", true, "owner"),
+  ("startMonth", firstPeriod, List({ id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }), "source", true, true, true, "leaseId", true, "owner"),
+  ("accrueNext", "owner"),
+  ("fileMonth", List({ actor: 3, wallet: "wallet", authorized: true }), "leaseId", true, "owner"))
+pure val eval_witness_sometimesExcludedRecorded = (
+  ("capture", 1, 1, 2, 3, true, false, false, "owner"),
+  ("capture", 2, 1, 2, 3, true, false, false, "owner"),
+  ("configure", List(0, 0, 1), true, "owner"),
+  ("enableDryRun", true, "owner"),
+  ("startMonth", firstPeriod, List(
+    { id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false },
+    { id: 2, project: 2, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: true, banned: false, held: false }), "source", true, true, true, "leaseId", true, "owner"),
+  ("accrueNext", "owner"),
+  ("accrueNext", "owner"),
+  ("fileMonth", List({ actor: 3, wallet: "wallet", authorized: true }), "leaseId", true, "owner"))
+pure val eval_witness_sometimesMultiProject = (
+  ("capture", 1, 1, 2, 3, true, false, false, "owner"),
+  ("capture", 2, 1, 2, 3, true, false, false, "owner"),
+  ("configure", List(0, 0, 1), true, "owner"),
+  ("enableDryRun", true, "owner"),
+  ("startMonth", firstPeriod, List(
+    { id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false },
+    { id: 2, project: 2, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: true, banned: false, held: false }), "source", true, true, true, "leaseId", true, "owner"),
+  ("accrueNext", "owner"),
+  ("accrueNext", "owner"),
+  ("fileMonth", List({ actor: 3, wallet: "wallet", authorized: true }), "leaseId", true, "owner"))
 ```

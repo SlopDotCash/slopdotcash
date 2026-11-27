@@ -99,4 +99,55 @@ value allowed by their declared types and product rules.
 pure val observedDigestValues = Set(0, 1, 2)
 pure val refValues = Set(0, 1, 2, 3)
 pure val byValues = Set(0, 18633264, 7)
+pure val eval_witness_sometimesPermanent = (
+  ("registerReference", 1, 0),
+  ("startUpload", 0),
+  ("finishUpload", 1, 0),
+  ("markPermanent", 1, 0))
+pure val eval_witness_sometimesShared = (
+  ("registerReference", 1, 0),
+  ("registerReference", 2, 0))
+pure val eval_witness_sometimesCleaned = (
+  ("registerReference", 1, 0),
+  ("startUpload", 0),
+  ("finishUpload", 1, 0),
+  ("verifyBackup", 1, 0),
+  ("closeReference", 1, 0, CleanScan),
+  ("advanceDay", 90, 0),
+  ("expireReference", 1, 0),
+  ("claimDelete", Fenced, 0),
+  ("deleteBytes", 0),
+  ("observeAbsence", true, 0),
+  ("recordCleanup", 0))
+pure val eval_witness_sometimesHeld = (
+  ("registerReference", 1, 0),
+  ("startUpload", 0),
+  ("finishUpload", 1, 0),
+  ("verifyBackup", 1, 0),
+  ("closeReference", 1, 0, CleanScan),
+  ("advanceDay", 90, 0),
+  ("expireReference", 1, 0),
+  ("claimDelete", LegacyUnfenced, 0))
+pure val eval_witness_sometimesIncident = (
+  ("registerReference", 1, 0),
+  ("startUpload", 0),
+  ("finishUpload", 1, 0),
+  ("verifyBackup", 1, 0),
+  ("reportMissingSource", false, 0),
+  ("recoverSource", 1, 0),
+  ("reportMissingSource", false, 0))
+pure val eval_witness_sometimesRegeneration = (
+  ("registerReference", 1, 0),
+  ("startUpload", 0),
+  ("finishUpload", 1, 0),
+  ("verifyBackup", 1, 0),
+  ("closeReference", 1, 0, CleanScan),
+  ("advanceDay", 90, 0),
+  ("expireReference", 1, 0),
+  ("claimDelete", Fenced, 0),
+  ("deleteBytes", 0),
+  ("observeAbsence", true, 0),
+  ("recordCleanup", 0),
+  ("startGeneration", 0),
+  ("registerReference", 2, 0))
 ```

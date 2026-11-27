@@ -280,11 +280,11 @@ pure def sometimesExpiredWaitsAgain(s: Snapshots): bool =
   s.savedCreations.some(v => v.state == SavedWaiting and v.attempts == 0 and s.requests.some(r => r.repeatOf == v.id))
 pure val savedIdValues = Set(1, 2, 3)
 pure val actorValues = Set(0, 7, 8)
-pure val weight_saveCreation = 10
-pure val weight_repeatSaved = 10
-pure val weight_closeRegisteredCreation = 10
-pure val weight_endSavedRefused = 10
-pure val weight_expireSaved = 6
+pure val weight_saveCreation = 3
+pure val weight_repeatSaved = 3
+pure val weight_closeRegisteredCreation = 3
+pure val weight_endSavedRefused = 3
+pure val weight_expireSaved = 2
 ```
 
 ## Story: Recover or refresh with exact finalized evidence
@@ -450,15 +450,39 @@ pure val ordinaryPolicyValues = Set(1, 3)
 pure val privatePolicyValues = Set(2, 4)
 pure val pinnedRootValues = Set("", "genesis")
 pure val seenRootValues = Set("genesis", "wrong")
-pure val weight_beginRegistration = 2
-pure val weight_checkCreation = 12
-pure val weight_commitRegistration = 10
-pure val weight_beginRecovery = 12
-pure val weight_pinGenesis = 12
-pure val weight_checkGenesis = 12
-pure val weight_readTotals = 12
-pure val weight_readPrior = 12
-pure val weight_write = 12
+pure val weight_beginRegistration = 1
+pure val weight_checkCreation = 3
+pure val weight_commitRegistration = 3
+pure val weight_beginRecovery = 3
+pure val weight_pinGenesis = 3
+pure val weight_checkGenesis = 3
+pure val weight_readTotals = 3
+pure val weight_readPrior = 3
+pure val weight_write = 3
+pure val eval_witness_sometimesMonthStartRecorded = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, baseCreation),
+  ("commitRegistration", 1, true),
+  ("beginRead", 2, Ordinary),
+  ("readTotals", 2, { ...ordinaryRead, block: List(3), blockTime: 1796083300, observedAt: 3, balances: { ...zeroBalances, free: { present: true, amount: List(7) } } }, true),
+  ("readPrior", 2),
+  ("write", 2, WriteAcknowledged))
+pure val eval_witness_sometimesOpenPledgeStored = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, baseCreation),
+  ("commitRegistration", 1, true),
+  ("beginRead", 2, Ordinary),
+  ("readTotals", 2, pledgedRead, true),
+  ("readPrior", 2),
+  ("write", 2, WriteAcknowledged))
+pure val eval_witness_sometimesClosedPledgeKept = (
+  ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
+  ("checkCreation", 1, baseCreation),
+  ("commitRegistration", 1, true),
+  ("beginRead", 2, Ordinary),
+  ("readTotals", 2, closedPledgeRead, true),
+  ("readPrior", 2),
+  ("write", 2, WriteAcknowledged))
 pure val eval_witness_sometimesServerFinishes = (
   ("beginRegistration", 1, Ordinary, "creation-one", "Base", 1, 7, true),
   ("checkCreation", 1, { ...baseCreation, status: PendingCreation }),

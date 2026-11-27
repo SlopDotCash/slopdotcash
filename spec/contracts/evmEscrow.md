@@ -827,26 +827,26 @@ pure val expectedVersionValues = Set(0, 1)
 pure val claimValues = Set(0, 7)
 pure val expiresAtValues = Set(1796342399, 1799020801)
 pure val timestampValues = Set(1796342400, 1796342401, 1799020800, 1801699200)
-pure val weight_initializeFactory = 20
-pure val weight_create = 15
-pure val weight_createWithMonthlyCommitment = 15
-pure val weight_deposit = 25
-pure val weight_commitAward = 20
-pure val weight_commitBountyAward = 20
-pure val weight_bindDestination = 25
-pure val weight_pay = 30
-pure val weight_tick = 10
-pure val weight_reserveMonthly = 25
-pure val weight_commitMonthly = 15
-pure val weight_commitMonthlyLeaf = 30
-pure val weight_releaseMonthlyReserve = 25
-pure val weight_cancelBinding = 15
-pure val weight_withdrawUnused = 10
-pure val weight_claimFees = 10
+pure val weight_initializeFactory = 4
+pure val weight_create = 3
+pure val weight_createWithMonthlyCommitment = 3
+pure val weight_deposit = 5
+pure val weight_commitAward = 4
+pure val weight_commitBountyAward = 4
+pure val weight_bindDestination = 5
+pure val weight_pay = 6
+pure val weight_tick = 2
+pure val weight_reserveMonthly = 5
+pure val weight_commitMonthly = 3
+pure val weight_commitMonthlyLeaf = 6
+pure val weight_releaseMonthlyReserve = 5
+pure val weight_cancelBinding = 3
+pure val weight_withdrawUnused = 2
+pure val weight_claimFees = 2
 pure val fromPeriodValues = Set(202612, 202701)
 pure val countValues = Set(1, 2)
-pure val weight_pledgeMonths = 20
-pure val weight_expirePledge = 15
+pure val weight_pledgeMonths = 4
+pure val weight_expirePledge = 3
 pure val eval_witness_sometimesEvmStrandedLeaf = (
   ("initializeFactory", "registrar", "fees", "attester", 0, "upgrader", 1, 1, true, "owner"),
   ("createWithMonthlyCommitment", "slop", "usdc", 100, true, true, "owner"),
@@ -864,4 +864,8 @@ pure val eval_witness_sometimesEvmStrandedLeafLocked = (
   ("reserveMonthly", 202611, { digest: "d", root: "r", wholeGross: 54, remainingGross: 54, count: 2,
     leaves: List({ actor: 1, gross: 50, source: 1 }, { actor: 2, gross: 4, source: 11 }) }, 1, "attester", "owner"),
   ("commitMonthlyLeaf", 202611, { actor: 2, gross: 4, source: 11 }, "owner"))
+pure val eval_witness_sometimesUpgradeAuthorityTransferred = (
+  ("initializeFactory", "registrar", "fees", "attester", 0, "upgrader", 1, 1, true, "owner"),
+  ("proposeUpgradeAuthority", "nextUpgrader", "upgrader"),
+  ("acceptUpgradeAuthority", "nextUpgrader"))
 ```

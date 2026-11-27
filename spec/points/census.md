@@ -395,6 +395,26 @@ pure val collectedProject: ProjectView = { registered: true, paused: false, reti
 pure val eval_witness_sometimesEmptyReady = (("begin", collectedProject, 0), ("recordPage", emptyPage), "finish")
 pure val eval_witness_sometimesOnePageReady = (("begin", collectedProject, 0),
   ("recordPage", { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) }), "finish")
+pure val eval_witness_sometimesIncomplete = (
+  ("begin", collectedProject, 0),
+  ("recordPage", { cursor: 0, next: 5, totalCount: 2, items: List(human) }),
+  ("recordCountChange", { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) }),
+  ("recordPage", { cursor: 0, next: 5, totalCount: 2, items: List(human) }),
+  ("recordCountChange", { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) })
+)
+pure val eval_witness_sometimesRetriedComplete = (
+  ("begin", collectedProject, 0),
+  ("recordPage", { cursor: 0, next: 5, totalCount: 2, items: List(human) }),
+  ("recordCountChange", { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) }),
+  ("recordPage", emptyPage),
+  "finish"
+)
+pure val eval_witness_sometimesRetainedButNotOffered = (
+  ("begin", collectedProject, 0),
+  ("recordPage", { cursor: 0, next: 5, totalCount: 2, items: List(human) }),
+  ("recordPage", { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) }),
+  "finish"
+)
 pure val pageValues = Set(
   { cursor: 0, next: 5, totalCount: 2, items: List(human) },
   { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },

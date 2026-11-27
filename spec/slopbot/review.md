@@ -361,10 +361,116 @@ pure val sourceValues = Set({ requested: "r1", fetched: "r1", isolation: Approve
   { requested: "r1", fetched: "r2", isolation: ApprovedIsolation }, { requested: "r1", fetched: "r1", isolation: NoIsolation })
 pure val routeValues = Set(R::MayCloseReview, R::AdvisoryReview, R::SkipDraft)
 pure val resetAtValues = Set(0, 50)
-pure val secondsValues = Set(10, 60)
-pure val weight_recordCall = 6
-pure val weight_recheckRegistry = 6
-pure val weight_start = 3
+pure val secondsValues = Set(0, 10, 60)
+pure val weight_recordCall = 3
+pure val weight_recheckRegistry = 3
+pure val weight_start = 2
+pure val eval_refuse_canElapse = { seconds: 0 }
+pure val eval_witness_sometimesSkippedBeforeAdmissionWithoutCalls = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("skipForIntake", true, true, false))
+pure val eval_witness_sometimesSkipped = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("skipForFee", true))
+pure val eval_witness_sometimesMonthlyCapSkipped = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("refuseMonthlyCap", false, 2000))
+pure val eval_witness_sometimesBackup = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start")
+pure val eval_witness_sometimesRegistryStopped = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", { ...activeRegistry, flags: RS::Flagged }))
+pure val eval_witness_sometimesOrbioAfterADenial = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet, outcome: CallBudgetDenied }, 50))
+pure val eval_witness_sometimesOrbioServesAfterADenial = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet, outcome: CallBudgetDenied }, 50),
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", okOrbio, 0))
+pure val eval_witness_sometimesProviderFailure = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet }, 0),
+  "skipMissingCredential",
+  "skipMissingCredential")
+pure val eval_witness_sometimesRestartSkippedByMonthlyCap = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet }, 0),
+  "skipMissingCredential",
+  "skipMissingCredential",
+  "retry",
+  ("refuseMonthlyCap", false, 2000))
+pure val eval_witness_sometimesBudgetBlocked = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet, outcome: CallBudgetDenied }, 50),
+  "skipMissingCredential")
+pure val eval_witness_sometimesRetriedAfterBlock = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...failed, provider: SurplusSonnet, outcome: CallBudgetDenied }, 50),
+  "skipMissingCredential",
+  ("elapse", 60),
+  "retry",
+  ("admitMonthly", true, 2000),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5", verdict: noVerdict }, 0),
+  ("finish", 0))
+pure val eval_witness_sometimesComplete = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5", verdict: noVerdict }, 0),
+  ("finish", 0))
+pure val eval_witness_sometimesLimited = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5", verdict: noVerdict }, 0),
+  ("finish", 2))
+pure val eval_witness_sometimesEnforceable = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5" }, 0),
+  "startConfirm",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, kind: Confirm, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5" }, 0),
+  ("finish", 0))
+pure val eval_witness_sometimesUncertain = (
+  ("bindSource", R::MayCloseReview, { requested: "r1", fetched: "r1", isolation: ApprovedIsolation }),
+  ("admitMonthly", false, 0),
+  "start",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5" }, 0),
+  "startConfirm",
+  ("recheckRegistry", activeRegistry),
+  ("recordCall", { ...okOrbio, kind: Confirm, provider: SurplusSonnet, servedModel: "claude-sonnet-5.5", verdict: { ...sure, confidence: 60 } }, 0),
+  ("finish", 0))
 ```
 
 ## Story: Read the whole bounded input and keep one disclosed review comment

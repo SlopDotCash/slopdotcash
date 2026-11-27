@@ -322,14 +322,28 @@ pure val identityValues = Set("c1", "c2", "t1")
 pure val hashValues = Set("", "h1")
 pure val candidateValues = Set("h2")
 pure val locksValues = VL::locksValues
-pure val weight_review = 10
-pure val weight_send = 10
-pure val weight_walletReply = 14
-pure val weight_ask = 14
-pure val weight_answer = 20
+pure val weight_review = 3
+pure val weight_send = 3
+pure val weight_walletReply = 4
+pure val weight_ask = 4
+pure val weight_answer = 6
 pure val eval_witness_sometimesDepositedWithoutSession = (("signIn", 1, 1),
   ("review", Creation, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Creation, "c1", true, 1),
   ("walletReply", Creation, 1, "c1", WA::Signed, "h1", adapter), ("ask", Creation, OwnerCheck, 1),
   ("answer", Creation, 1, OwnerCheck, FinalRead, server), ("signOut", 1), ("reviewDeposit", visitor),
   ("send", Transfer, "t1", true, visitor), ("walletReply", Transfer, 2, "t1", WA::Signed, "h1", adapter))
+pure val eval_witness_sometimesReceived = (("signIn", 1, 1),
+  ("review", Creation, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Creation, "c1", true, 1),
+  ("walletReply", Creation, 1, "c1", WA::Signed, "h1", adapter), ("ask", Creation, OwnerCheck, 1),
+  ("answer", Creation, 1, OwnerCheck, FinalRead, server),
+  ("review", Transfer, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Transfer, "t1", true, 1),
+  ("walletReply", Transfer, 1, "t1", WA::Signed, "h1", adapter), ("ask", Transfer, OwnerCheck, 1),
+  ("answer", Transfer, 1, OwnerCheck, IncludedRead, adapter))
+pure val eval_witness_sometimesCounted = (("signIn", 1, 1),
+  ("review", Creation, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Creation, "c1", true, 1),
+  ("walletReply", Creation, 1, "c1", WA::Signed, "h1", adapter), ("ask", Creation, OwnerCheck, 1),
+  ("answer", Creation, 1, OwnerCheck, FinalRead, server),
+  ("review", Transfer, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Transfer, "t1", true, 1),
+  ("walletReply", Transfer, 1, "t1", WA::Signed, "h1", adapter), ("ask", Transfer, OwnerCheck, 1),
+  ("answer", Transfer, 1, OwnerCheck, FinalRead, adapter))
 ```

@@ -1128,4 +1128,30 @@ pure val eval_witness_sometimesJointAbsorbedOwnRecord = (
   ("zeroSuperseded", unitKey("p", 1), supersedingSample),
   ("creditUnit", { project: "p", unit: 2, recipients: List({ actor: 1, lines: 0 }), completeLines: true, occurredAt: 2432005,
     repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2", decision: noDecision }))
+pure val eval_witness_sometimesHeldImplementationReviewZeroed = (
+  ("advance", 2432005),
+  ("credit", { key: keyReview, amount: 30, occurredAt: 2432005, rule: ScoreV2, provisional: false, digest: "r1" }, goodEvidence, noDecision),
+  ("recordSnapshotCoverage", "r1"),
+  ("zeroSuperseded", keyReview, { ...supersedingSample, snapshotDigest: "s3", decision: noDecision, coverage: CoverageReviewAssessed }))
+pure val eval_witness_sometimesDuplicateRetired = (
+  ("advance", 2432119),
+  ("formUnit", { project: "p", sources: Set(1), commits: Set(11), band: -1, hashesVerified: true, digest: "a", promotion: W::NotPromotion }),
+  ("acceptUnit", 1, 2432110),
+  ("creditUnit", { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432110, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision }),
+  ("retireDuplicate", "p", 1, RH::readyRetirement, RH::readyRun, "checked", "d9"))
+pure val eval_witness_sometimesOwnerCorrected = (
+  ("advance", 2432119),
+  ("formUnit", { project: "p", sources: Set(1), commits: Set(11), band: -1, hashesVerified: true, digest: "a", promotion: W::NotPromotion }),
+  ("acceptUnit", 1, 2432110),
+  ("creditUnit", { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432110, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision }),
+  ("correctRecipients", "p", 1, ownerCorrection, RH::readyRun, "checked", "d9"))
+pure val eval_witness_sometimesRatified = (
+  ("advance", 2432005),
+  ("formUnit", { project: "p", sources: Set(1), commits: Set(11), band: -1, hashesVerified: true, digest: "a", promotion: W::NotPromotion }),
+  ("acceptUnit", 1, 2432005),
+  ("creditUnit", { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision }),
+  ("rescoreUnit", { ...SP::initial, phase: SP::Ratified, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 30 }, "checked", "d9"))
 ```

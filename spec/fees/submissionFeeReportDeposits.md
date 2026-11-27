@@ -218,4 +218,46 @@ pure val reportDepositValues = Set(
   { made: { kind: T::NoToken, keptToMatches: false, amountCovers: false }, robinhood: true, keptToBurn: false })
 pure val decisionValues = D::decisionValues
 pure val byValues = D::byValues
+pure val eval_witness_sometimesReportDepositBurned = (
+  ("writeRow", { mode: AskedReport, amountValid: true }, D::Security),
+  ("deposit", { made: { kind: T::SlopToken, keptToMatches: true, amountCovers: true }, robinhood: true, keptToBurn: true }, D::Chain),
+  ("confirm", D::Chain),
+  ("finalize", D::Chain),
+  ("recordFinal", D::Worker),
+  ("judge", D::Worker),
+  ("decide", D::KeptDueOutcome, D::Security),
+  ("markDue", D::Worker),
+  ("resolve", D::Chain),
+  ("finalizeEvent", D::Chain),
+  ("recordResolution", D::Worker))
+pure val eval_witness_sometimesReportDepositRefunded = (
+  ("writeRow", { mode: AskedReport, amountValid: true }, D::Security),
+  ("deposit", { made: { kind: T::SlopToken, keptToMatches: true, amountCovers: true }, robinhood: true, keptToBurn: true }, D::Chain),
+  ("confirm", D::Chain),
+  ("finalize", D::Chain),
+  ("recordFinal", D::Worker),
+  ("judge", D::Worker),
+  ("decide", D::RefundDueOutcome, D::Security),
+  ("markDue", D::Worker),
+  ("resolve", D::Chain),
+  ("finalizeEvent", D::Chain),
+  ("recordResolution", D::Worker))
+pure val eval_witness_sometimesRecordedRowRefundsItsDeposit = (
+  ("writeRow", { mode: RecordedReport, amountValid: true }, D::Security),
+  ("deposit", { made: { kind: T::SlopToken, keptToMatches: true, amountCovers: true }, robinhood: true, keptToBurn: true }, D::Chain),
+  ("confirm", D::Chain),
+  ("finalize", D::Chain),
+  ("recordFinal", D::Worker),
+  ("endGrace", D::Worker),
+  ("judge", D::Worker),
+  ("markDue", D::Worker),
+  ("resolve", D::Chain),
+  ("finalizeEvent", D::Chain),
+  ("recordResolution", D::Worker))
+pure val eval_witness_sometimesWrongNetworkRefused = (
+  ("writeRow", { mode: AskedReport, amountValid: true }, D::Security),
+  ("deposit", { made: { kind: T::SlopToken, keptToMatches: true, amountCovers: true }, robinhood: false, keptToBurn: true }, D::Chain),
+  ("confirm", D::Chain),
+  ("recordConfirmed", D::Worker),
+  ("judge", D::Worker))
 ```

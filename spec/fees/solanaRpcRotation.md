@@ -228,4 +228,40 @@ pure val uploadedValues = Set({ ...baseSample, version: 11, number: 5, source: 8
   { ...baseSample, version: 11, number: 5, source: 8, settings: 4, rpc: pairSample }, { ...baseSample, rpc: pairSample })
 pure val acquiredValues = Set(true, false)
 pure val resultValues = Set(Confirmed, Ambiguous)
+pure val eval_witness_sometimesPriorHistoryUsed = (
+  ("startRotation", { manualMain: true, releaseEnabled: true, checkout: 8, pinnedVersion: 10, pinnedSource: 7, active: baseSample,
+    onlyActiveAndLatest: true, sourceParity: true, reviewedDatabase: 9, pair: pairSample }),
+  ("supplyPriorWitness", { phase: Qualifying, checkout: 6, priorSource: 6, tookLease: false, candidate: 0, verified: false,
+    digestMatches: true, historyComplete: true, pair: pairSample }),
+  ("qualify", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("leaseOutcome", true),
+  ("upload", { ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("deploy", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("confirmActivation", Confirmed))
+pure val eval_witness_sometimesVerified = (
+  ("startRotation", { manualMain: true, releaseEnabled: true, checkout: 8, pinnedVersion: 10, pinnedSource: 7, active: baseSample,
+    onlyActiveAndLatest: true, sourceParity: true, reviewedDatabase: 9, pair: pairSample }),
+  ("qualify", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("leaseOutcome", true),
+  ("upload", { ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("deploy", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("confirmActivation", Confirmed),
+  "releaseLease")
+pure val eval_witness_sometimesVerifiedAfterCommandFailure = (
+  ("startRotation", { manualMain: true, releaseEnabled: true, checkout: 8, pinnedVersion: 10, pinnedSource: 7, active: baseSample,
+    onlyActiveAndLatest: true, sourceParity: true, reviewedDatabase: 9, pair: pairSample }),
+  ("qualify", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("leaseOutcome", true),
+  ("upload", { ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("deploy", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  "recordCommandFailure",
+  ("confirmActivation", Confirmed))
+pure val eval_witness_sometimesUncertain = (
+  ("startRotation", { manualMain: true, releaseEnabled: true, checkout: 8, pinnedVersion: 10, pinnedSource: 7, active: baseSample,
+    onlyActiveAndLatest: true, sourceParity: true, reviewedDatabase: 9, pair: pairSample }),
+  ("qualify", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("leaseOutcome", true),
+  ("upload", { ...baseSample, version: 11, number: 5, source: 8, rpc: pairSample }, { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("deploy", { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }),
+  ("confirmActivation", Ambiguous))
 ```

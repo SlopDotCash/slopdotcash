@@ -513,19 +513,91 @@ pure val sampleCharge: Charge = { provider: OrbioSonnet, seenModel: "anthropic/c
 pure val chargeValues = Set(sampleCharge, { ...sampleCharge, result: FailedCall, known: false },
   { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5", result: BudgetDenial, actual: 0, estimate: 0 },
   { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5" })
-pure val weight_setSource = 3
-pure val weight_claim = 3
-pure val weight_ownGroup = 4
-pure val weight_beginCheck = 4
-pure val weight_remoteReply = 4
-pure val weight_finishCheck = 5
-pure val weight_admit = 4
-pure val weight_reserve = 4
-pure val weight_call = 4
-pure val weight_recordCall = 4
-pure val weight_saveUsage = 4
-pure val weight_retain = 5
-pure val weight_publish = 4
-pure val weight_captureFence = 4
+pure val weight_setSource = 2
+pure val weight_claim = 2
+pure val weight_ownGroup = 2
+pure val weight_beginCheck = 2
+pure val weight_remoteReply = 2
+pure val weight_finishCheck = 3
+pure val weight_admit = 2
+pure val weight_reserve = 2
+pure val weight_call = 2
+pure val weight_recordCall = 2
+pure val weight_saveUsage = 2
+pure val weight_retain = 3
+pure val weight_publish = 2
+pure val weight_captureFence = 2
 pure val weight_configure = 1
+pure val eval_witness_sometimesHeld = (
+  ("setSource", "inference", completeGroup, reviewedAuthority),
+  ("configure", { mode: Capped, cap: 5, maximum: 2 }),
+  ("claim", 1, 4, "inference"),
+  ("ownGroup", 1, completeGroup),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("admit", 1, 1),
+  ("reserve", 1, 0, 0, false))
+pure val eval_witness_sometimesOrbioAfterADenial = (
+  ("setSource", "inference", completeGroup, reviewedAuthority),
+  ("configure", { mode: AlertsOnly, cap: 0, maximum: 0 }),
+  ("claim", 1, 4, "inference"),
+  ("ownGroup", 1, completeGroup),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("admit", 1, 1),
+  ("reserve", 1, 0, 0, false),
+  ("call", 1),
+  ("recordCall", 1, { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5", result: BudgetDenial, actual: 0, estimate: 0 }),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("call", 1),
+  ("recordCall", 1, sampleCharge))
+pure val eval_witness_sometimesRetained = (
+  ("setSource", "inference", completeGroup, reviewedAuthority),
+  ("configure", { mode: Capped, cap: 5, maximum: 2 }),
+  ("claim", 1, 2, "inference"),
+  ("ownGroup", 1, completeGroup),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("admit", 1, 1),
+  ("reserve", 1, 0, 0, false),
+  ("skipUnavailable", 1, SurplusSonnet, true),
+  ("observe", 2, 1, reviewedAuthority),
+  ("endWithoutCall", 1),
+  ("claim", 2, 4, "inference"),
+  ("ownGroup", 2, completeGroup),
+  ("beginCheck", 2),
+  ("remoteReply", 2, "inference", completeGroup),
+  ("finishCheck", 2),
+  ("admit", 2, 2),
+  ("reserve", 2, 0, 0, false),
+  ("call", 2),
+  ("recordCall", 2, { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5" }),
+  ("saveUsage", 2),
+  ("retain", 2))
+pure val eval_witness_sometimesPublished = (
+  ("setSource", "inference", completeGroup, reviewedAuthority),
+  ("configure", { mode: Capped, cap: 5, maximum: 2 }),
+  ("claim", 1, 4, "inference"),
+  ("ownGroup", 1, completeGroup),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("admit", 1, 1),
+  ("reserve", 1, 0, 0, false),
+  ("call", 1),
+  ("recordCall", 1, { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5" }),
+  ("saveUsage", 1),
+  ("retain", 1),
+  ("complete", 1),
+  ("reconcile", 1),
+  ("captureFence", 1),
+  ("beginCheck", 1),
+  ("remoteReply", 1, "inference", completeGroup),
+  ("finishCheck", 1),
+  ("publish", 1, "result"))
 ```

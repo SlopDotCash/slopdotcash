@@ -862,4 +862,21 @@ pure val eval_witness_sometimesCutThenOwnerFinalized = (
   ("cut", 2, List(2), 20, 0, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }),
   ("observeClock", 1796169700),
   ("finalize", 1, { actor: 9, role: ProjectOwner, banned: false, revision: 1 }))
+pure val eval_witness_sometimesEmptyMonth = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", { ...snapshotSample, rows: List() }, List(), revisionSample, 0, noShareRecord),
+  ("observeClock", 1796342400),
+  "autoFreeze",
+  ("createObligations", { observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) }, List()))
+pure val eval_witness_sometimesPolicyChangedBlocksFreeze = (
+  ("openMonth", "eliza", 202611),
+  ("observeEligibility", eligible),
+  ("observeRevision", revisionSample),
+  ("observeClock", 1796083300),
+  ("propose", snapshotSample, List(), revisionSample, 0, noShareRecord),
+  ("observeRevision", { ...revisionSample, number: 2, asset: "other" }),
+  ("observeClock", 1796342400))
 ```

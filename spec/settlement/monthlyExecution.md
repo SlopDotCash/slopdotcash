@@ -702,4 +702,13 @@ pure val eval_witness_sometimesPrerequisiteIncluded = (
   ("selectRow", 1, false, "scheduler"),
   ("selectRow", 2, true, "scheduler"),
   ("markAttempt", 2, true, true, true, false, "scheduler"))
+pure val eval_witness_sometimesReauthorizedThenAdmitted = (
+  ("publish", 1, 1, 202611, 1, 1, true, true, true, false, treeR1, "scheduler"),
+  ("publish", 2, 1, 202612, 1, 1, true, true, true, false, treeR1, "scheduler"),
+  ("observeJournal", 1, v2Journal(202611, treeR1, 4), "scheduler"),
+  ("complete", 1, "scheduler"),
+  ("startRun", Mc::windowOpensAt(202612), "scheduler"),
+  ("signAttempt", 2, 2, treeR2, "attester"),
+  ("reauthorize", 2, 2, treeR2, "publisher"),
+  ("observeJournal", 2, v2Journal(202612, treeR2, 2), "scheduler"))
 ```
