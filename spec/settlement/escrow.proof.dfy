@@ -1275,17 +1275,10 @@ lemma EscWithdrawCounters(e: Escrow, gross: seq<int>, ev: ChainEvent, by_: strin
   settlement__money_lawEqualReflexive_ensures(e.pending);
 }
 
-lemma EscWithdrawHistory(e: Escrow, gross: seq<int>, ev: ChainEvent, by_: string)
-  requires alwaysEvmReleaseWhole(e) && alwaysTouchedMonthsShrink(e) && alwaysReleaseWhole(e)
-  requires alwaysWithdrawalFees(e) && alwaysMonths(e) && alwaysAwards(e) && alwaysReleasedLeavesAdmitted(e)
-  requires canWithdraw(e, gross, ev, by_)
-  ensures alwaysEvmReleaseWhole(withdraw(e, gross, ev, by_)) && alwaysTouchedMonthsShrink(withdraw(e, gross, ev, by_))
-  ensures alwaysReleaseWhole(withdraw(e, gross, ev, by_)) && alwaysWithdrawalFees(withdraw(e, gross, ev, by_))
-  ensures alwaysMonths(withdraw(e, gross, ev, by_)) && alwaysAwards(withdraw(e, gross, ev, by_))
-  ensures alwaysReleasedLeavesAdmitted(withdraw(e, gross, ev, by_))
-  ensures stepAwardsRetained(e, withdraw(e, gross, ev, by_)) && stepMonthsRetained(e, withdraw(e, gross, ev, by_))
+lemma EscWithdrawFees(e: Escrow, gross: seq<int>, ev: ChainEvent, by_: string)
+  requires alwaysWithdrawalFees(e) && canWithdraw(e, gross, ev, by_)
+  ensures alwaysWithdrawalFees(withdraw(e, gross, ev, by_))
   ensures stepWithdrawalsRetained(e, withdraw(e, gross, ev, by_))
-  ensures stepOneRootPerPeriod(e, "withdraw", withdraw(e, gross, ev, by_))
 {
   var a := withdraw(e, gross, ev, by_);
   var w := Withdrawal(ev.transaction, gross, settlement__money_ordinaryFeeAmount(gross), settlement__money_positiveAmount(e.pending));
@@ -1294,13 +1287,46 @@ lemma EscWithdrawHistory(e: Escrow, gross: seq<int>, ev: ChainEvent, by_: string
     && x.fee == settlement__money_ordinaryFeeAmount(x.gross) && x.transaction != "" {
     if x != w { assert x in e.withdrawals; }
   }
-  forall x | x in e.awards ensures exists y :: y in a.awards && sameAwardTerms(x, y) && (!x.paid || x == y) {
-    assert x in a.awards && sameAwardTerms(x, x);
+}
+
+lemma EscWithdrawMonthsAwards(e: Escrow, a: Escrow)
+  requires alwaysEvmReleaseWhole(e) && alwaysTouchedMonthsShrink(e) && alwaysReleaseWhole(e)
+  requires alwaysMonths(e) && alwaysAwards(e) && alwaysReleasedLeavesAdmitted(e)
+  requires a.months == e.months && a.awards == e.awards && a.releasedLeaves == e.releasedLeaves
+  requires a.asset == e.asset && a.purpose == e.purpose
+  ensures alwaysEvmReleaseWhole(a) && alwaysTouchedMonthsShrink(a) && alwaysReleaseWhole(a)
+  ensures alwaysMonths(a) && alwaysAwards(a) && alwaysReleasedLeavesAdmitted(a)
+  ensures stepAwardsRetained(e, a) && stepMonthsRetained(e, a)
+  ensures stepOneRootPerPeriod(e, "withdraw", a)
+{
+  assert alwaysMonths(a) by {
+    forall m | m in a.months ensures validPeriod(m.period) && m.root != "" && m.allocationDigest != ""
+      && settlement__money_validAmount(m.remaining) && settlement__money_validAmount(m.released)
+      && settlement__money_validAmount(m.admittedGross) && settlement__money_compareAmounts(m.remaining, m.admittedGross) <= 0
+      && |Std.Collections.Seq.Filter((other: MonthReserve) => (other.period == m.period), a.months)| == 1 {
+      assert m in e.months;
+    }
   }
-  forall x | x in e.months ensures exists y :: y in a.months && sameMonthTerms(x, y) {
-    assert x in a.months && sameMonthTerms(x, x);
+  assert alwaysAwards(a) by {
+    forall x | x in a.awards ensures validAward(a, x)
+      && |Std.Collections.Seq.Filter((other: Award) => (other.source == x.source), a.awards)| == 1 {
+      assert x in e.awards && validAward(e, x);
+      if x.origin.MonthlyLeaf? {
+        var m :| m in e.months && m.period == x.period;
+        assert m in a.months;
+      }
+    }
   }
-  forall x | x in a.awards ensures validAward(a, x) { assert x in e.awards && validAward(e, x); }
+  assert stepAwardsRetained(e, a) by {
+    forall x | x in e.awards ensures exists y :: y in a.awards && sameAwardTerms(x, y) && (!x.paid || x == y) {
+      assert x in a.awards && sameAwardTerms(x, x);
+    }
+  }
+  assert stepMonthsRetained(e, a) by {
+    forall x | x in e.months ensures exists y :: y in a.months && sameMonthTerms(x, y) {
+      assert x in a.months && sameMonthTerms(x, x);
+    }
+  }
 }
 
 // ---- Accrued fees go to the fee recipient ----
@@ -2269,7 +2295,8 @@ lemma withdraw_ensures(e: Escrow, gross: seq<int>, ev: ChainEvent, by_: string)
   if inv(e) && canWithdraw(e, gross, ev, by_) {
     var a := withdraw(e, gross, ev, by_);
     EscWithdrawCounters(e, gross, ev, by_);
-    EscWithdrawHistory(e, gross, ev, by_);
+    EscWithdrawFees(e, gross, ev, by_);
+    EscWithdrawMonthsAwards(e, a);
     EscPledgesSame(e, a, "withdraw");
     EscAdvanceShape(e, a, ev, "withdraw");
   }
@@ -2312,5 +2339,1190 @@ lemma claimFees_ensures(e: Escrow, recipient: string, ev: ChainEvent)
     EscHistorySame(e, a, "claimFees");
     EscPledgesSame(e, a, "claimFees");
     EscAdvanceShape(e, a, ev, "claimFees");
+  }
+}
+
+
+lemma EscPledgePeriodsPrefix(step: (seq<int>, int) -> seq<int>, fromPeriod: int, ps: seq<int>, xs: seq<int>)
+  requires forall s: seq<int>, i: int :: step(s, i) == (s + [(if |s| == 0 then fromPeriod else nextPeriod((if 0 <= |s| - 1 && |s| - 1 < |s| then s[|s| - 1] else fromPeriod)))])
+  ensures |Std.Collections.Seq.FoldLeft(step, ps, xs)| >= |ps|
+  ensures forall k :: 0 <= k < |ps| ==> Std.Collections.Seq.FoldLeft(step, ps, xs)[k] == ps[k]
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var ps1 := step(ps, xs[0]);
+    EscPledgePeriodsPrefix(step, fromPeriod, ps1, xs[1..]);
+  }
+}
+
+lemma EscPledgePeriodsInc(step: (seq<int>, int) -> seq<int>, fromPeriod: int, ps: seq<int>, xs: seq<int>)
+  requires forall s: seq<int>, i: int :: step(s, i) == (s + [(if |s| == 0 then fromPeriod else nextPeriod((if 0 <= |s| - 1 && |s| - 1 < |s| then s[|s| - 1] else fromPeriod)))])
+  requires forall i, j :: 0 <= i < j < |ps| ==> ps[i] < ps[j]
+  requires forall p :: p in Std.Collections.Seq.FoldLeft(step, ps, xs) ==> validPeriod(p)
+  ensures forall i, j :: 0 <= i < j < |Std.Collections.Seq.FoldLeft(step, ps, xs)| ==> Std.Collections.Seq.FoldLeft(step, ps, xs)[i] < Std.Collections.Seq.FoldLeft(step, ps, xs)[j]
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var ps1 := step(ps, xs[0]);
+    EscPledgePeriodsPrefix(step, fromPeriod, ps1, xs[1..]);
+    if |ps| > 0 {
+      var last := ps[|ps| - 1];
+      assert ps1[|ps| - 1] == last;
+      assert last in Std.Collections.Seq.FoldLeft(step, ps1, xs[1..]);
+      assert validPeriod(last);
+      assert nextPeriod(last) > last;
+    }
+    EscPledgePeriodsInc(step, fromPeriod, ps1, xs[1..]);
+  }
+}
+
+lemma EscPledgePeriodsDistinct(fromPeriod: int, count: int)
+  requires forall p :: p in pledgePeriods(fromPeriod, count) ==> validPeriod(p)
+  ensures ProofLib.Distinct(pledgePeriods(fromPeriod, count))
+{
+  var step1 := (ps: seq<int>, i: int) => (ps + [(if (|ps| == 0) then fromPeriod else nextPeriod((if ((0 <= (|ps| - 1)) && ((|ps| - 1) < |ps|)) then ps[(|ps| - 1)] else fromPeriod)))]);
+  var xs := ProofLib.Filter((i: int) => (i <= count), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  ProofLib.FilterSamePredicate((i: int) => (i <= count), (i: int) => (i <= count), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  ProofLib.FoldLeftPointwise(
+    (ps: seq<int>, i: int) => (ps + [(if (|ps| == 0) then fromPeriod else nextPeriod((if ((0 <= (|ps| - 1)) && ((|ps| - 1) < |ps|)) then ps[(|ps| - 1)] else fromPeriod)))]),
+    step1, [], xs, xs);
+  assert pledgePeriods(fromPeriod, count) == Std.Collections.Seq.FoldLeft(step1, [], xs);
+  EscPledgePeriodsInc(step1, fromPeriod, [], xs);
+}
+
+lemma EscAppendPledgesFold(base: seq<Pledge>, qs: seq<int>, amount: seq<int>)
+  ensures var res := Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), base, qs);
+    |res| == |base| + |qs|
+    && (forall i :: 0 <= i < |base| ==> res[i] == base[i])
+    && (forall i :: 0 <= i < |qs| ==> res[|base| + i] == Pledge(qs[i], amount, true))
+  decreases |qs|
+{
+  if |qs| > 0 {
+    var f := (ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]);
+    var next := base + [Pledge(qs[0], amount, true)];
+    EscAppendPledgesFold(next, qs[1..], amount);
+    var res := Std.Collections.Seq.FoldLeft(f, next, qs[1..]);
+    forall i | 0 <= i < |qs| ensures res[|base| + i] == Pledge(qs[i], amount, true) {
+      if i > 0 { assert qs[1..][i - 1] == qs[i]; }
+    }
+  }
+}
+
+lemma EscFoldLeftConcat<A, T>(f: (A, T) -> A, init: A, xs: seq<T>, ys: seq<T>)
+  ensures Std.Collections.Seq.FoldLeft(f, init, xs + ys) == Std.Collections.Seq.FoldLeft(f, Std.Collections.Seq.FoldLeft(f, init, xs), ys)
+  decreases |xs|
+{
+  if |xs| == 0 {
+    assert xs + ys == ys;
+  } else {
+    assert (xs + ys)[0] == xs[0] && (xs + ys)[1..] == xs[1..] + ys;
+    EscFoldLeftConcat(f, f(init, xs[0]), xs[1..], ys);
+  }
+}
+
+lemma EscOpenPledgedConcat(xs: seq<Pledge>, ys: seq<Pledge>)
+  requires forall x :: x in xs ==> settlement__money_validAmount(x.amount)
+  requires forall y :: y in ys ==> settlement__money_validAmount(y.amount)
+  ensures settlement__money_validAmount(openPledged(xs)) && settlement__money_validAmount(openPledged(ys))
+  ensures settlement__money_validAmount(openPledged(xs + ys))
+  ensures settlement__money_equalAmounts(openPledged(xs + ys), settlement__money_addAmounts(openPledged(xs), openPledged(ys)))
+{
+  var f := (t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t);
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  assert forall w :: w in xs + ys ==> settlement__money_validAmount(w.amount);
+  ProofLib.FoldLeftPointwise((t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t), f, z, xs, xs);
+  ProofLib.FoldLeftPointwise((t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t), f, z, ys, ys);
+  ProofLib.FoldLeftPointwise((t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t), f, z, xs + ys, xs + ys);
+  EscOpenFoldValid(f, z, xs);
+  EscOpenFoldValid(f, z, ys);
+  EscOpenFoldValid(f, z, xs + ys);
+  EscFoldLeftConcat(f, z, xs, ys);
+  var sx := openPledged(xs);
+  assert sx == Std.Collections.Seq.FoldLeft(f, z, xs);
+  assert openPledged(ys) == Std.Collections.Seq.FoldLeft(f, z, ys);
+  assert openPledged(xs + ys) == Std.Collections.Seq.FoldLeft(f, sx, ys);
+  settlement__money_lawZeroIdentity_ensures(sx);
+  settlement__money_lawAddCommutative_ensures(z, sx);
+  EscSym(settlement__money_addAmounts(z, sx), sx);
+  EscOpenFoldShift(f, sx, z, sx, ys);
+  settlement__money_lawAddCommutative_ensures(openPledged(ys), sx);
+  assert settlement__money_addAmounts(openPledged(ys), sx) == settlement__money_addAmounts(sx, openPledged(ys));
+}
+
+lemma EscOpenPledgedSingleton(p: Pledge)
+  requires settlement__money_validAmount(p.amount)
+  ensures settlement__money_validAmount(openPledged([p]))
+  ensures p.open ==> settlement__money_equalAmounts(openPledged([p]), p.amount)
+  ensures !p.open ==> openPledged([p]) == settlement__money_zero
+{
+  var f := (t: settlement__money_Amount, x: Pledge) => (if x.open then settlement__money_addAmounts(t, x.amount) else t);
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  ProofLib.FoldLeftPointwise((t: settlement__money_Amount, x: Pledge) => (if x.open then settlement__money_addAmounts(t, x.amount) else t), f, z, [p], [p]);
+  assert [p][0] == p && [p][1..] == [];
+  assert Std.Collections.Seq.FoldLeft(f, z, [p]) == Std.Collections.Seq.FoldLeft(f, f(z, p), []);
+  assert openPledged([p]) == f(z, p);
+  if p.open {
+    settlement__money_lawAdditionValid_ensures(z, p.amount);
+    settlement__money_lawZeroIdentity_ensures(p.amount);
+    settlement__money_lawAddCommutative_ensures(z, p.amount);
+  }
+}
+
+lemma EscOpenPledgedDropOne(xs: seq<Pledge>, q: int)
+  requires forall x :: x in xs ==> settlement__money_validAmount(x.amount)
+  requires ProofLib.DistinctBy(xs, (p: Pledge) => p.period)
+  ensures var ys := ProofLib.Filter((p: Pledge) => (p.period != q), xs);
+    settlement__money_validAmount(openPledged(xs)) && settlement__money_validAmount(openPledged(ys))
+    && ((exists k :: 0 <= k < |xs| && xs[k].period == q && xs[k].open) ==>
+          (forall k :: 0 <= k < |xs| && xs[k].period == q && xs[k].open ==>
+            settlement__money_equalAmounts(openPledged(xs), settlement__money_addAmounts(openPledged(ys), xs[k].amount))))
+    && (!(exists k :: 0 <= k < |xs| && xs[k].period == q && xs[k].open) ==>
+          settlement__money_equalAmounts(openPledged(xs), openPledged(ys)))
+  decreases |xs|
+{
+  hide *;
+  reveal ProofLib.DistinctBy, Std.Collections.Seq.FoldLeft, settlement__money_lawAddCommutative, settlement__money_lawAddAssociative, settlement__money_lawZeroIdentity, settlement__money_lawAddCongruence, settlement__money_lawEqualReflexive, settlement__money_lawAdditionValid;
+  var pred := (p: Pledge) => (p.period != q);
+  var ys := ProofLib.Filter(pred, xs);
+  ProofLib.FilterSamePredicate((p: Pledge) => (p.period != q), pred, xs);
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z) by { reveal settlement__money_validAmount, settlement__money_zero; }
+  ProofLib.FilterSubset(pred, xs);
+  if |xs| == 0 {
+    ProofLib.FilterNil(pred, xs);
+    assert openPledged(xs) == z by { reveal openPledged; }
+    settlement__money_lawEqualReflexive_ensures(z);
+  } else {
+    ProofLib.FilterCons(pred, xs);
+    var head := xs[0];
+    var tail := xs[1..];
+    assert xs == [head] + tail;
+    assert ProofLib.DistinctBy(tail, (p: Pledge) => p.period) by {
+      forall i, j | 0 <= i < |tail| && 0 <= j < |tail| && i != j ensures tail[i].period != tail[j].period {
+        assert tail[i] == xs[i + 1] && tail[j] == xs[j + 1];
+      }
+    }
+    EscOpenPledgedDropOne(tail, q);
+    var ytail := ProofLib.Filter(pred, tail);
+    ProofLib.FilterSamePredicate((p: Pledge) => (p.period != q), pred, tail);
+    ProofLib.FilterSubset(pred, tail);
+    if head.period == q {
+      assert ys == ytail;
+      assert forall i :: 0 <= i < |tail| ==> tail[i].period != q by {
+        forall i | 0 <= i < |tail| ensures tail[i].period != q { assert tail[i] == xs[i + 1]; }
+      }
+      assert !(exists k :: 0 <= k < |tail| && tail[k].period == q && tail[k].open);
+      EscOpenPledgedConcat([head], tail);
+      EscOpenPledgedSingleton(head);
+      if head.open {
+        settlement__money_lawAddCongruence_ensures(openPledged([head]), head.amount, openPledged(tail));
+        settlement__money_lawAddCommutative_ensures(openPledged([head]), openPledged(tail));
+        settlement__money_lawAddCommutative_ensures(head.amount, openPledged(tail));
+        EscChain(openPledged(xs), settlement__money_addAmounts(openPledged(tail), openPledged([head])), settlement__money_addAmounts(openPledged(tail), head.amount));
+        settlement__money_lawAddCongruence_ensures(openPledged(tail), openPledged(ytail), head.amount);
+        settlement__money_lawAddCommutative_ensures(openPledged(tail), head.amount);
+        settlement__money_lawAddCommutative_ensures(openPledged(ytail), head.amount);
+        EscChain(openPledged(xs), settlement__money_addAmounts(head.amount, openPledged(tail)), settlement__money_addAmounts(head.amount, openPledged(ytail)));
+      } else {
+        settlement__money_lawZeroIdentity_ensures(openPledged(tail));
+        settlement__money_lawAddCommutative_ensures(z, openPledged(tail));
+        EscChain(openPledged(xs), settlement__money_addAmounts(openPledged(tail), z), openPledged(tail));
+        EscChain(openPledged(xs), openPledged(tail), openPledged(ytail));
+      }
+    } else {
+      assert ys == [head] + ytail;
+      EscOpenPledgedConcat([head], tail);
+      EscOpenPledgedConcat([head], ytail);
+      var h := openPledged([head]);
+      if exists k :: 0 <= k < |xs| && xs[k].period == q && xs[k].open {
+        forall k | 0 <= k < |xs| && xs[k].period == q && xs[k].open
+          ensures settlement__money_equalAmounts(openPledged(xs), settlement__money_addAmounts(openPledged(ys), xs[k].amount))
+        {
+          assert k > 0 && tail[k - 1] == xs[k];
+          settlement__money_lawAdditionValid_ensures(openPledged(ytail), xs[k].amount);
+          settlement__money_lawAdditionValid_ensures(h, openPledged(ytail));
+          settlement__money_lawAddCongruence_ensures(openPledged(tail), settlement__money_addAmounts(openPledged(ytail), xs[k].amount), h);
+          EscChain(openPledged(xs), settlement__money_addAmounts(h, openPledged(tail)), settlement__money_addAmounts(h, settlement__money_addAmounts(openPledged(ytail), xs[k].amount)));
+          settlement__money_lawAddAssociative_ensures(h, openPledged(ytail), xs[k].amount);
+          EscSym(settlement__money_addAmounts(settlement__money_addAmounts(h, openPledged(ytail)), xs[k].amount), settlement__money_addAmounts(h, settlement__money_addAmounts(openPledged(ytail), xs[k].amount)));
+          EscChain(openPledged(xs), settlement__money_addAmounts(h, settlement__money_addAmounts(openPledged(ytail), xs[k].amount)), settlement__money_addAmounts(settlement__money_addAmounts(h, openPledged(ytail)), xs[k].amount));
+          EscSym(openPledged(ys), settlement__money_addAmounts(h, openPledged(ytail)));
+          settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(h, openPledged(ytail)), openPledged(ys), xs[k].amount);
+          settlement__money_lawAddCommutative_ensures(settlement__money_addAmounts(h, openPledged(ytail)), xs[k].amount);
+          settlement__money_lawAddCommutative_ensures(openPledged(ys), xs[k].amount);
+          EscChain(openPledged(xs), settlement__money_addAmounts(xs[k].amount, settlement__money_addAmounts(h, openPledged(ytail))), settlement__money_addAmounts(xs[k].amount, openPledged(ys)));
+        }
+      } else {
+        assert !(exists k :: 0 <= k < |tail| && tail[k].period == q && tail[k].open) by {
+          if exists k :: 0 <= k < |tail| && tail[k].period == q && tail[k].open {
+            var k :| 0 <= k < |tail| && tail[k].period == q && tail[k].open;
+            assert xs[k + 1] == tail[k];
+          }
+        }
+        settlement__money_lawAddCongruence_ensures(openPledged(tail), openPledged(ytail), h);
+        EscChain(openPledged(xs), settlement__money_addAmounts(h, openPledged(tail)), settlement__money_addAmounts(h, openPledged(ytail)));
+        EscSym(openPledged(ys), settlement__money_addAmounts(h, openPledged(ytail)));
+        EscChain(openPledged(xs), settlement__money_addAmounts(h, openPledged(ytail)), openPledged(ys));
+      }
+    }
+  }
+}
+
+lemma EscFilterDropCons(xs: seq<Pledge>, q: int, rest: seq<int>)
+  ensures ProofLib.Filter((p: Pledge) => !(p.period in ([q] + rest)), xs) == ProofLib.Filter((p: Pledge) => (p.period != q), ProofLib.Filter((p: Pledge) => !(p.period in rest), xs))
+  decreases |xs|
+{
+  hide *;
+  var p1 := (p: Pledge) => !(p.period in ([q] + rest));
+  var p2 := (p: Pledge) => !(p.period in rest);
+  var pq := (p: Pledge) => (p.period != q);
+  ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in ([q] + rest)), p1, xs);
+  ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in rest), p2, xs);
+  ProofLib.FilterSamePredicate((p: Pledge) => (p.period != q), pq, ProofLib.Filter(p2, xs));
+  if |xs| == 0 {
+    ProofLib.FilterNil(p1, xs);
+    ProofLib.FilterNil(p2, xs);
+    ProofLib.FilterNil(pq, []);
+  } else {
+    ProofLib.FilterCons(p1, xs);
+    ProofLib.FilterCons(p2, xs);
+    EscFilterDropCons(xs[1..], q, rest);
+    ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in ([q] + rest)), p1, xs[1..]);
+    ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in rest), p2, xs[1..]);
+    ProofLib.FilterSamePredicate((p: Pledge) => (p.period != q), pq, ProofLib.Filter(p2, xs[1..]));
+    assert (xs[0].period in ([q] + rest)) <==> (xs[0].period == q || xs[0].period in rest);
+    if p2(xs[0]) {
+      ProofLib.FilterCons(pq, [xs[0]] + ProofLib.Filter(p2, xs[1..]));
+      assert ([xs[0]] + ProofLib.Filter(p2, xs[1..]))[0] == xs[0];
+      assert ([xs[0]] + ProofLib.Filter(p2, xs[1..]))[1..] == ProofLib.Filter(p2, xs[1..]);
+      if pq(xs[0]) {
+        assert p1(xs[0]);
+      } else {
+        assert !p1(xs[0]);
+        assert [] + ProofLib.Filter(p1, xs[1..]) == ProofLib.Filter(p1, xs[1..]);
+        assert [] + ProofLib.Filter(pq, ProofLib.Filter(p2, xs[1..])) == ProofLib.Filter(pq, ProofLib.Filter(p2, xs[1..]));
+      }
+    } else {
+      assert !p1(xs[0]);
+      assert [] + ProofLib.Filter(p1, xs[1..]) == ProofLib.Filter(p1, xs[1..]);
+      assert [] + ProofLib.Filter(p2, xs[1..]) == ProofLib.Filter(p2, xs[1..]);
+    }
+  }
+}
+
+lemma EscAddedByShift(e: Escrow, t: seq<int>, s: seq<int>, a: seq<int>, qs: seq<int>, amount: seq<int>)
+  requires alwaysPledgesCovered(e) && settlement__money_validAmount(t) && settlement__money_validAmount(s) && settlement__money_validAmount(a) && settlement__money_validAmount(amount)
+  requires forall q :: q in qs ==> (!pledgeOf(e, q).open || settlement__money_compareAmounts(pledgeOf(e, q).amount, amount) <= 0)
+  requires settlement__money_equalAmounts(t, settlement__money_addAmounts(s, a))
+  ensures var f := (t: settlement__money_Amount, period: int) => settlement__money_addAmounts(t, raisedBy(e, period, amount));
+    settlement__money_validAmount(Std.Collections.Seq.FoldLeft(f, t, qs))
+    && settlement__money_validAmount(Std.Collections.Seq.FoldLeft(f, s, qs))
+    && settlement__money_equalAmounts(Std.Collections.Seq.FoldLeft(f, t, qs), settlement__money_addAmounts(Std.Collections.Seq.FoldLeft(f, s, qs), a))
+  decreases |qs|
+{
+  var f := (t: settlement__money_Amount, period: int) => settlement__money_addAmounts(t, raisedBy(e, period, amount));
+  if |qs| > 0 {
+    var q := qs[0];
+    assert q in qs;
+    if pledgeOf(e, q).open {
+      var k := EscOpenPledgeAt(e, q);
+      assert e.pledges[k] in e.pledges;
+      settlement__money_lawSubtractionValid_ensures(amount, pledgeOf(e, q).amount);
+    }
+    var r := raisedBy(e, q, amount);
+    assert settlement__money_validAmount(r);
+    EscAddLeft(t, s, a, r);
+    settlement__money_lawAdditionValid_ensures(t, r);
+    settlement__money_lawAdditionValid_ensures(s, r);
+    EscAddedByShift(e, f(t, q), f(s, q), a, qs[1..], amount);
+  }
+}
+
+lemma EscPledgeMonthsSumCombine(oAll: seq<int>, oRest: seq<int>, oKept: seq<int>, oKeptRest: seq<int>, oAppRest: seq<int>, oSingle: seq<int>, oE: seq<int>, addAll: seq<int>, addRest: seq<int>, r: seq<int>, amt: seq<int>)
+  requires settlement__money_validAmount(oAll) && settlement__money_validAmount(oRest)
+  requires settlement__money_validAmount(oKept) && settlement__money_validAmount(oKeptRest)
+  requires settlement__money_validAmount(oAppRest) && settlement__money_validAmount(oSingle)
+  requires settlement__money_validAmount(oE) && settlement__money_validAmount(addAll)
+  requires settlement__money_validAmount(addRest) && settlement__money_validAmount(r) && settlement__money_validAmount(amt)
+  requires settlement__money_equalAmounts(settlement__money_addAmounts(oKeptRest, r), settlement__money_addAmounts(oKept, amt))
+  requires settlement__money_equalAmounts(addAll, settlement__money_addAmounts(addRest, r))
+  requires settlement__money_equalAmounts(oSingle, settlement__money_addAmounts(oKept, amt))
+  requires settlement__money_equalAmounts(oAll, settlement__money_addAmounts(oSingle, oAppRest))
+  requires settlement__money_equalAmounts(oRest, settlement__money_addAmounts(oKeptRest, oAppRest))
+  requires settlement__money_equalAmounts(settlement__money_addAmounts(oE, addRest), oRest)
+  ensures settlement__money_equalAmounts(settlement__money_addAmounts(oE, addAll), oAll)
+{
+  hide *;
+  reveal settlement__money_lawAddCommutative, settlement__money_lawAddAssociative, settlement__money_lawAddCongruence, settlement__money_lawAdditionValid;
+  settlement__money_lawAdditionValid_ensures(oKeptRest, r);
+  settlement__money_lawAdditionValid_ensures(oKept, amt);
+  settlement__money_lawAdditionValid_ensures(oKeptRest, oAppRest);
+  settlement__money_lawAdditionValid_ensures(oE, addRest);
+  settlement__money_lawAdditionValid_ensures(addRest, r);
+  EscSym(settlement__money_addAmounts(oKeptRest, r), settlement__money_addAmounts(oKept, amt));
+  EscChain(oSingle, settlement__money_addAmounts(oKept, amt), settlement__money_addAmounts(oKeptRest, r));
+  settlement__money_lawAddCongruence_ensures(oSingle, settlement__money_addAmounts(oKeptRest, r), oAppRest);
+  settlement__money_lawAddCommutative_ensures(oSingle, oAppRest);
+  settlement__money_lawAddCommutative_ensures(settlement__money_addAmounts(oKeptRest, r), oAppRest);
+  EscChain(oAll, settlement__money_addAmounts(oAppRest, oSingle), settlement__money_addAmounts(oAppRest, settlement__money_addAmounts(oKeptRest, r)));
+  settlement__money_lawAddCommutative_ensures(oKeptRest, r);
+  settlement__money_lawAddAssociative_ensures(r, oKeptRest, oAppRest);
+  EscChain(oAll, settlement__money_addAmounts(settlement__money_addAmounts(r, oKeptRest), oAppRest), settlement__money_addAmounts(r, settlement__money_addAmounts(oKeptRest, oAppRest)));
+  EscSym(oRest, settlement__money_addAmounts(oKeptRest, oAppRest));
+  settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(oKeptRest, oAppRest), oRest, r);
+  EscChain(oAll, settlement__money_addAmounts(r, settlement__money_addAmounts(oKeptRest, oAppRest)), settlement__money_addAmounts(r, oRest));
+  settlement__money_lawAddCommutative_ensures(r, oRest);
+  EscSym(oAll, settlement__money_addAmounts(oRest, r));
+  settlement__money_lawAddCongruence_ensures(addAll, settlement__money_addAmounts(addRest, r), oE);
+  settlement__money_lawAddAssociative_ensures(oE, addRest, r);
+  EscSym(settlement__money_addAmounts(settlement__money_addAmounts(oE, addRest), r), settlement__money_addAmounts(oE, settlement__money_addAmounts(addRest, r)));
+  EscChain(settlement__money_addAmounts(oE, addAll), settlement__money_addAmounts(oE, settlement__money_addAmounts(addRest, r)), settlement__money_addAmounts(settlement__money_addAmounts(oE, addRest), r));
+  settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(oE, addRest), oRest, r);
+  settlement__money_lawAddCommutative_ensures(settlement__money_addAmounts(oE, addRest), r);
+  settlement__money_lawAddCommutative_ensures(oRest, r);
+  EscChain(settlement__money_addAmounts(oE, addAll), settlement__money_addAmounts(r, settlement__money_addAmounts(oE, addRest)), settlement__money_addAmounts(r, oRest));
+  EscChain(settlement__money_addAmounts(oE, addAll), settlement__money_addAmounts(oRest, r), oAll);
+}
+
+lemma EscPledgeMonthsSum(e: Escrow, qs: seq<int>, amount: seq<int>)
+  requires alwaysPledgesCovered(e) && settlement__money_validAmount(amount)
+  requires ProofLib.Distinct(qs)
+  requires forall q :: q in qs ==> (!pledgeOf(e, q).open || settlement__money_compareAmounts(pledgeOf(e, q).amount, amount) <= 0)
+  ensures var kept := ProofLib.Filter((p: Pledge) => !(p.period in qs), e.pledges);
+    var res := Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, qs);
+    settlement__money_validAmount(openPledged(e.pledges))
+    && settlement__money_validAmount(addedBy(e, qs, amount))
+    && settlement__money_validAmount(openPledged(res))
+    && settlement__money_equalAmounts(settlement__money_addAmounts(openPledged(e.pledges), addedBy(e, qs, amount)), openPledged(res))
+  decreases |qs|
+{
+  hide *;
+  reveal ProofLib.Distinct, ProofLib.DistinctBy, Std.Collections.Seq.FoldLeft, settlement__money_lawAddCommutative, settlement__money_lawAddAssociative, settlement__money_lawZeroIdentity, settlement__money_lawAddCongruence, settlement__money_lawEqualReflexive, settlement__money_lawAdditionValid, settlement__money_lawSubtractionValid, settlement__money_lawSubtractionReconstructs, settlement__money_lawNumericOrderTotal;
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z) by { reveal settlement__money_validAmount, settlement__money_zero; }
+  var f := (t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t);
+  var predQs := (p: Pledge) => !(p.period in qs);
+  var kept := ProofLib.Filter(predQs, e.pledges);
+  ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in qs), predQs, e.pledges);
+  var res := Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, qs);
+  assert forall x :: x in e.pledges ==> settlement__money_validAmount(x.amount) by { reveal alwaysPledgesCovered; }
+  assert settlement__money_validAmount(openPledged(e.pledges)) by {
+    ProofLib.FoldLeftPointwise((t: settlement__money_Amount, p: Pledge) => (if p.open then settlement__money_addAmounts(t, p.amount) else t), f, z, e.pledges, e.pledges);
+    reveal openPledged;
+    EscOpenFoldValid(f, z, e.pledges);
+  }
+  if |qs| == 0 {
+    ProofLib.FilterSamePredicate(predQs, (p: Pledge) => true, e.pledges);
+    EscPledgeFilterAll(e.pledges);
+    assert kept == e.pledges;
+    assert res == e.pledges;
+    assert addedBy(e, qs, amount) == z by { reveal addedBy; }
+    settlement__money_lawZeroIdentity_ensures(openPledged(e.pledges));
+  } else {
+    var q := qs[0];
+    var rest := qs[1..];
+    assert qs == [q] + rest;
+    assert q in qs && !(q in rest);
+    assert ProofLib.Distinct(rest) by {
+      forall i, j | 0 <= i < j < |rest| ensures rest[i] != rest[j] {
+        assert rest[i] == qs[i + 1] && rest[j] == qs[j + 1];
+      }
+    }
+    EscPledgeMonthsSum(e, rest, amount);
+    var predRest := (p: Pledge) => !(p.period in rest);
+    var keptRest := ProofLib.Filter(predRest, e.pledges);
+    ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in rest), predRest, e.pledges);
+    var resRest := Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), keptRest, rest);
+    var appRest := Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), [], rest);
+    EscAppendPledgesFold(kept, qs, amount);
+    EscAppendPledgesFold(keptRest, rest, amount);
+    EscAppendPledgesFold([], rest, amount);
+    assert res == kept + [Pledge(q, amount, true)] + appRest by {
+      var rhs := kept + [Pledge(q, amount, true)] + appRest;
+      assert |res| == |rhs|;
+      forall i | 0 <= i < |res| ensures res[i] == rhs[i] {
+        if i > |kept| {
+          assert qs[i - |kept|] == rest[i - |kept| - 1];
+        }
+      }
+    }
+    assert resRest == keptRest + appRest by {
+      var rhs := keptRest + appRest;
+      assert |resRest| == |rhs|;
+      forall i | 0 <= i < |resRest| ensures resRest[i] == rhs[i] {
+        if i >= |keptRest| {
+          assert appRest[i - |keptRest|] == Pledge(rest[i - |keptRest|], amount, true);
+        }
+      }
+    }
+    assert forall y :: y in appRest ==> settlement__money_validAmount(y.amount) by {
+      forall y | y in appRest ensures settlement__money_validAmount(y.amount) {
+        var i :| 0 <= i < |appRest| && appRest[i] == y;
+        assert y == Pledge(rest[i], amount, true);
+      }
+    }
+    ProofLib.FilterSubset(predRest, e.pledges);
+    ProofLib.FilterSubset(predQs, e.pledges);
+    assert ProofLib.DistinctBy(e.pledges, (p: Pledge) => p.period) by {
+      reveal alwaysPledgesCovered, ProofLib.Filter;
+      forall i, j | 0 <= i < |e.pledges| && 0 <= j < |e.pledges| && i != j ensures e.pledges[i].period != e.pledges[j].period {
+        assert e.pledges[i] in e.pledges;
+        if e.pledges[i].period == e.pledges[j].period {
+          ProofLib.FilterTwo((o: Pledge) => (o.period == e.pledges[i].period), e.pledges, i, j);
+        }
+      }
+    }
+    ProofLib.FilterKeepsDistinctBy(predRest, e.pledges, (p: Pledge) => p.period);
+    EscFilterDropCons(e.pledges, q, rest);
+    ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in ([q] + rest)), predQs, e.pledges);
+    assert kept == ProofLib.Filter((p: Pledge) => (p.period != q), keptRest);
+    EscOpenPledgedDropOne(keptRest, q);
+    if pledgeOf(e, q).open {
+      var k := EscOpenPledgeAt(e, q);
+      assert e.pledges[k] in e.pledges;
+      settlement__money_lawSubtractionValid_ensures(amount, pledgeOf(e, q).amount);
+    }
+    var r := raisedBy(e, q, amount);
+    assert settlement__money_validAmount(r) by { reveal raisedBy; }
+    assert settlement__money_equalAmounts(settlement__money_addAmounts(openPledged(keptRest), r), settlement__money_addAmounts(openPledged(kept), amount)) by {
+      reveal raisedBy;
+      if pledgeOf(e, q).open {
+        var k := EscOpenPledgeAt(e, q);
+        var x := e.pledges[k];
+        ProofLib.FilterMember(predRest, e.pledges, x);
+        assert x in keptRest;
+        var j :| 0 <= j < |keptRest| && keptRest[j] == x;
+        assert settlement__money_equalAmounts(openPledged(keptRest), settlement__money_addAmounts(openPledged(kept), x.amount));
+        settlement__money_lawAdditionValid_ensures(openPledged(kept), x.amount);
+        settlement__money_lawAddCongruence_ensures(openPledged(keptRest), settlement__money_addAmounts(openPledged(kept), x.amount), r);
+        settlement__money_lawAddCommutative_ensures(openPledged(keptRest), r);
+        settlement__money_lawAddCommutative_ensures(settlement__money_addAmounts(openPledged(kept), x.amount), r);
+        settlement__money_lawAddAssociative_ensures(openPledged(kept), x.amount, r);
+        EscChain(settlement__money_addAmounts(openPledged(keptRest), r), settlement__money_addAmounts(settlement__money_addAmounts(openPledged(kept), x.amount), r), settlement__money_addAmounts(openPledged(kept), settlement__money_addAmounts(x.amount, r)));
+        settlement__money_lawNumericOrderTotal_ensures(x.amount, amount);
+        settlement__money_lawSubtractionReconstructs_ensures(amount, x.amount);
+        settlement__money_lawAddCommutative_ensures(x.amount, r);
+        settlement__money_lawAdditionValid_ensures(x.amount, r);
+        assert settlement__money_equalAmounts(settlement__money_addAmounts(x.amount, r), amount);
+        settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(x.amount, r), amount, openPledged(kept));
+        EscChain(settlement__money_addAmounts(openPledged(keptRest), r), settlement__money_addAmounts(openPledged(kept), settlement__money_addAmounts(x.amount, r)), settlement__money_addAmounts(openPledged(kept), amount));
+      } else {
+        assert !(exists j :: 0 <= j < |keptRest| && keptRest[j].period == q && keptRest[j].open) by {
+          if exists j :: 0 <= j < |keptRest| && keptRest[j].period == q && keptRest[j].open {
+            var j :| 0 <= j < |keptRest| && keptRest[j].period == q && keptRest[j].open;
+            ProofLib.FilterMember(predRest, e.pledges, keptRest[j]);
+            EscPledgeOf(e, keptRest[j]);
+          }
+        }
+        assert settlement__money_equalAmounts(openPledged(keptRest), openPledged(kept));
+        settlement__money_lawAddCongruence_ensures(openPledged(keptRest), openPledged(kept), amount);
+        settlement__money_lawAddCommutative_ensures(openPledged(keptRest), amount);
+        settlement__money_lawAddCommutative_ensures(openPledged(kept), amount);
+      }
+    }
+    var addF := (t: settlement__money_Amount, period: int) => settlement__money_addAmounts(t, raisedBy(e, period, amount));
+    settlement__money_lawAdditionValid_ensures(z, r);
+    settlement__money_lawEqualReflexive_ensures(settlement__money_addAmounts(z, r));
+    EscAddedByShift(e, settlement__money_addAmounts(z, r), z, r, rest, amount);
+    assert addedBy(e, qs, amount) == Std.Collections.Seq.FoldLeft(addF, settlement__money_addAmounts(z, r), rest) by {
+      reveal addedBy;
+      ProofLib.FoldLeftPointwise((t: settlement__money_Amount, period: int) => settlement__money_addAmounts(t, raisedBy(e, period, amount)), addF, z, qs, qs);
+      assert Std.Collections.Seq.FoldLeft(addF, z, qs) == Std.Collections.Seq.FoldLeft(addF, addF(z, q), rest);
+    }
+    assert addedBy(e, rest, amount) == Std.Collections.Seq.FoldLeft(addF, z, rest) by {
+      reveal addedBy;
+      ProofLib.FoldLeftPointwise((t: settlement__money_Amount, period: int) => settlement__money_addAmounts(t, raisedBy(e, period, amount)), addF, z, rest, rest);
+    }
+    EscOpenPledgedConcat(kept, [Pledge(q, amount, true)]);
+    EscOpenPledgedConcat(kept + [Pledge(q, amount, true)], appRest);
+    EscOpenPledgedConcat(keptRest, appRest);
+    EscOpenPledgedSingleton(Pledge(q, amount, true));
+    settlement__money_lawAddCongruence_ensures(openPledged([Pledge(q, amount, true)]), amount, openPledged(kept));
+    EscChain(openPledged(kept + [Pledge(q, amount, true)]), settlement__money_addAmounts(openPledged(kept), openPledged([Pledge(q, amount, true)])), settlement__money_addAmounts(openPledged(kept), amount));
+    EscPledgeMonthsSumCombine(
+      openPledged(res), openPledged(resRest), openPledged(kept), openPledged(keptRest), openPledged(appRest),
+      openPledged(kept + [Pledge(q, amount, true)]), openPledged(e.pledges), addedBy(e, qs, amount), addedBy(e, rest, amount), r, amount);
+  }
+}
+
+lemma EscPledgeFilterAll(xs: seq<Pledge>)
+  ensures ProofLib.Filter((p: Pledge) => true, xs) == xs
+  decreases |xs|
+{
+  if |xs| == 0 {
+    ProofLib.FilterNil((p: Pledge) => true, xs);
+  } else {
+    ProofLib.FilterCons((p: Pledge) => true, xs);
+    EscPledgeFilterAll(xs[1..]);
+  }
+}
+
+lemma EscPledgeMonthsPledgesView(e: Escrow, fromPeriod: int, count: int, amount: seq<int>, ev: ChainEvent, by_: string)
+  ensures var qs := pledgePeriods(fromPeriod, count);
+    var kept := ProofLib.Filter((p: Pledge) => !(p.period in qs), e.pledges);
+    pledgeMonths(e, fromPeriod, count, amount, ev, by_).pledges == Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, qs)
+{
+  hide *;
+  reveal pledgeMonths, ProofLib.Filter;
+  var qs := pledgePeriods(fromPeriod, count);
+  ProofLib.FilterSamePredicate((p: Pledge) => !((p.period in qs)), (p: Pledge) => !(p.period in qs), e.pledges);
+}
+
+lemma EscPledgeMonthsDistinctPledges(e: Escrow, fromPeriod: int, count: int, amount: seq<int>, ev: ChainEvent, by_: string)
+  requires alwaysPledgesCovered(e) && canPledgeMonths(e, fromPeriod, count, amount, ev, by_)
+  ensures var a := pledgeMonths(e, fromPeriod, count, amount, ev, by_);
+    ProofLib.DistinctBy(a.pledges, (p: Pledge) => p.period)
+    && (forall p :: p in a.pledges ==> (validPeriod(p.period) && settlement__money_validAmount(p.amount) && settlement__money_positiveAmount(p.amount)
+        && |ProofLib.Filter((o: Pledge) => (o.period == p.period), a.pledges)| == 1
+        && (!(p.open && hasMonth(a, p.period)) || a.asset.network.Solana?)))
+{
+  hide *;
+  reveal ProofLib.Distinct, ProofLib.DistinctBy, canPledgeMonths, pledgeable, positiveInRange, pledgeMonths, advance, alwaysPledgesCovered, hasMonth, ProofLib.Filter;
+  var a := pledgeMonths(e, fromPeriod, count, amount, ev, by_);
+  var qs := pledgePeriods(fromPeriod, count);
+  var pred := (p: Pledge) => !(p.period in qs);
+  var kept := ProofLib.Filter(pred, e.pledges);
+  ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in qs), pred, e.pledges);
+  EscPledgeMonthsPledgesView(e, fromPeriod, count, amount, ev, by_);
+  EscPledgePeriodsDistinct(fromPeriod, count);
+  EscAppendPledgesFold(kept, qs, amount);
+  ProofLib.FilterSubset(pred, e.pledges);
+  assert ProofLib.DistinctBy(e.pledges, (p: Pledge) => p.period) by {
+    forall i, j | 0 <= i < |e.pledges| && 0 <= j < |e.pledges| && i != j ensures e.pledges[i].period != e.pledges[j].period {
+      assert e.pledges[i] in e.pledges;
+      if e.pledges[i].period == e.pledges[j].period {
+        ProofLib.FilterTwo((o: Pledge) => (o.period == e.pledges[i].period), e.pledges, i, j);
+      }
+    }
+  }
+  ProofLib.FilterKeepsDistinctBy(pred, e.pledges, (p: Pledge) => p.period);
+  assert ProofLib.DistinctBy(a.pledges, (p: Pledge) => p.period) by {
+    forall i, j | 0 <= i < |a.pledges| && 0 <= j < |a.pledges| && i != j ensures a.pledges[i].period != a.pledges[j].period {
+      if i < |kept| && j < |kept| {
+        assert a.pledges[i] == kept[i] && a.pledges[j] == kept[j];
+      } else if i < |kept| && j >= |kept| {
+        ProofLib.FilterMember(pred, e.pledges, kept[i]);
+        assert a.pledges[j].period == qs[j - |kept|];
+        assert qs[j - |kept|] in qs;
+      } else if i >= |kept| && j < |kept| {
+        ProofLib.FilterMember(pred, e.pledges, kept[j]);
+        assert a.pledges[i].period == qs[i - |kept|];
+        assert qs[i - |kept|] in qs;
+      } else {
+        assert a.pledges[i].period == qs[i - |kept|] && a.pledges[j].period == qs[j - |kept|];
+      }
+    }
+  }
+  forall p | p in a.pledges ensures (validPeriod(p.period) && settlement__money_validAmount(p.amount) && settlement__money_positiveAmount(p.amount)
+    && |ProofLib.Filter((o: Pledge) => (o.period == p.period), a.pledges)| == 1 && (!(p.open && hasMonth(a, p.period)) || a.asset.network.Solana?)) {
+    var i :| 0 <= i < |a.pledges| && a.pledges[i] == p;
+    ProofLib.FilterOne((o: Pledge) => (o.period == p.period), a.pledges, i);
+    if i < |kept| {
+      assert p in e.pledges;
+      if p.open && hasMonth(a, p.period) { assert hasMonth(e, p.period); }
+    } else {
+      assert qs[i - |kept|] in qs;
+      assert pledgeable(e, p.period, ev.time);
+      assert !hasMonth(e, p.period);
+    }
+  }
+}
+
+lemma EscPledgeMonthsCovered(e: Escrow, fromPeriod: int, count: int, amount: seq<int>, ev: ChainEvent, by_: string)
+  requires alwaysPledgesCovered(e) && canPledgeMonths(e, fromPeriod, count, amount, ev, by_)
+  ensures alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, ev, by_))
+{
+  hide *;
+  reveal canPledgeMonths, pledgeable, later, pledgeMonths, advance, alwaysPledgesCovered, ProofLib.Filter, settlement__money_lawAddCommutative, settlement__money_lawAddCongruence, settlement__money_lawAdditionValid;
+  var a := pledgeMonths(e, fromPeriod, count, amount, ev, by_);
+  var qs := pledgePeriods(fromPeriod, count);
+  EscPledgeMonthsPledgesView(e, fromPeriod, count, amount, ev, by_);
+  EscPledgePeriodsDistinct(fromPeriod, count);
+  EscPledgeMonthsSum(e, qs, amount);
+  var kept := ProofLib.Filter((p: Pledge) => !(p.period in qs), e.pledges);
+  assert a.pledges == Std.Collections.Seq.FoldLeft((ps: seq<Pledge>, period: int) => (ps + [Pledge(period, amount, true)]), kept, qs);
+  settlement__money_lawAdditionValid_ensures(e.pledged, addedBy(e, qs, amount));
+  settlement__money_lawAddCongruence_ensures(e.pledged, openPledged(e.pledges), addedBy(e, qs, amount));
+  settlement__money_lawAddCommutative_ensures(e.pledged, addedBy(e, qs, amount));
+  settlement__money_lawAddCommutative_ensures(openPledged(e.pledges), addedBy(e, qs, amount));
+  EscChain(a.pledged, settlement__money_addAmounts(openPledged(e.pledges), addedBy(e, qs, amount)), openPledged(a.pledges));
+  EscPledgeMonthsDistinctPledges(e, fromPeriod, count, amount, ev, by_);
+}
+
+lemma EscPledgeMonthsIrrevocable(e: Escrow, fromPeriod: int, count: int, amount: seq<int>, ev: ChainEvent, by_: string)
+  requires alwaysPledgesCovered(e) && canPledgeMonths(e, fromPeriod, count, amount, ev, by_)
+  requires alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, ev, by_))
+  ensures stepPledgeIrrevocable(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_))
+{
+  hide *;
+  reveal canPledgeMonths, pledgeMonths, advance, stepPledgeIrrevocable, alwaysPledgesCovered, settlement__money_lawNumericOrderTotal, settlement__money_lawEqualReflexive, settlement__money_lawEqualOrder;
+  var a := pledgeMonths(e, fromPeriod, count, amount, ev, by_);
+  var qs := pledgePeriods(fromPeriod, count);
+  var pred := (p: Pledge) => !(p.period in qs);
+  var kept := ProofLib.Filter(pred, e.pledges);
+  ProofLib.FilterSamePredicate((p: Pledge) => !(p.period in qs), pred, e.pledges);
+  EscPledgeMonthsPledgesView(e, fromPeriod, count, amount, ev, by_);
+  EscAppendPledgesFold(kept, qs, amount);
+  forall x | x in e.pledges && x.open ensures (pledgeOf(a, x.period).open && settlement__money_compareAmounts(pledgeOf(a, x.period).amount, x.amount) >= 0)
+    || pledgeClosable(e, "pledgeMonths", a, x.period) {
+    if x.period in qs {
+      var j :| 0 <= j < |qs| && qs[j] == x.period;
+      var np := Pledge(qs[j], amount, true);
+      assert a.pledges[|kept| + j] == np && np in a.pledges;
+      EscPledgeOf(a, np);
+      EscPledgeOf(e, x);
+      settlement__money_lawNumericOrderTotal_ensures(x.amount, amount);
+    } else {
+      ProofLib.FilterMember(pred, e.pledges, x);
+      assert x in kept;
+      var j :| 0 <= j < |kept| && kept[j] == x;
+      assert a.pledges[j] == x && x in a.pledges;
+      EscPledgeOf(a, x);
+      settlement__money_lawEqualReflexive_ensures(x.amount);
+      settlement__money_lawNumericOrderTotal_ensures(x.amount, x.amount);
+    }
+  }
+}
+
+lemma pledgeMonths_ensures(e: Escrow, fromPeriod: int, count: int, amount: seq<int>, ev: ChainEvent, by_: string)
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysEvmReleaseWhole(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysTouchedMonthsShrink(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysReleaseWhole(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysGrossConserved(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysReservedSplit(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysPaidSplit(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysFeesConserved(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysValidCounters(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysWithdrawalFees(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysMonths(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysBountyVaultHasNoMonths(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysUndeployedEmpty(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysReleasedLeavesAdmitted(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysPledgesCovered(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> alwaysAwards(pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepEventOrder(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepIdentityFixed(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepAwardsRetained(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepMonthsRetained(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepWithdrawalsRetained(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepCumulativeCounters(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepPoolLeavesOnlyByLeafOrRelease(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepFreeLeavesOnlyByOwnerOrRoot(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepFreeEntersOnlyByDepositOrRelease(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepManualBlockedWhilePoolPending(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepImplementationOnlyUpgrades(e, pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepReleaseNeedsUpgrade(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepOneRootPerPeriod(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+  ensures (inv(e) ==> canPledgeMonths(e, fromPeriod, count, amount, ev, by_) ==> stepPledgeIrrevocable(e, "pledgeMonths", pledgeMonths(e, fromPeriod, count, amount, ev, by_)))
+{
+  if inv(e) && canPledgeMonths(e, fromPeriod, count, amount, ev, by_) {
+    var a := pledgeMonths(e, fromPeriod, count, amount, ev, by_);
+    EscCountersSame(e, a, "pledgeMonths");
+    EscValidSame(e, a);
+    EscHistorySame(e, a, "pledgeMonths");
+    EscPledgeMonthsCovered(e, fromPeriod, count, amount, ev, by_);
+    EscPledgeMonthsIrrevocable(e, fromPeriod, count, amount, ev, by_);
+    EscAdvanceShape(e, a, ev, "pledgeMonths");
+  }
+}
+
+lemma EscLegacyNewTotalShift(e0: Escrow, t: seq<int>, s: seq<int>, a: seq<int>, xs: seq<LegacyEntry>)
+  requires settlement__money_validAmount(t) && settlement__money_validAmount(s) && settlement__money_validAmount(a)
+  requires forall x :: x in xs ==> settlement__money_validAmount(x.gross)
+  requires settlement__money_equalAmounts(t, settlement__money_addAmounts(s, a))
+  ensures var f := (sum: settlement__money_Amount, x: LegacyEntry) => settlement__money_addAmounts(sum, (if sourceFree(e0, x.source) then x.gross else settlement__money_zero));
+    settlement__money_validAmount(Std.Collections.Seq.FoldLeft(f, t, xs))
+    && settlement__money_validAmount(Std.Collections.Seq.FoldLeft(f, s, xs))
+    && settlement__money_equalAmounts(Std.Collections.Seq.FoldLeft(f, t, xs), settlement__money_addAmounts(Std.Collections.Seq.FoldLeft(f, s, xs), a))
+  decreases |xs|
+{
+  var f := (sum: settlement__money_Amount, x: LegacyEntry) => settlement__money_addAmounts(sum, (if sourceFree(e0, x.source) then x.gross else settlement__money_zero));
+  if |xs| > 0 {
+    assert xs[0] in xs;
+    var add := if sourceFree(e0, xs[0].source) then xs[0].gross else settlement__money_zero;
+    assert settlement__money_validAmount(add);
+    EscAddLeft(t, s, a, add);
+    settlement__money_lawAdditionValid_ensures(t, add);
+    settlement__money_lawAdditionValid_ensures(s, add);
+    EscLegacyNewTotalShift(e0, f(t, xs[0]), f(s, xs[0]), a, xs[1..]);
+  }
+}
+
+lemma EscLegacyNewTotalStep(e0: Escrow, x: LegacyEntry, xs: seq<LegacyEntry>)
+  requires settlement__money_validAmount(x.gross)
+  requires forall y :: y in xs ==> settlement__money_validAmount(y.gross)
+  ensures settlement__money_validAmount(legacyNewTotal(e0, xs))
+  ensures settlement__money_validAmount(legacyNewTotal(e0, [x] + xs))
+  ensures settlement__money_equalAmounts(legacyNewTotal(e0, [x] + xs), settlement__money_addAmounts(legacyNewTotal(e0, xs), (if sourceFree(e0, x.source) then x.gross else settlement__money_zero)))
+{
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  var add := if sourceFree(e0, x.source) then x.gross else z;
+  assert settlement__money_validAmount(add);
+  settlement__money_lawAdditionValid_ensures(z, add);
+  settlement__money_lawEqualReflexive_ensures(settlement__money_addAmounts(z, add));
+  EscLegacyNewTotalShift(e0, settlement__money_addAmounts(z, add), z, add, xs);
+  assert ([x] + xs)[0] == x && ([x] + xs)[1..] == xs;
+}
+
+lemma EscLegacyOneStep(e0: Escrow, period: int, time: int, acc: LegacyFold, x0: LegacyEntry)
+  requires acc.index >= 0 && acc.vault.purpose.OrdinaryPurpose? && hasMonth(acc.vault, period)
+  requires alwaysValidCounters(acc.vault) && alwaysReservedSplit(acc.vault) && alwaysAwards(acc.vault)
+  requires validSource(x0.source) && x0.actor > 0 && settlement__money_validAmount(x0.gross) && settlement__money_positiveAmount(x0.gross)
+  requires sourceFree(acc.vault, x0.source) == sourceFree(e0, x0.source)
+  ensures var nv := legacyStep(period, time, acc, x0).vault;
+    var add := if sourceFree(e0, x0.source) then x0.gross else settlement__money_zero;
+    alwaysValidCounters(nv) && alwaysReservedSplit(nv) && alwaysAwards(nv)
+    && settlement__money_validAmount(add)
+    && settlement__money_equalAmounts(nv.reserved, settlement__money_addAmounts(acc.vault.reserved, add))
+    && nv.deposited == acc.vault.deposited && nv.held == acc.vault.held && nv.free == acc.vault.free
+    && nv.committed == acc.vault.committed && nv.pending == acc.vault.pending
+    && nv.paid == acc.vault.paid && nv.paidNet == acc.vault.paidNet && nv.payoutFees == acc.vault.payoutFees
+    && nv.grossWithdrawn == acc.vault.grossWithdrawn && nv.withdrawalFees == acc.vault.withdrawalFees
+    && nv.accruedFees == acc.vault.accruedFees && nv.claimedFees == acc.vault.claimedFees && nv.spent == acc.vault.spent
+    && nv.monthlyCap == acc.vault.monthlyCap && nv.monthlyEnabled == acc.vault.monthlyEnabled
+    && nv.months == acc.vault.months && nv.releasedLeaves == acc.vault.releasedLeaves && nv.withdrawals == acc.vault.withdrawals
+    && nv.pledges == acc.vault.pledges && nv.pledged == acc.vault.pledged
+    && nv.asset == acc.vault.asset && nv.purpose == acc.vault.purpose && nv.deployed == acc.vault.deployed
+    && nv.vault == acc.vault.vault && nv.owner == acc.vault.owner && nv.feeRecipient == acc.vault.feeRecipient
+    && nv.bindingDelay == acc.vault.bindingDelay && nv.at == acc.vault.at && nv.clock == acc.vault.clock
+    && nv.implementation == acc.vault.implementation && nv.authority == acc.vault.authority
+    && |nv.awards| >= |acc.vault.awards|
+    && (forall a :: a in acc.vault.awards ==> a in nv.awards)
+    && (forall a :: a in nv.awards ==> a in acc.vault.awards || (a.origin.MonthlyLeaf? && a.period == period && a.source == x0.source))
+{
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  var v := acc.vault;
+  var nv := legacyStep(period, time, acc, x0).vault;
+  if sourceFree(v, x0.source) {
+    var aw := legacyAward(v, x0, period, acc.index, time);
+    var f := feeFor(v.purpose, x0.gross);
+    EscFeeSplit(v.purpose, x0.gross);
+    EscAddSplit(v.reserved, v.reservedPrincipal, v.reservedFees, x0.gross, f);
+    settlement__money_lawAdditionValid_ensures(v.reserved, x0.gross);
+    settlement__money_lawAdditionValid_ensures(v.reservedPrincipal, settlement__money_subtractAmounts(x0.gross, f));
+    settlement__money_lawAdditionValid_ensures(v.reservedFees, f);
+    settlement__money_lawEqualReflexive_ensures(nv.reserved);
+    assert nv.awards == v.awards + [aw];
+    assert alwaysAwards(nv) by {
+      forall a | a in nv.awards ensures validAward(nv, a) && |ProofLib.Filter((other: Award) => (other.source == a.source), nv.awards)| == 1 {
+        var key := a.source;
+        ProofLib.FilterAppend((other: Award) => (other.source == key), v.awards, aw);
+        if a == aw {
+          ProofLib.FilterNone((other: Award) => (other.source == key), v.awards);
+        } else {
+          assert a in v.awards && validAward(v, a);
+          assert aw.source != key;
+        }
+      }
+    }
+  } else {
+    assert nv == v;
+    settlement__money_lawZeroIdentity_ensures(v.reserved);
+    EscSym(settlement__money_addAmounts(v.reserved, z), v.reserved);
+  }
+}
+
+lemma EscLegacyFoldFrame(period: int, time: int, acc: LegacyFold, xs: seq<LegacyEntry>)
+  ensures var res := Std.Collections.Seq.FoldLeft((acc: LegacyFold, x: LegacyEntry) => legacyStep(period, time, acc, x), acc, xs).vault;
+    res.deposited == acc.vault.deposited && res.held == acc.vault.held && res.free == acc.vault.free
+    && res.committed == acc.vault.committed && res.pending == acc.vault.pending
+    && res.paid == acc.vault.paid && res.paidNet == acc.vault.paidNet && res.payoutFees == acc.vault.payoutFees
+    && res.grossWithdrawn == acc.vault.grossWithdrawn && res.withdrawalFees == acc.vault.withdrawalFees
+    && res.accruedFees == acc.vault.accruedFees && res.claimedFees == acc.vault.claimedFees && res.spent == acc.vault.spent
+    && res.monthlyCap == acc.vault.monthlyCap && res.monthlyEnabled == acc.vault.monthlyEnabled
+    && res.months == acc.vault.months && res.releasedLeaves == acc.vault.releasedLeaves && res.withdrawals == acc.vault.withdrawals
+    && res.pledges == acc.vault.pledges && res.pledged == acc.vault.pledged
+    && res.asset == acc.vault.asset && res.purpose == acc.vault.purpose && res.deployed == acc.vault.deployed
+    && res.vault == acc.vault.vault && res.owner == acc.vault.owner && res.feeRecipient == acc.vault.feeRecipient
+    && res.bindingDelay == acc.vault.bindingDelay && res.at == acc.vault.at && res.clock == acc.vault.clock
+    && res.implementation == acc.vault.implementation && res.authority == acc.vault.authority
+  decreases |xs|
+{
+  hide *;
+  reveal Std.Collections.Seq.FoldLeft, legacyStep, withAward;
+  if |xs| > 0 {
+    EscLegacyFoldFrame(period, time, legacyStep(period, time, acc, xs[0]), xs[1..]);
+  }
+}
+
+lemma EscLegacyFold(e0: Escrow, period: int, time: int, acc: LegacyFold, xs: seq<LegacyEntry>)
+  requires acc.index >= 0 && acc.vault.purpose.OrdinaryPurpose? && hasMonth(acc.vault, period)
+  requires alwaysValidCounters(acc.vault) && alwaysReservedSplit(acc.vault) && alwaysAwards(acc.vault)
+  requires forall x :: x in xs ==> validSource(x.source) && x.actor > 0 && settlement__money_validAmount(x.gross) && settlement__money_positiveAmount(x.gross)
+  requires ProofLib.DistinctBy(xs, (x: LegacyEntry) => x.source)
+  requires forall x :: x in xs ==> sourceFree(acc.vault, x.source) == sourceFree(e0, x.source)
+  ensures var res := Std.Collections.Seq.FoldLeft((acc: LegacyFold, x: LegacyEntry) => legacyStep(period, time, acc, x), acc, xs).vault;
+    alwaysValidCounters(res) && alwaysReservedSplit(res) && alwaysAwards(res)
+    && settlement__money_validAmount(legacyNewTotal(e0, xs))
+    && settlement__money_equalAmounts(res.reserved, settlement__money_addAmounts(acc.vault.reserved, legacyNewTotal(e0, xs)))
+    && |res.awards| >= |acc.vault.awards|
+    && (forall a :: a in acc.vault.awards ==> a in res.awards)
+    && (forall a :: a in res.awards ==> a in acc.vault.awards || (a.origin.MonthlyLeaf? && a.period == period))
+  decreases |xs|
+{
+  hide *;
+  reveal ProofLib.DistinctBy, Std.Collections.Seq.FoldLeft, settlement__money_lawZeroIdentity, settlement__money_lawAddCommutative, settlement__money_lawAddAssociative, settlement__money_lawAddCongruence, settlement__money_lawAdditionValid;
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z) by { reveal settlement__money_validAmount, settlement__money_zero; }
+  assert settlement__money_validAmount(acc.vault.reserved) by { reveal alwaysValidCounters; }
+  if |xs| == 0 {
+    assert legacyNewTotal(e0, xs) == z by { reveal legacyNewTotal; }
+    settlement__money_lawZeroIdentity_ensures(acc.vault.reserved);
+    EscSym(settlement__money_addAmounts(acc.vault.reserved, z), acc.vault.reserved);
+  } else {
+    var x0 := xs[0];
+    var rest := xs[1..];
+    assert xs == [x0] + rest;
+    assert x0 in xs;
+    EscLegacyOneStep(e0, period, time, acc, x0);
+    var next := legacyStep(period, time, acc, x0);
+    assert next.index == acc.index + 1 by { reveal legacyStep; }
+    var v := acc.vault;
+    var nv := next.vault;
+    assert hasMonth(nv, period) by { reveal hasMonth; }
+    var add := if sourceFree(e0, x0.source) then x0.gross else z;
+    assert ProofLib.DistinctBy(rest, (x: LegacyEntry) => x.source) by {
+      forall i, j | 0 <= i < |rest| && 0 <= j < |rest| && i != j ensures rest[i].source != rest[j].source {
+        assert rest[i] == xs[i + 1] && rest[j] == xs[j + 1];
+      }
+    }
+    forall x | x in rest ensures sourceFree(nv, x.source) == sourceFree(e0, x.source) {
+      reveal sourceFree;
+      var idx :| 0 <= idx < |rest| && rest[idx] == x;
+      assert xs[idx + 1] == x && x.source != x0.source;
+      assert sourceFree(v, x.source) == sourceFree(e0, x.source);
+    }
+    EscLegacyFold(e0, period, time, next, rest);
+    EscLegacyNewTotalStep(e0, x0, rest);
+    var res := Std.Collections.Seq.FoldLeft((acc: LegacyFold, x: LegacyEntry) => legacyStep(period, time, acc, x), acc, xs).vault;
+    assert settlement__money_validAmount(nv.reserved) && settlement__money_validAmount(res.reserved) by { reveal alwaysValidCounters; }
+    var restTot := legacyNewTotal(e0, rest);
+    settlement__money_lawAdditionValid_ensures(v.reserved, add);
+    settlement__money_lawAdditionValid_ensures(add, restTot);
+    settlement__money_lawAddCongruence_ensures(nv.reserved, settlement__money_addAmounts(v.reserved, add), restTot);
+    settlement__money_lawAddCommutative_ensures(nv.reserved, restTot);
+    settlement__money_lawAddCommutative_ensures(settlement__money_addAmounts(v.reserved, add), restTot);
+    EscChain(res.reserved, settlement__money_addAmounts(restTot, nv.reserved), settlement__money_addAmounts(restTot, settlement__money_addAmounts(v.reserved, add)));
+    settlement__money_lawAddAssociative_ensures(v.reserved, add, restTot);
+    EscChain(res.reserved, settlement__money_addAmounts(settlement__money_addAmounts(v.reserved, add), restTot), settlement__money_addAmounts(v.reserved, settlement__money_addAmounts(add, restTot)));
+    settlement__money_lawAddCommutative_ensures(add, restTot);
+    EscSym(legacyNewTotal(e0, xs), settlement__money_addAmounts(restTot, add));
+    settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(restTot, add), legacyNewTotal(e0, xs), v.reserved);
+    EscChain(res.reserved, settlement__money_addAmounts(v.reserved, settlement__money_addAmounts(restTot, add)), settlement__money_addAmounts(v.reserved, legacyNewTotal(e0, xs)));
+  }
+}
+
+lemma EscLegacyDistinctEntries(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent)
+  requires canAdmitLegacyMonth(e, legacy, ev)
+  ensures ProofLib.DistinctBy(legacy.entries, (x: LegacyEntry) => x.source)
+  ensures settlement__money_validAmount(legacyNewTotal(e, legacy.entries))
+{
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  settlement__money_lawZeroIdentity_ensures(z);
+  EscLegacyNewTotalShift(e, z, z, z, legacy.entries);
+  forall i, j | 0 <= i < |legacy.entries| && 0 <= j < |legacy.entries| && i != j ensures legacy.entries[i].source != legacy.entries[j].source {
+    assert legacy.entries[i] in legacy.entries;
+    if legacy.entries[i].source == legacy.entries[j].source {
+      ProofLib.FilterTwo((o: LegacyEntry) => (o.source == legacy.entries[i].source), legacy.entries, i, j);
+    }
+  }
+}
+
+lemma EscLegacyPrepare(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent)
+  requires alwaysValidCounters(e) && alwaysReservedSplit(e) && alwaysAwards(e) && canAdmitLegacyMonth(e, legacy, ev)
+  ensures var newTotal := legacyNewTotal(e, legacy.entries);
+    var w := closePledge(legacy.period, advance(ev, e)).(
+      free := settlement__money_subtractAmounts(e.free, newTotal),
+      committed := settlement__money_addAmounts(e.committed, newTotal),
+      admissionsWhileOff := offAdmission(e),
+      months := (e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)])
+    );
+    settlement__money_validAmount(newTotal)
+    && alwaysValidCounters(w) && alwaysReservedSplit(w) && alwaysAwards(w)
+    && hasMonth(w, legacy.period)
+    && ProofLib.DistinctBy(legacy.entries, (x: LegacyEntry) => x.source)
+    && (forall x :: x in legacy.entries ==> sourceFree(w, x.source) == sourceFree(e, x.source))
+{
+  EscLegacyDistinctEntries(e, legacy, ev);
+  var newTotal := legacyNewTotal(e, legacy.entries);
+  assert closePledge(legacy.period, e).free == e.free;
+  assert settlement__money_compareAmounts(e.free, newTotal) >= 0;
+  settlement__money_lawSubtractionValid_ensures(e.free, newTotal);
+  settlement__money_lawAdditionValid_ensures(e.committed, newTotal);
+  var w := closePledge(legacy.period, advance(ev, e)).(
+    free := settlement__money_subtractAmounts(e.free, newTotal),
+    committed := settlement__money_addAmounts(e.committed, newTotal),
+    admissionsWhileOff := offAdmission(e),
+    months := (e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)])
+  );
+  assert w.months[|e.months|] in w.months;
+  assert hasMonth(w, legacy.period);
+  assert alwaysAwards(w) by {
+    forall a | a in w.awards ensures validAward(w, a) && |ProofLib.Filter((other: Award) => (other.source == a.source), w.awards)| == 1 {
+      assert a in e.awards && validAward(e, a);
+      if a.origin.MonthlyLeaf? {
+        var m :| m in e.months && m.period == a.period;
+        assert m in w.months;
+      }
+    }
+  }
+}
+
+lemma EscLegacyMonthsValid(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent, a: Escrow)
+  requires alwaysMonths(e) && alwaysWithdrawalFees(e) && alwaysReleasedLeavesAdmitted(e) && canAdmitLegacyMonth(e, legacy, ev)
+  requires a.months == e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)]
+  requires a.releasedLeaves == e.releasedLeaves && a.withdrawals == e.withdrawals
+  ensures alwaysMonths(a) && alwaysWithdrawalFees(a) && alwaysReleasedLeavesAdmitted(a)
+  ensures stepMonthsRetained(e, a) && stepWithdrawalsRetained(e, a)
+  ensures stepOneRootPerPeriod(e, "admitLegacyMonth", a)
+  ensures forall x :: hasMonth(a, x) == (hasMonth(e, x) || x == legacy.period)
+{
+  var q := legacy.period;
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  settlement__money_lawEqualReflexive_ensures(z);
+  var nm := a.months[|e.months|];
+  forall x ensures hasMonth(a, x) == (hasMonth(e, x) || x == q) {
+    if hasMonth(e, x) { var m :| m in e.months && m.period == x; assert m in a.months; }
+    if x == q { assert nm in a.months; }
+  }
+  forall x | x in e.months ensures exists y :: y in a.months && sameMonthTerms(x, y) {
+    assert x in a.months && sameMonthTerms(x, x);
+  }
+  forall m | m in a.months ensures |ProofLib.Filter((other: MonthReserve) => (other.period == m.period), a.months)| == 1 {
+    var key := m.period;
+    ProofLib.FilterAppend((other: MonthReserve) => (other.period == key), e.months, nm);
+    if m == nm {
+      ProofLib.FilterNone((other: MonthReserve) => (other.period == key), e.months);
+      forall i | 0 <= i < |e.months| ensures e.months[i].period != key { assert e.months[i] in e.months; }
+    } else {
+      assert m in e.months && nm.period != key;
+    }
+  }
+  forall l | l in a.releasedLeaves ensures hasMonth(a, l.period) { assert hasMonth(e, l.period); }
+}
+
+lemma EscLegacyMonthsRelease(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent, a: Escrow)
+  requires alwaysEvmReleaseWhole(e) && alwaysTouchedMonthsShrink(e) && alwaysReleaseWhole(e) && canAdmitLegacyMonth(e, legacy, ev)
+  requires a.months == e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)]
+  requires a.releasedLeaves == e.releasedLeaves && a.asset == e.asset
+  requires forall x :: x in a.awards ==> x in e.awards || (x.origin.MonthlyLeaf? && x.period == legacy.period)
+  requires forall x :: x in e.awards ==> x in a.awards
+  ensures alwaysEvmReleaseWhole(a) && alwaysTouchedMonthsShrink(a) && alwaysReleaseWhole(a)
+{
+  var q := legacy.period;
+  var z := settlement__money_zero;
+  assert settlement__money_validAmount(z);
+  var nm := a.months[|e.months|];
+  assert !settlement__money_positiveAmount(nm.released) && !settlement__money_positiveAmount(nm.admittedGross);
+  forall m | m in e.months ensures m.period != q && leafTouched(a, m.period) == leafTouched(e, m.period)
+    && (exists x :: x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period) == (exists x :: x in e.awards && x.origin.MonthlyLeaf? && x.period == m.period) {
+    if exists x :: x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period {
+      var x :| x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period;
+      assert x in e.awards;
+    }
+  }
+}
+
+lemma EscLegacyPledges(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent, a: Escrow)
+  requires alwaysPledgesCovered(e) && canAdmitLegacyMonth(e, legacy, ev)
+  requires a.free == settlement__money_subtractAmounts(e.free, legacyNewTotal(e, legacy.entries))
+  requires a.pledges == closePledge(legacy.period, advance(ev, e)).pledges
+  requires a.pledged == closePledge(legacy.period, advance(ev, e)).pledged
+  requires a.asset == e.asset && a.purpose == e.purpose && a.deployed
+  requires forall x :: hasMonth(a, x) == (hasMonth(e, x) || x == legacy.period)
+  ensures alwaysPledgesCovered(a) && stepPledgeIrrevocable(e, "admitLegacyMonth", a)
+{
+  var q := legacy.period;
+  assert pledgeOf(advance(ev, e), q) == pledgeOf(e, q);
+  var c := closePledge(q, e);
+  assert a.pledges == c.pledges && a.pledged == c.pledged;
+  assert settlement__money_compareAmounts(a.free, c.pledged) >= 0;
+  if pledgeOf(e, q).open {
+    var k := EscOpenPledgeAt(e, q);
+    EscClosePledge(e, q);
+    assert |a.pledges| == |e.pledges|;
+    forall i | 0 <= i < |e.pledges| ensures a.pledges[i] == (if e.pledges[i].period == q then e.pledges[i].(open := false) else e.pledges[i]) {
+    }
+    forall p | p in a.pledges ensures validPeriod(p.period) && settlement__money_validAmount(p.amount) && settlement__money_positiveAmount(p.amount)
+      && |ProofLib.Filter((o: Pledge) => (o.period == p.period), a.pledges)| == 1 && (!(p.open && hasMonth(a, p.period)) || a.asset.network.Solana?) {
+      var i :| 0 <= i < |a.pledges| && a.pledges[i] == p;
+      var po := e.pledges[i];
+      assert po in e.pledges && po.period == p.period;
+      ProofLib.FilterLengthPointwise((o: Pledge) => (o.period == p.period), (o: Pledge) => (o.period == p.period), e.pledges, a.pledges);
+      ProofLib.FilterSamePredicate((o: Pledge) => (o.period == p.period), (o: Pledge) => (o.period == po.period), e.pledges);
+      if p.open && hasMonth(a, p.period) { assert p.period != q && hasMonth(e, p.period); }
+    }
+    forall x | x in e.pledges && x.open ensures (pledgeOf(a, x.period).open && settlement__money_compareAmounts(pledgeOf(a, x.period).amount, x.amount) >= 0)
+      || pledgeClosable(e, "admitLegacyMonth", a, x.period) {
+      if x.period != q {
+        var i :| 0 <= i < |e.pledges| && e.pledges[i] == x;
+        assert a.pledges[i] == x && x in a.pledges;
+        EscPledgeOf(a, x);
+        settlement__money_lawEqualReflexive_ensures(x.amount);
+      }
+    }
+  } else {
+    assert c.pledges == e.pledges && c.pledged == e.pledged;
+    forall p | p in a.pledges && p.open && hasMonth(a, p.period) ensures a.asset.network.Solana? {
+      if p.period == q {
+        EscPledgeOf(e, p);
+        assert false;
+      } else {
+        assert hasMonth(e, p.period);
+      }
+    }
+    forall x | x in e.pledges ensures pledgeOf(a, x.period) == x && settlement__money_compareAmounts(x.amount, x.amount) >= 0 {
+      EscPledgeOf(e, x);
+      assert pledgeOf(a, x.period) == pledgeOf(e, x.period);
+      settlement__money_lawEqualReflexive_ensures(x.amount);
+    }
+  }
+}
+
+lemma EscLegacyCounters(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent, a: Escrow)
+  requires alwaysGrossConserved(e) && alwaysPaidSplit(e) && alwaysFeesConserved(e) && alwaysValidCounters(e)
+  requires canAdmitLegacyMonth(e, legacy, ev)
+  requires settlement__money_validAmount(legacyNewTotal(e, legacy.entries))
+  requires a.deposited == e.deposited && a.held == e.held && a.spent == e.spent
+  requires a.free == settlement__money_subtractAmounts(e.free, legacyNewTotal(e, legacy.entries))
+  requires a.committed == settlement__money_addAmounts(e.committed, legacyNewTotal(e, legacy.entries))
+  requires a.pending == e.pending
+  requires settlement__money_validAmount(a.reserved)
+  requires settlement__money_equalAmounts(a.reserved, settlement__money_addAmounts(e.reserved, legacyNewTotal(e, legacy.entries)))
+  requires a.paid == e.paid && a.paidNet == e.paidNet && a.payoutFees == e.payoutFees
+  requires a.grossWithdrawn == e.grossWithdrawn && a.withdrawalFees == e.withdrawalFees
+  requires a.accruedFees == e.accruedFees && a.claimedFees == e.claimedFees
+  ensures alwaysGrossConserved(a) && alwaysPaidSplit(a) && alwaysFeesConserved(a)
+  ensures stepCumulativeCounters(e, a)
+  ensures stepPoolLeavesOnlyByLeafOrRelease(e, "admitLegacyMonth", a)
+  ensures stepFreeLeavesOnlyByOwnerOrRoot(e, "admitLegacyMonth", a)
+  ensures stepFreeEntersOnlyByDepositOrRelease(e, "admitLegacyMonth", a)
+{
+  var nt := legacyNewTotal(e, legacy.entries);
+  assert closePledge(legacy.period, e).free == e.free;
+  assert settlement__money_compareAmounts(e.free, nt) >= 0;
+  settlement__money_lawAddCommutative_ensures(e.free, e.committed);
+  EscMove(e.held, e.free, e.committed, nt);
+  EscAddLeft(e.committed, e.pending, e.reserved, nt);
+  settlement__money_lawAdditionValid_ensures(e.reserved, nt);
+  EscSym(a.reserved, settlement__money_addAmounts(e.reserved, nt));
+  settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(e.reserved, nt), a.reserved, e.pending);
+  EscChain(a.committed, settlement__money_addAmounts(e.pending, settlement__money_addAmounts(e.reserved, nt)), settlement__money_addAmounts(e.pending, a.reserved));
+  settlement__money_lawSubtractionAtMost_ensures(e.free, nt);
+  settlement__money_lawEqualReflexive_ensures(e.deposited);
+  settlement__money_lawEqualReflexive_ensures(e.paid);
+  settlement__money_lawEqualReflexive_ensures(e.paidNet);
+  settlement__money_lawEqualReflexive_ensures(e.payoutFees);
+  settlement__money_lawEqualReflexive_ensures(e.grossWithdrawn);
+  settlement__money_lawEqualReflexive_ensures(e.withdrawalFees);
+  settlement__money_lawEqualReflexive_ensures(e.claimedFees);
+  settlement__money_lawEqualReflexive_ensures(e.pending);
+}
+
+lemma EscAdmitLegacyRun(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent)
+  requires alwaysValidCounters(e) && alwaysReservedSplit(e) && alwaysAwards(e) && canAdmitLegacyMonth(e, legacy, ev)
+  ensures var a := admitLegacyMonth(e, legacy, ev);
+    alwaysValidCounters(a) && alwaysReservedSplit(a) && alwaysAwards(a)
+    && settlement__money_validAmount(legacyNewTotal(e, legacy.entries))
+    && settlement__money_validAmount(a.reserved)
+    && settlement__money_equalAmounts(a.reserved, settlement__money_addAmounts(e.reserved, legacyNewTotal(e, legacy.entries)))
+    && a.deposited == e.deposited && a.held == e.held && a.spent == e.spent
+    && a.free == settlement__money_subtractAmounts(e.free, legacyNewTotal(e, legacy.entries))
+    && a.committed == settlement__money_addAmounts(e.committed, legacyNewTotal(e, legacy.entries))
+    && a.pending == e.pending
+    && a.paid == e.paid && a.paidNet == e.paidNet && a.payoutFees == e.payoutFees
+    && a.grossWithdrawn == e.grossWithdrawn && a.withdrawalFees == e.withdrawalFees
+    && a.accruedFees == e.accruedFees && a.claimedFees == e.claimedFees
+    && a.monthlyCap == e.monthlyCap && a.monthlyEnabled == e.monthlyEnabled
+    && a.months == e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)]
+    && a.releasedLeaves == e.releasedLeaves && a.withdrawals == e.withdrawals
+    && a.pledges == closePledge(legacy.period, advance(ev, e)).pledges
+    && a.pledged == closePledge(legacy.period, advance(ev, e)).pledged
+    && a.asset == e.asset && a.purpose == e.purpose && a.deployed
+    && a.vault == e.vault && a.owner == e.owner && a.feeRecipient == e.feeRecipient
+    && a.bindingDelay == e.bindingDelay && a.at == ev && a.clock == ev.time
+    && a.implementation == e.implementation && a.authority == e.authority
+    && (forall x :: x in e.awards ==> x in a.awards)
+    && (forall x :: x in a.awards ==> x in e.awards || (x.origin.MonthlyLeaf? && x.period == legacy.period))
+    && stepAwardsRetained(e, a)
+{
+  hide *;
+  reveal admitLegacyMonth, canAdmitLegacyMonth, legacyEntryAdmissible, closePledge, advance, stepAwardsRetained, sameAwardTerms;
+  EscLegacyPrepare(e, legacy, ev);
+  var nt := legacyNewTotal(e, legacy.entries);
+  var w := closePledge(legacy.period, advance(ev, e)).(
+    free := settlement__money_subtractAmounts(e.free, nt),
+    committed := settlement__money_addAmounts(e.committed, nt),
+    admissionsWhileOff := offAdmission(e),
+    months := (e.months + [MonthReserve(legacy.period, "v1", legacy.root, legacyTotal(legacy.entries), settlement__money_zero, settlement__money_zero, settlement__money_zero, |legacy.entries|, ev.time, ev.time)])
+  );
+  EscLegacyFoldFrame(legacy.period, ev.time, LegacyFold(w, 0), legacy.entries);
+  EscLegacyFold(e, legacy.period, ev.time, LegacyFold(w, 0), legacy.entries);
+  var a := admitLegacyMonth(e, legacy, ev);
+  assert settlement__money_validAmount(a.reserved) by { reveal alwaysValidCounters; }
+  assert a.deployed by { reveal later; }
+  forall x | x in e.awards ensures exists y :: y in a.awards && sameAwardTerms(x, y) && (!x.paid || x == y) {
+    assert x in a.awards && sameAwardTerms(x, x);
+  }
+}
+
+lemma EscLegacyShape(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent, a: Escrow)
+  requires alwaysBountyVaultHasNoMonths(e) && canAdmitLegacyMonth(e, legacy, ev)
+  requires a.deployed && a.at == ev && a.clock == ev.time && a.vault == e.vault && a.asset == e.asset && a.purpose == e.purpose
+  requires a.owner == e.owner && a.feeRecipient == e.feeRecipient && a.bindingDelay == e.bindingDelay
+  requires a.implementation == e.implementation
+  ensures alwaysBountyVaultHasNoMonths(a) && alwaysUndeployedEmpty(a)
+  ensures stepEventOrder(e, a) && stepIdentityFixed(e, a) && stepImplementationOnlyUpgrades(e, a)
+  ensures stepManualBlockedWhilePoolPending(e, "admitLegacyMonth", a) && stepReleaseNeedsUpgrade(e, "admitLegacyMonth", a)
+{
+}
+
+lemma admitLegacyMonth_ensures(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent)
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysEvmReleaseWhole(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysTouchedMonthsShrink(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysReleaseWhole(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysGrossConserved(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysReservedSplit(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysPaidSplit(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysFeesConserved(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysValidCounters(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysWithdrawalFees(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysMonths(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysBountyVaultHasNoMonths(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysUndeployedEmpty(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysReleasedLeavesAdmitted(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysPledgesCovered(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> alwaysAwards(admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepEventOrder(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepIdentityFixed(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepAwardsRetained(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepMonthsRetained(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepWithdrawalsRetained(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepCumulativeCounters(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepPoolLeavesOnlyByLeafOrRelease(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepFreeLeavesOnlyByOwnerOrRoot(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepFreeEntersOnlyByDepositOrRelease(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepManualBlockedWhilePoolPending(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepImplementationOnlyUpgrades(e, admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepReleaseNeedsUpgrade(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepOneRootPerPeriod(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+  ensures (inv(e) ==> canAdmitLegacyMonth(e, legacy, ev) ==> stepPledgeIrrevocable(e, "admitLegacyMonth", admitLegacyMonth(e, legacy, ev)))
+{
+  if inv(e) && canAdmitLegacyMonth(e, legacy, ev) {
+    hide *;
+    reveal inv;
+    EscAdmitLegacyRun(e, legacy, ev);
+    var a := admitLegacyMonth(e, legacy, ev);
+    EscLegacyCounters(e, legacy, ev, a);
+    EscLegacyMonthsValid(e, legacy, ev, a);
+    EscLegacyMonthsRelease(e, legacy, ev, a);
+    EscLegacyPledges(e, legacy, ev, a);
+    EscLegacyShape(e, legacy, ev, a);
   }
 }

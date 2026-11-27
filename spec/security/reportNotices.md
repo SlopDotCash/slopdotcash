@@ -21,7 +21,10 @@ receipt and saves nothing new. Nothing is in the Inbox before the receipt. A
 notice's key is its source change: the kind of change and its subject, so
 two changes never share a key. Report receipts, owner routing and legacy
 direct receipts use codes 1 to 3; award notices use codes 4 to 7 ([private
-award settlement](../settlement/privateAward.md)).
+award settlement](../settlement/privateAward.md)). The intake record satisfies
+its atomic receipt rules: a received intake always holds its case and Inbox
+receipt together, and only report receipt and private case notices live in this
+Inbox.
 
 ```quint
 import money as M from "../settlement/money"
@@ -66,7 +69,9 @@ pure def alwaysReceiptNoticeAtomic(r: ReportNotices): bool =
   and r.inbox.notices.every(n => n.kind == N::SecurityReportReceived implies n.template == N::ReceiptTemplate
     and ((n.key == receiptNoticeKey(r) and n.recipient == caseReporter(r))
       or (r.directChecked and n.key == directNoticeKey(r) and n.recipient == r.directCase.reporter)))
+  and I::alwaysAtomicReceipt(r.journey.intake) and I::alwaysReceivedHasReceipt(r.journey.intake)
 pure def alwaysInboxChannels(r: ReportNotices): bool = N::alwaysChannelByKind(r.inbox) and N::alwaysNoticeIdentity(r.inbox)
+  and r.inbox.notices.every(n => n.kind == N::SecurityReportReceived or n.kind == N::SecurityCase)
 pure def stepReceiptNoticeNeedsReceipt(before: ReportNotices, after: ReportNotices): bool =
   after.inbox.notices.every(n => before.inbox.notices.includes(n) or n.kind != N::SecurityReportReceived
     or (n.key == receiptNoticeKey(after) and J::received(after.journey))
@@ -149,7 +154,8 @@ version is bound only through its object digest; screening names it
 Inbox notice, screening, forwarding or case field and no transition result
 carries a body. No machine has a public-issue operation: forwarding's only
 GitHub operations send the private report, list copies and read the advisory,
-each with the reporter's own grant.
+each with the reporter's own grant. The screening version starts at 1 and never
+drops below it.
 
 ```quint
 const digestOf: (SecretReportBody) => BodyDigest
@@ -171,6 +177,7 @@ pure def replace(r: ReportNotices, by: int, seenRevision: int, body: SecretRepor
 pure def alwaysBodiesMatchVersions(r: ReportNotices): bool =
   r.bodies.length() == (if (r.journey.intake.phase == I::Editing) 0 else r.journey.screening.version)
   and (r.journey.intake.phase == I::Editing implies r.journey.screening.version == 1)
+  and r.journey.screening.version >= 1
 pure def alwaysBodiesBoundToRecords(r: ReportNotices): bool =
   (r.bodies.length() > 0 implies digestOf(r.bodies.nthOr(0, "")).object == r.journey.intake.digest)
   and r.bodies.every(body => body == r.bodies.nthOr(0, "") or r.journey.screening.reportDigests.includes(digestOf(body).version))
@@ -185,7 +192,8 @@ pure def sometimesRevisedBodyRetained(r: ReportNotices): bool = r.bodies.length(
 [triage](./cases.md) each record the exclusion context they ran with; a
 matching line is named only in free text. The [composed flow](./journey.md)
 binds that context to the case's receipt-time [terms](./terms.md), and no
-decision reads it.
+decision reads it. Before the atomic receipt commits, screening exclusions,
+assessment attempts, forwarding attempts and appeal triage remain blank.
 
 ```quint
 pure def canClaimScreening(r: ReportNotices, seenRevision: int, nowMs: int): bool = J::canClaimScreening(r.journey, seenRevision, nowMs)
@@ -217,6 +225,7 @@ pure def canFinishTriage(r: ReportNotices, appealRevision: int, attempt: int, re
 pure def finishTriage(r: ReportNotices, appealRevision: int, attempt: int, result: C::TriageOutcome): ReportNotices =
   { ...r, journey: { ...r.journey, privateCase: C::finishTriage(r.journey.privateCase, appealRevision, attempt, result) } }
 pure def alwaysAdviceUsesReceiptExclusions(r: ReportNotices): bool = J::alwaysAdviceUsesReceiptExclusions(r.journey)
+  and J::alwaysNothingBeforeReceipt(r.journey)
 pure def sometimesTriageWithContext(r: ReportNotices): bool = r.journey.privateCase.triage.state == C::TriageComplete
   and r.journey.privateCase.triage.exclusions.owner.length() > 0
 pure def sometimesAssessedWithContext(r: ReportNotices): bool = J::sometimesAssessmentShown(r.journey)
@@ -230,7 +239,8 @@ pure def sometimesAssessedWithContext(r: ReportNotices): bool = J::sometimesAsse
 Forwarding runs on the composed report's journal with the reporter's own
 requests and keeps [forwarding's](./forwarding.md) earliest canonical copy
 among its binding copies. An empty complete listing after the quiet window
-reopens the draft and leaves the case unchanged.
+reopens the draft and leaves the case unchanged. A draft, submitting or
+uncertain forwarding journal holds no canonical copy.
 
 ```quint
 pure def canClaimSend(r: ReportNotices, request: F::Request, startedAtMs: int): bool =
@@ -264,6 +274,7 @@ pure def canReconcileCopies(r: ReportNotices, request: F::Request, listing: F::L
 pure def reconcileCopies(r: ReportNotices, request: F::Request, listing: F::Listing, nowMs: int): ReportNotices =
   withForwarding(F::reconcile(r.journey.forwarding, request, listing, nowMs), r)
 pure def alwaysCanonicalIsEarliestBindingCopy(r: ReportNotices): bool = F::alwaysCanonicalIsEarliestBindingCopy(r.journey.forwarding)
+  and F::alwaysDraftHasNoCopy(r.journey.forwarding)
 pure def stepCanonicalFixed(before: ReportNotices, after: ReportNotices): bool =
   F::stepCanonicalFixed(before.journey.forwarding, after.journey.forwarding)
 pure def sometimesSubmittedWithDuplicates(r: ReportNotices): bool = r.journey.forwarding.phase == F::Submitted
@@ -277,7 +288,10 @@ pure def sometimesReopenedAfterEmptyListing(r: ReportNotices): bool = r.journey.
 The advisory read links the receipt to the retained case of this reporter
 and repository. The GitHub receipt never rewrites the Slop receipt: every
 forwarding step keeps the intake receipt time, the case and the reporter's
-Inbox receipt. An unverifiable copy fails forwarding and keeps the case.
+Inbox receipt. An unverifiable copy fails forwarding and keeps the case. Every forwarding
+attempt, non-draft phase, failure or bound copy follows a received Slop
+receipt, whose case holds the receipt terms and whose intake repository and
+reporter match forwarding.
 
 ```quint
 pure def canReadReceipt(r: ReportNotices, request: F::Request, advisoryRead: F::AdvisoryRead): bool =
@@ -293,8 +307,11 @@ pure def forwardingStep(via: str): bool = via == "claimSend" or via == "recordCl
   or via == "reconcileCopies" or via == "readReceipt" or via == "expireVerification" or via == "loseReceiptReply"
 pure def alwaysVerifiedReceiptLinksRetainedCase(r: ReportNotices): bool =
   val f = r.journey.forwarding
-  f.phase == F::ReceiptVerified implies r.journey.privateCase.submission == C::Verified and f.reporter == caseReporter(r)
-    and f.repository == r.journey.intake.repository and f.canonical.ghsa > 0
+  J::alwaysSendFollowsReceipt(r.journey) and J::alwaysCaseHoldsReceiptTerms(r.journey)
+  and (f.phase == F::ReceiptVerified implies r.journey.privateCase.submission == C::Verified and f.reporter == caseReporter(r)
+    and f.repository == r.journey.intake.repository and f.canonical.ghsa > 0)
+  and ((f.phase != F::Draft or f.failure != F::None or f.canonical.ghsa > 0) implies f.attempt > 0)
+  and (r.journey.intake.phase != I::Editing implies f.repository == r.journey.intake.repository and f.reporter == caseReporter(r))
 pure def alwaysUnverifiableKeepsCase(r: ReportNotices): bool =
   r.journey.forwarding.failure == F::Unverifiable implies r.journey.privateCase.submission == C::Verified
 pure def stepForwardingKeepsSlopReceipt(before: ReportNotices, via: str, after: ReportNotices): bool = forwardingStep(via) implies

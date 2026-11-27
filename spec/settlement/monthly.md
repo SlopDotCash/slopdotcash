@@ -506,12 +506,14 @@ match. The stored registry revision still supplies the vault, asset and
 fee policy. A reviewed October pool is available for manual owner
 finalization even if the revision's ordinary monthly cap for October is zero. Feed's
 reviewed October proposal uses the verified vault from its revision for
-the first ordinary funding cycle in November.
+the first ordinary funding cycle in November. Both the current shares and the
+stored proposed shares hold valid amounts for positive, distinct actors.
 
 ```quint
 pure def alwaysAllocationConserved(m: Monthly): bool = M::validAmount(m.total) and M::validAmount(m.cap)
   and M::compareAmounts(m.total, m.cap) <= 0 and M::equalAmounts(A::allocatedTotal(m.shares), m.total)
   and m.shares.every(s => M::validAmount(s.amount) and s.actor > 0 and m.shares.select(o => o.actor == s.actor).length() == 1)
+  and m.proposedShares.every(s => M::validAmount(s.amount) and s.actor > 0 and m.proposedShares.select(o => o.actor == s.actor).length() == 1)
 pure def proposedPhase(phase: MonthlyPhase): bool =
   phase == Proposed or phase == Frozen or phase == Funded or phase == Completed
 pure def reviewedOctoberPool(m: Monthly): bool =
@@ -533,8 +535,11 @@ pure def alwaysUnproposedEmpty(m: Monthly): bool = not(proposedPhase(m.phase)) i
 
 ### Every cut keeps its reason bounds, its change and exactly one Inbox notice
 
+The change sequence stays nonnegative, and every cut and change carries a
+positive sequence up to it.
+
 ```quint
-pure def alwaysCutsRecorded(m: Monthly): bool = m.latestCutAt <= m.now and ((m.latestCutAt == 0) == (m.cuts.length() == 0))
+pure def alwaysCutsRecorded(m: Monthly): bool = m.sequence >= 0 and m.latestCutAt <= m.now and ((m.latestCutAt == 0) == (m.cuts.length() == 0))
   and m.cuts.every(c => c.reasonLength >= cutReasonMin and c.reasonLength <= cutReasonMax and M::compareAmounts(c.amount, c.proposed) < 0
     and c.at > 0 and c.at <= m.latestCutAt and c.sequence > 0 and c.sequence <= m.sequence
     and m.changes.some(x => x.sequence == c.sequence and x.actor == c.actor and x.cut and x.amount == c.amount))

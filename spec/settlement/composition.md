@@ -105,7 +105,10 @@ receipts and merely submitted transactions never enter the paid state.
 Exact scanner replay may acknowledge the already indexed receipt through the
 dispatch owner. A distinct event cannot replace the canonical payment record.
 The receipt adapter injectively binds the native network, transaction and
-event index to the accounting reference.
+event index to the accounting reference. Discovered by proof: before this
+obligation is paid, this single-obligation vault view holds no settlement
+record, so configuring any obligation identifier cannot meet a prior
+settlement.
 
 ```quint
 pure def canReconcile(s: Settlement, evidence: FinalizedPayment): bool =
@@ -126,7 +129,7 @@ pure def alwaysPaidConsumesReserve(s: Settlement): bool =
   if (s.payment.phase == P::Paid) not(hasReserve(s)) and
     V::settlementMatches(s.vault, s.payment.obligation, s.payment.target.actor, s.payment.vaultReceipt.destination,
       s.payment.gross, s.payment.finalizedHeight, s.payment.vaultReceipt.tx)
-  else not(V::settlementExists(s.vault, s.payment.obligation))
+  else not(V::settlementExists(s.vault, s.payment.obligation)) and s.vault.settled.length() == 0
 pure def alwaysCanonicalReceiptAgrees(s: Settlement): bool =
   (s.payment.phase == P::Paid) == (s.delivery.queue == D::Indexed) and
     (s.delivery.queue == D::Indexed implies s.payment.vaultReceipt == s.delivery.receipt)
