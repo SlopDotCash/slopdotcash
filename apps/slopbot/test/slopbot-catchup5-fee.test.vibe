@@ -506,7 +506,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     })
   })
 
-  it.effect('A paused project holds only a new outside pull request that Slopbot never completed a review of (spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap"; spec/slopbot/review.md, "A bound review of a paused project\'s new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap")', () => effect {
+  it.effect(`A paused project holds only a new outside pull request that Slopbot never completed a review of (spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap")`, () => effect {
     const { fees } = try FeeWorld
     const item = { projectId, repositoryId, authorId: 301, number: 4242 }
     const open = try at(t0, intakeFacts(item))

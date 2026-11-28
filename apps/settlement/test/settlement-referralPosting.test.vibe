@@ -279,7 +279,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   })
 
-  it.effect('The built referral Worker carries only the root-poster signer, its daily cron posts nothing in DryRun and its quarter-hour cron refreshes the claim cache from the finalized distributor (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively")', () => effect {
+  it.effect(`The built referral Worker carries only the root-poster signer, its daily cron posts nothing in DryRun and its quarter-hour cron refreshes the claim cache from the finalized distributor (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively")`, () => effect {
     const { chain, vars } = try Bench
     const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "referralAccrual" }))
     const text = try Effect.try(() => bundleText(script))
@@ -312,7 +312,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   }, 180_000)
 
-  it.effect('A filed root is never sent in DryRun, and a root whose broadcast is lost in Posting is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount")', () => effect {
+  it.effect(`A filed root is never sent in DryRun, and a root whose broadcast is lost in Posting is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount")`, () => effect {
     const { chain, clock } = try Bench
     try payRange(31)
     const filed = try file()
@@ -368,7 +368,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   }, 180_000)
 
-  it.effect('An owner void halts posting until an operator acknowledges it, and the claim cache is stale until it sees the new root and the void (spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable")', () => effect {
+  it.effect(`An owner void halts posting until an operator acknowledges it, and the claim cache is stale until it sees the new root and the void (spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable")`, () => effect {
     const { chain } = try Bench
     const posted = try post()
     const finalized = try reconcileOnce()

@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"
+// spec/frontend/views.md, "A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap"
 import { isoAt } from "@repo/platform/clock"
 
 export const longestTimerMillis = 2_147_483_647

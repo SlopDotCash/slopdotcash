@@ -217,7 +217,7 @@ effect function solanaRun(world: World, fetch: typeof globalThis.fetch) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Dry runs record the pinned outcome order once, a receipts run skips an unchanged token, the run cap rescales the quote and only a recovery run claims (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+  it.effect(`Dry runs record the pinned outcome order once, a receipts run skips an unchanged token, the run cap rescales the quote and only a recovery run claims (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")`, () => effect {
     const world = try opened(101, "DryRun")
     world.stand.quote = (token, amount) => token === tokenA ? found(amount, amount / 2n) : found(amount, 3000000n)
     const claimed: Array<Mode> = []
@@ -247,7 +247,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('J2 and J20: Off starts nothing, Robinhood keeps what it received and claims nothing without its buyback, a held lease is refused and an inexact balance is never converted (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are")', () => effect {
+  it.effect(`J2 and J20: Off starts nothing, Robinhood keeps what it received and claims nothing without its buyback, a held lease is refused and an inexact balance is never converted (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are")`, () => effect {
     const claimed: Array<Mode> = []
     const claims: Claims = (_session, mode) => effect {
       claimed.push(mode)
@@ -281,7 +281,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('J3: a restart rebroadcasts the exact journaled bytes, waits before any replacement, and only finalized receipts settle the send or its expired reservation (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")', () => effect {
+  it.effect(`J3: a restart rebroadcasts the exact journaled bytes, waits before any replacement, and only finalized receipts settle the send or its expired reservation (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")`, () => effect {
     const world = try opened(106, "Live")
     world.stand.quote = (token, amount) => token === tokenA ? found(amount, 450000000n) : found(amount, 3000000n)
     world.stand.broadcast = () => "unavailable"
@@ -318,7 +318,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('The rolling 24-hour value cap skips a token once finalized live sends reach it (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => effect {
+  it.effect(`The rolling 24-hour value cap skips a token once finalized live sends reach it (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it")`, () => effect {
     const world = try opened(108, "Live")
     world.tokens = [{ address: tokenA, asset: "ProjectToken" }]
     world.stand.quote = (_token, amount) => found(amount, 1000000000n)
@@ -359,7 +359,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('A receipts run converts a token from its observed balance with no Transfer log, and skips it while the balance equals the latest unfinalized record\'s starting balance (spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+  it.effect(`A receipts run converts a token from its observed balance with no Transfer log, and skips it while the balance equals the latest unfinalized record's starting balance (spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")`, () => effect {
     const world = try opened(110, "DryRun")
     world.tokens = [{ address: tokenA, asset: "ProjectToken" }]
     world.stand.balances = new Map([[tokenA, 4000000000n]])

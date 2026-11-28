@@ -218,7 +218,7 @@ function transactionOf(entry: unknown) {
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('A Solana rotation needs the registry authorization (spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+  it.effect(`A Solana rotation needs the registry authorization (spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => effect {
     try claim("claim-former", formerWallet, formerDigest, null)
     try authorize("claim-former", formerWallet, formerDigest)
     try claim("claim-successor", successorWallet, successorDigest, "claim-former")

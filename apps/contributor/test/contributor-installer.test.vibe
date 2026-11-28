@@ -51,7 +51,7 @@ it.effect('Install the approved revision of a generated skill and refuse bytes t
   try Effect.tryPromise(() => thePublicationRouteArchiveInstalls())
 }, slow)
 
-it.effect('The installer installs the server renderer\'s exact bytes for every integration branch (spec/contributor/rendering.md, "The server renderer and the installer\'s Python renderer produce identical bytes for every committed template")', () => effect {
+it.effect(`The installer installs the server renderer's exact bytes for every integration branch (spec/contributor/rendering.md, "The server renderer and the installer's Python renderer produce identical bytes for every committed template")`, () => effect {
   try Effect.try(() => everyIntegrationBranchInstallsTheServerRendering())
 }, slow)
 
