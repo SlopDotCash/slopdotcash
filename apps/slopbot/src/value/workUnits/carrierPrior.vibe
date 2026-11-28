@@ -1,0 +1,140 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import type { NativeCarrierGroupRequest } from "@repo/points/corrections"
+import type { VerifiedCarrierAlias } from "./carrierAlias.vibe"
+import { type CarrierLineProof, type RetainedCarrierAlias, CarrierLineProofUnavailable, carrierPatchLines, readCarrierGit, readCarrierGitBytes } from "./carrierLines.vibe"
+import { type NativeCommitObject, parseNativeCommitObject } from "./carrierPartition.vibe"
+
+const objectId = /^[0-9a-f]{40}$/u
+const commitHeader = /^([0-9a-f]{40}) commit ([1-9]\d*)$/u
+const patchHeader = /^\x1e([0-9a-f]{40})$/u
+const batchSize = 48
+const maximumBatchBytes = 8 * 1024 * 1024
+const maximumCommitBytes = 256 * 1024
+
+function refused(reason = "Earlier positive carrier scope is missing or incomplete") {
+  return new CarrierLineProofUnavailable({ reason })
+}
+
+effect function nativeAcceptedObjects(directory: string, ids: ReadonlyArray<string>) {
+  const result = new Map<string, NativeCommitObject>()
+  if (ids.some((sha) => !objectId.test(sha))) throw refused()
+  for (let offset = 0; offset < ids.length; offset += batchSize) {
+    const batch = ids.slice(offset, offset + batchSize)
+    const output = try readCarrierGitBytes(directory, ["cat-file", "--batch"], maximumBatchBytes, batch.join("\n") + "\n")
+    let cursor = 0
+    for (const requested of batch) {
+      const end = output.indexOf(10, cursor)
+      const header = end === -1 ? undefined : utf8Text(output.subarray(cursor, end))
+      const match = header === undefined ? null : commitHeader.exec(header)
+      const size = Number(match?.[2])
+      const bodyEnd = end + 1 + size
+      if (match?.[1] !== requested || !Number.isSafeInteger(size) || size > maximumCommitBytes ||
+        bodyEnd >= output.length || output[bodyEnd] !== 10) throw refused()
+      const native = parseNativeCommitObject(requested, output.subarray(end + 1, bodyEnd))
+      if (native === undefined || native.parents.length === 0) throw refused()
+      result.set(requested, native)
+      cursor = bodyEnd + 1
+    }
+    if (cursor !== output.length) throw refused()
+  }
+  return result
+}
+
+function requiredLines(lines: ReadonlyArray<string>, observed: Iterable<string>) {
+  const available = new Map<string, number>()
+  for (const line of observed) available.set(line, (available.get(line) ?? 0) + 1)
+  for (const line of lines) {
+    const count = available.get(line) ?? 0
+    if (count === 0) return false
+    available.set(line, count - 1)
+  }
+  return true
+}
+
+effect function priorPatch(directory: string, earlier: ReadonlyArray<NativeCommitObject>, retained: ReadonlyMap<string, RetainedCarrierAlias>) {
+  const headers = new Map([...retained.keys()].map((path) => [`diff --git a/${path} b/${path}`, path] as const))
+  const evidence: Array<{ readonly accepted: ReadonlyArray<readonly [string, string, string | undefined]>; readonly patchSha256: string }> = []
+  for (let offset = 0; offset < earlier.length; offset += batchSize) {
+    const batch = earlier.slice(offset, offset + batchSize)
+    const input = batch.map(({ sha, parents }) => `${sha} ${parents[0]}\n`).join("")
+    const output = try readCarrierGit(directory, ["--literal-pathspecs", "diff-tree", "--stdin", "-r", "-p", "--always",
+      "--format=%x1e%H", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--diff-algorithm=myers",
+      "--inter-hunk-context=0", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", "--", ...retained.keys()], maximumBatchBytes, input)
+    const patches = new Map<string, Map<string, string[]>>()
+    let current: Map<string, string[]> | undefined
+    let file: string[] | undefined
+    if (!output.endsWith("\n")) throw refused()
+    for (const line of output.slice(0, -1).split("\n")) {
+      const marker = patchHeader.exec(line)?.[1]
+      if (marker !== undefined) {
+        if (marker !== batch[patches.size]?.sha) throw refused()
+        current = new Map()
+        patches.set(marker, current)
+        file = undefined
+      } else if (line.startsWith("diff --git ")) {
+        const path = headers.get(line)
+        if (path === undefined || current === undefined || current.has(path)) throw refused()
+        file = [line]
+        current.set(path, file)
+      } else if (file !== undefined) {
+        if (line !== "") file.push(line)
+      } else if (line !== "") throw refused()
+    }
+    if (patches.size !== batch.length) throw refused()
+    for (const files of patches.values()) {
+      for (const [path, lines] of files) {
+        const needed = retained.get(path)
+        const parsed = carrierPatchLines(lines.join("\n") + "\n")
+        if (needed === undefined || parsed === undefined) throw refused()
+        if (requiredLines(needed.additions, parsed.additions.values()) && requiredLines(needed.deletions, parsed.deletions.values())) {
+          throw refused("Earlier positive acceptance competes for a retained native carrier edit")
+        }
+      }
+    }
+    evidence.push({ accepted: batch.map(({ sha, treeSha, parents }) => [sha, treeSha, parents[0]] as const), patchSha256: sha256Of(output) })
+  }
+  return evidence
+}
+
+export effect function verifyPriorCarrierAliases(directory: string, prior: NativeCarrierGroupRequest["earlierPositive"], aliases: ReadonlyArray<VerifiedCarrierAlias>, lineProof: CarrierLineProof) {
+  const allSources = [...prior.sources, ...prior.laterCandidates]
+  if (!/^[0-9a-f]{64}$/u.test(prior.baselineDigest) || !Number.isSafeInteger(prior.baselineRevisionCount) || prior.baselineRevisionCount < 1 ||
+    aliases.length === 0 || new Set(allSources.map(({ id }) => id)).size !== allSources.length ||
+    allSources.some(({ acceptedSha }) => !objectId.test(acceptedSha) || acceptedSha === lineProof.acceptedSha)) throw refused()
+  const retained = new Map<string, RetainedCarrierAlias>()
+  for (const alias of aliases) {
+    const path = lineProof.paths.find((path) => path.path === alias.path)
+    const edits = path?.retainedAlias
+    const claim = path?.claims.find(({ sha }) => sha === alias.canonicalSha)
+    if (alias.baseSha !== lineProof.baseSha || alias.acceptedSha !== lineProof.acceptedSha || retained.has(alias.path) ||
+      edits?.canonicalSha !== alias.canonicalSha || claim === undefined ||
+      claim.additions !== edits.additions.length || claim.deletions !== edits.deletions.length) throw refused()
+    retained.set(alias.path, edits)
+  }
+  const ingresses = try nativeAcceptedObjects(directory, [...new Set(aliases.map(({ canonicalIngressSha }) => canonicalIngressSha))])
+  const parents = new Set([...ingresses.values()].map(({ parents }) => parents[0]))
+  const ancestry: ReadonlySet<string>[] = []
+  for (const parent of parents) {
+    if (parent === undefined) throw refused()
+    const output = try readCarrierGit(directory, ["rev-list", parent])
+    if (!output.endsWith("\n")) throw refused()
+    const ancestorIds = output.slice(0, -1).split("\n")
+    const ancestors = new Set(ancestorIds)
+    if (ancestors.size !== ancestorIds.length || !ancestors.has(parent) || ancestorIds.some((sha) => !objectId.test(sha))) throw refused()
+    ancestry.push(ancestors)
+  }
+  const earlierSources = [...prior.sources, ...prior.laterCandidates.filter(({ acceptedSha }) => ancestry.some((ancestors) => ancestors.has(acceptedSha)))]
+  const ids = [...new Set(earlierSources.map(({ acceptedSha }) => acceptedSha))].sort()
+  if (ids.some((sha) => ancestry.some((ancestors) => !ancestors.has(sha)))) {
+    throw refused("Earlier positive acceptance is outside the verified pre-alias ancestry")
+  }
+  const native = try nativeAcceptedObjects(directory, ids)
+  const earlier = ids.flatMap((sha) => {
+    const row = native.get(sha)
+    return row === undefined ? [] : [row]
+  })
+  if (earlier.length !== ids.length) throw refused()
+  const accepted = try priorPatch(directory, earlier, retained)
+  return sha256Of(JSON.stringify({ prior, retained: [...retained], accepted }))
+}

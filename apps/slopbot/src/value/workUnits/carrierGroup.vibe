@@ -8,6 +8,7 @@ import { type VerifiedCarrierAlias, verifyCarrierAlias } from "./carrierAlias.vi
 import { type CarrierLineProof, CarrierLineProofUnavailable, literalPath, readCarrierGit, verifyCarrierLines } from "./carrierLines.vibe"
 import type { NativeCarrierHistory, NativeCarrierPartition } from "./carrierPartition.vibe"
 import { carrierHistoryOf, reconstructCarrierPartition } from "./carrierProof.vibe"
+import { verifyPriorCarrierAliases } from "./carrierPrior.vibe"
 import { claimKey } from "./types.vibe"
 
 interface BoundSource {
@@ -168,9 +169,10 @@ export effect function reconstructNativeCarrierGroup(directory: string, request:
   const aliases = try boundAliases(directory, request, sources, carrier, indirect)
   const lineProof = try verifyCarrierLines(directory, { baseSha: carrier.history.baseSha, acceptedSha }, aliases)
   const claims = try ownedClaims(lineProof, carrier, indirect)
+  const earlierPositiveDigest = try verifyPriorCarrierAliases(directory, request.earlierPositive, aliases, lineProof)
   const groupDigest = sha256Of(JSON.stringify({
     repositoryNodeId: request.carrier.repositoryNodeId, terminalSources: request.sameTerminalSources, acceptedSha,
-    partitions: [...partitions], aliases, claims,
+    partitions: [...partitions], aliases, claims, earlierPositiveDigest,
   }))
   const outputs = new Map<string, VerifiedNativeCarrierCorrection>()
   for (const { id } of request.correctedSources) {

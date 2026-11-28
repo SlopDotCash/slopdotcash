@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest"
 import { gitText, systemGit } from "@repo/platform/git"
 import { verifyCarrierAlias } from "../src/value/workUnits/carrierAlias.vibe"
 import { carrierPatchLines, verifyCarrierLines } from "../src/value/workUnits/carrierLines.vibe"
+import { verifyPriorCarrierAliases } from "../src/value/workUnits/carrierPrior.vibe"
 
 const gitServices = Layer.mergeAll(NodeServices.layer, systemGit)
 
@@ -91,7 +92,9 @@ effect function nativeHistory(root: string, baseSha: string, headSha: string) {
 it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
   provide gitServices {
     const root = try openGit()
-    const base = try commit(root, "top\nprior\nbottom\n")
+    try commit(root, "top\nprior\nbottom\n")
+    const prior = try commit(root, "top\noriginal\nbottom\n", "Earlier separately awarded edit")
+    const base = try commit(root, "top\nprior\nbottom\n", "Restore baseline before the carrier")
     try command(root, "switch", "-qc", "original")
     const canonical = try commit(root, "top\noriginal\nbottom\n", "Original edit")
     try command(root, "switch", "-qc", "repeat", base)
@@ -117,6 +120,24 @@ it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbo
     const verified = try verifyCarrierLines(root, lineRequest, [proof])
     const duplicatePath = verifyCarrierLines(root, lineRequest, [proof, proof]) catch (error) => error._tag
     const detachedProof = verifyCarrierLines(root, lineRequest, [{ ...proof }]) catch (error) => error._tag
+    const occurredAt = "2026-10-01T00:00:00.000Z"
+    const earlier = {
+      baselineDigest: "b".repeat(64), baselineRevisionCount: 5,
+      laterCandidates: [],
+      sources: [{
+        id: "PR_older", number: 1, headSha: base, mergedAt: occurredAt, acceptedSha: base,
+        awards: [{ key: "c".repeat(64), revisionId: "d".repeat(64), amount: 5, occurredAt }],
+      }],
+    }
+    const distinct = try verifyPriorCarrierAliases(root, earlier, [proof], verified)
+    const movedBaseline = try verifyPriorCarrierAliases(root, { ...earlier, baselineDigest: "e".repeat(64) }, [proof], verified)
+    const olderPositive = { ...earlier, sources: earlier.sources.map((row) => ({ ...row, acceptedSha: prior })) }
+    const olderRefusal = verifyPriorCarrierAliases(root, olderPositive, [proof], verified) catch (error) => error.reason
+    const wrongScope = { ...earlier, sources: earlier.sources.map((row) => ({ ...row, acceptedSha: followUp })) }
+    const wrongScopeRefusal = verifyPriorCarrierAliases(root, wrongScope, [proof], verified) catch (error) => error.reason
+    const inverse = { ...earlier, sources: [], laterCandidates: olderPositive.sources }
+    const inverseRefusal = verifyPriorCarrierAliases(root, inverse, [proof], verified) catch (error) => error.reason
+    const later = try verifyPriorCarrierAliases(root, { ...earlier, sources: [], laterCandidates: wrongScope.sources }, [proof], verified)
     const changedActor = {
       ...request.carrier,
       commits: request.carrier.commits.map((row) => row.sha === canonical ? { ...row, author: { nodeId: "MDQ6VXNlcjUyOTkwMzE=", type: "User" } } : row),
@@ -153,9 +174,16 @@ it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbo
           { sha: canonical, additions: 1, deletions: 1 },
           { sha: followUp, additions: 1, deletions: 0 },
         ].sort((left, right) => left.sha.localeCompare(right.sha)),
+        retainedAlias: { canonicalSha: canonical, additions: ["original\n"], deletions: ["prior\n"] },
       })
       assert.equal(duplicatePath, "CarrierLineProofUnavailable")
       assert.equal(detachedProof, "CarrierLineProofUnavailable")
+      assert.match(distinct, /^[0-9a-f]{64}$/u)
+      assert.notEqual(movedBaseline, distinct)
+      assert.match(later, /^[0-9a-f]{64}$/u)
+      assert.equal(olderRefusal, "Earlier positive acceptance competes for a retained native carrier edit")
+      assert.equal(inverseRefusal, olderRefusal)
+      assert.equal(wrongScopeRefusal, "Earlier positive acceptance is outside the verified pre-alias ancestry")
       assert.deepEqual([actorRefusal, patchRefusal, topologyRefusal, reapplication, ambiguity], Array(5).fill("CarrierLineProofUnavailable"))
     })
   }
