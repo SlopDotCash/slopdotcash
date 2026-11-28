@@ -83,6 +83,7 @@ const threeParentCases: ReadonlyArray<readonly [string, string]> = [
   ["@@@@ x.ts", "A\nb\nc\nd\nE\n"],
   ["@@@@ x.ts", "A\nb\nc\nresolved\nd\nE\n"],
   ["fix.ts", "A\nb\nc\nresolved\nd\nE\n"],
+  ["café.ts", "A\nb\nc\nresolved\nd\nE\n"],
 ]
 
 layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(NodeServices.layer, outbound))), { excludeTestServices: true, timeout: "30 minutes" })((it) => {
@@ -141,6 +142,21 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
         emptyInputs: "Complete Git merge ancestry is required",
         recipe: true,
       },
+    )
+  }))
+
+  it.effect('Two-parent merge counts a resolved non-ASCII path: git C-quotes the path in the patch, and the counts still read it (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const repository = try fixture("nonascii")
+    const base = try commit(repository, try tree(repository, "café.ts", "one\ntwo\nthree\n"), [], "base")
+    const left = try commit(repository, try tree(repository, "café.ts", "one\ntwo main\nthree\n"), [base], "left")
+    const right = try commit(repository, try tree(repository, "café.ts", "one\ntwo side\nthree\n"), [base], "right")
+    const merged = try commit(repository, try tree(repository, "café.ts", "one\ntwo resolved\nthree\n"), [left, right], "merge")
+    const input = mergeInput(merged, [{ sha: merged, parents: [left, right] }], ["café.ts"])
+    const resolutions = try collectMergeResolutions(input, repository.path)
+    const resolution = resolutions[0]
+    try same(
+      { paths: resolution?.paths, counts: resolution === undefined ? null : mergeResolutionLineCounts(resolution, commitOf(input)) },
+      { paths: ["café.ts"], counts: [{ path: "café.ts", additions: 1, deletions: 5 }] },
     )
   }))
 
@@ -223,6 +239,7 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
           { resolutions: 1, paths: [], clean: true, counts: [] },
           { resolutions: 1, paths: ["@@@@ x.ts"], clean: false, counts: [{ path: "@@@@ x.ts", additions: 1, deletions: 0 }] },
           { resolutions: 1, paths: ["fix.ts"], clean: false, counts: [{ path: "fix.ts", additions: 1, deletions: 0 }] },
+          { resolutions: 1, paths: ["café.ts"], clean: false, counts: [{ path: "café.ts", additions: 1, deletions: 0 }] },
         ],
       },
     )

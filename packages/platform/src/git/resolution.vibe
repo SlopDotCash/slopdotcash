@@ -1,6 +1,6 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
 import { lossyText, sha256Of } from "./bytes.ts"
-import { mergeResolutionLineCounts } from "./lineCounts.ts"
+import { decodeGitQuotedPath, mergeResolutionLineCounts } from "./lineCounts.ts"
 import { type AutomaticMergeResolution, type CombinedParentFile, type CombinedParentMergeResolution, LEGACY_MERGE_PROFILE, MERGE_GIT_VERSION, MERGE_PROFILE, type MergeInput, type MergeProfile, type MergeRelocation, type MergeResolution, objectId, refused } from "./model.vibe"
 import { type Output, gitText, runGit } from "./process.vibe"
 
@@ -74,8 +74,8 @@ effect function combinedParentResolution(workspace: Workspace, commit: MergeInpu
   const sections: string[] = []
   const observed: string[] = []
   for (const section of combined.split(/^diff --combined /mu).slice(1)) {
-    const path = section.slice(0, section.indexOf("\n"))
-    if (!combinedPaths.includes(path) || observed.includes(path)) throw refused("Incomplete combined merge paths")
+    const path = decodeGitQuotedPath(section.slice(0, section.indexOf("\n")))
+    if (path === null || !combinedPaths.includes(path) || observed.includes(path)) throw refused("Incomplete combined merge paths")
     observed.push(path)
     const lines = section.split("\n")
     const hunk = lines.findIndex((line, index) => index > 0 && line.startsWith(`${"@".repeat(parents.length + 1)} `))
