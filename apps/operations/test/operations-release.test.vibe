@@ -1388,7 +1388,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const collectorToken = "Mint the read-only collector token for assessment source reads"
     const catalog = "Read and verify the complete historical assessment catalog"
     const receipt = "Preserve the assessment audit receipt"
-    const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+    const publication = `apps/slopbot/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
     assert.deepStrictEqual(try Effect.try(() => reviewedWorkflow()), {
       tokenScopes: { workflow: { contents: "read" }, job: { contents: "read", actions: "read" } },
       validation: {
