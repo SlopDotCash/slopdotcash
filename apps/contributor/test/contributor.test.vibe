@@ -101,7 +101,7 @@ module node {
 }
 import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, skillAuthorityPython, treeFiles, urlPath } from node
 
-const frozenTemplateSha256 = "36c76e40dfb65e3585019b982441385ef7669923f0fc7ffc391957cf8aca34ef"
+const frozenTemplateSha256 = "39fe7b969a48746b98117746ca61fb7f9b4214756bd70a1e7527e0d4baf3857a"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
@@ -950,7 +950,7 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/private-trace-v2.md": "70a886b5dbbdfaf69fafe5d9b3210e8a8eff7bfd4f2e31705fcec0ec2e436dfa",
   "protocol/private-trace-v3.md": "088aae3e97656bf69c5dec03181eb5ffe04722bc8304a38f841fa6dd016e7261",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-templates/skills/project-contributor-template/SKILL.md": "ee5e2a3f88c4f88f574f69825b272ceb2e716d0d20295b89b59c1a8abeb7f331",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "053baf2b8c3d3749f5ff9c1f1ab90c0795e12e05550249ccc2d5c339278acb4c",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
   "skill-templates/skills/project-contributor-template/references/session-log.md": "0da3dd3a52e050df6d0399be72456c34a48980ec9ce954da6e02148a55d2bb00",
   "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "2a7b22d80fcfeb838b3dcf993eaf541fb4b252fbf63f599f7932b8251d70254a",

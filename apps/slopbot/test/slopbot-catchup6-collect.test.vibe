@@ -393,8 +393,10 @@ describe('Collect publishes a verified window (spec/points/window.md, "Publicati
       const firstMemo = `${world.outputDirectory}/memo/first.json`
       const first = try collected(world, { ...world.env, SLOP_COLLECTION_MEMO_OUT: firstMemo })
       const written = try readWritten(world)
+      const solo = `https://github.com/ada/widgets/pull/${world.solo}`
       const paired = `https://github.com/ada/widgets/pull/${world.github.pulls.paired}`
-      const contributors = written.ledger.filter((event) => event.category === "merged-pull-request" && event.source.url === paired).map((event) => event.actor.login)
+      const contributors = written.ledger.filter((event) => event.category === "merged-pull-request" && event.source.url === solo).map((event) => event.actor.login)
+      const heldPaired = written.ledger.filter((event) => event.category === "merged-pull-request" && event.source.url === paired).map((event) => event.actor.login)
       const memoKept = try fs.exists(firstMemo)
 
       const beforeSecond = world.requests.length
@@ -408,6 +410,7 @@ describe('Collect publishes a verified window (spec/points/window.md, "Publicati
       try same({
         first,
         contributors,
+        heldPaired,
         memoKept,
         second,
         repeated,
@@ -416,7 +419,8 @@ describe('Collect publishes a verified window (spec/points/window.md, "Publicati
         unexpected: world.unexpected.map((request) => request.url),
       }, {
         first: "completed",
-        contributors: ["grace", "linus"],
+        contributors: ["grace"],
+        heldPaired: [],
         memoKept: true,
         second: "completed",
         repeated: [],
