@@ -19,7 +19,7 @@ payout on Solana and Robinhood Chain as qualification evidence for those
 recorded activations. The production switch binds this observation to the
 exact legacy release and both receipts. The payouts follow ordinary
 accounting and recognition.
-[PRD section 11](../../docs/slop-product-requirements.md#limited-network-qualification) ·
+PRD section 11 (`docs/slop-product-requirements.md#limited-network-qualification`) ·
 [Activation PR #2712](https://github.com/SlopDotCash/slopdotcash/pull/2712) ·
 [Production switch](../settlement/attesterActivation.md)
 
