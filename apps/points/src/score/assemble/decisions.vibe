@@ -5,7 +5,7 @@ import { MergeResolution, mergeResolutionLineCounts } from "@repo/platform/git/e
 import type { SourceDecision } from "@repo/ports/points"
 import type { AssessmentSource } from "../../../gen/points__scoringPolicy.ts"
 import { AssemblyRefused } from "../../collect/run/pipeline.vibe"
-import type { Assessment, ChangedFile, FileAttribution, JointClaim, JointDecision, JointUnit, ReviewValue } from "../facts.vibe"
+import type { ChangedFile, ClosedAssessment, FileAttribution, JointClaim, JointDecision, JointUnit, ReviewValue } from "../facts.vibe"
 import { compareCodeUnits } from "../facts.vibe"
 import { JointEvidence, type LineCounts } from "./lines.vibe"
 
@@ -90,11 +90,10 @@ export interface AcceptedSource {
   readonly id: string
   readonly repository: string
   readonly acceptedAt: string
-  readonly merged: boolean
 }
 
 export interface Assessed {
-  readonly assessment: Assessment | null
+  readonly assessment: ClosedAssessment | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
 }
 
@@ -103,12 +102,11 @@ const unassessed: Assessed = { assessment: null, reviewValues: [] }
 export effect function assessmentOf(found: ValueDecision | undefined, source: AcceptedSource, assessmentSource: AssessmentSource) {
   const record = found?.record
   if (found === undefined || record === undefined || found.latestDigest === null) return unassessed
-  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt || (source.merged && record.assessment.tier === null)) {
+  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt) {
     throw new AssemblyRefused({ message: decisionMismatch })
   }
   const reviewValues: ReadonlyArray<ReviewValue> = record.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome }))
-  if (record.assessment.tier === null) return { assessment: null, reviewValues } satisfies Assessed
-  const assessment: Assessment = {
+  const assessment: ClosedAssessment = {
     tier: record.assessment.tier,
     source: assessmentSource,
     digest: found.latestDigest,

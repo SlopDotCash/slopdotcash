@@ -19271,7 +19271,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "ee6af14d5c862a1f5438d1223556c7338434deaaabce053342fa8ff99c11468d",
+      "sha256": "d452475e19e35532128c6893a5263c37ceab808a534b1d0ac257eab43c8503b6",
       "module": "points__journal",
       "stories": [
         {
@@ -19381,7 +19381,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
-          "line": 320,
+          "line": 321,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -19393,7 +19393,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 344,
+          "line": 345,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -19402,7 +19402,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 374,
+          "line": 375,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -19412,7 +19412,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 408,
+          "line": 409,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -19420,7 +19420,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 444,
+          "line": 445,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -19433,7 +19433,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 496,
+          "line": 497,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -19447,7 +19447,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 545,
+          "line": 546,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -19458,7 +19458,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 575,
+          "line": 576,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -19487,7 +19487,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 678,
+          "line": 679,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -19518,7 +19518,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 757,
+          "line": 758,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19527,7 +19527,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 787,
+          "line": 788,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19536,7 +19536,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 818,
+          "line": 819,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19550,7 +19550,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 855,
+          "line": 856,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19566,7 +19566,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 883,
+          "line": 884,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19579,7 +19579,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 917,
+          "line": 918,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19607,7 +19607,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 983,
+          "line": 984,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19631,7 +19631,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 1009,
+          "line": 1010,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19738,27 +19738,27 @@
         },
         {
           "target": "./evaluations.md",
-          "line": 322
+          "line": 323
         },
         {
           "target": "./scoringPolicy.md",
-          "line": 347
+          "line": 348
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 759
+          "line": 760
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 789
+          "line": 790
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 820
+          "line": 821
         },
         {
           "target": "./allocation.md",
-          "line": 826
+          "line": 827
         }
       ]
     },
@@ -21233,18 +21233,18 @@
     },
     {
       "path": "spec/points/reviews.md",
-      "sha256": "19559b4c8bf9f3349c6974d9802ceae407084f9e34984a83e257b9a141a04534",
+      "sha256": "279468ed4be28ed34663615416cda4452006bdf265ba57141bd83bac680c1d83",
       "module": "points__reviews",
       "stories": [
         {
           "heading": "Story: Credit the first five distinct useful reviewers",
-          "line": 8
+          "line": 16
         }
       ],
       "rules": [
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Review records preserve first qualification and highest band",
-          "line": 13,
+          "line": 21,
           "definitions": [
             "Reviewer",
             "Reviews",
@@ -21263,7 +21263,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews",
-          "line": 50,
+          "line": 58,
           "definitions": [
             "ActorKind",
             "ReviewEvidence",
@@ -21288,7 +21288,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Pool shares use ten-Point largest remainder and the original review order",
-          "line": 111,
+          "line": 119,
           "definitions": [
             "bandTotal",
             "poolPoints",
@@ -21304,7 +21304,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment",
-          "line": 134,
+          "line": 142,
           "definitions": [
             "ReviewDecision",
             "ReviewContent",
@@ -21319,7 +21319,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 177,
+          "line": 185,
           "definitions": [
             "review1",
             "evidenceValues",
@@ -21332,8 +21332,12 @@
       "imports": [],
       "references": [
         {
+          "target": "../slopbot/valueInference.md",
+          "line": 13
+        },
+        {
           "target": "./corrections.md",
-          "line": 65
+          "line": 73
         }
       ]
     },
@@ -36836,7 +36840,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "05abaa48f4b4ec653f25649b3a245be45735165bba965d03c24d7aec1abe824f",
+      "sha256": "73256538b3e1581c7f0012eab5c020b4724c181fa8047216e87b5bcb11b9f3fc",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36927,7 +36931,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 255,
+          "line": 256,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36941,7 +36945,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 295,
+          "line": 296,
           "definitions": [
             "CensusPull",
             "CensusQuery",
