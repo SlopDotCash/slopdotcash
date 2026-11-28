@@ -8,7 +8,8 @@ import { type SourceAudit, digestPattern, digestText, refusal, require } from ".
 import { exactMainHead } from "../transport.vibe"
 import { PublicRepository, historicalSourceAudit } from "../verify.vibe"
 import type { AssessmentAudit, AuditStatus } from "../../../../gen/points__assessmentAudit.ts"
-import { apply, canSeal, catalogsComplete, initial } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { canSeal, catalogsComplete } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { advanceAudit, initialAuditState } from "./cut.vibe"
 import { type AssessmentCatalogPhase, type HistoricalAssessmentCatalog, type HistoricalAssessmentHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, readHistoricalAssessmentCatalog } from "./catalog.vibe"
 import { type ClassifiedScope, type ReceiptStatus, classifyHistoricalAssessmentScope } from "./reconcile.vibe"
 import { boundCut, historicalEvidence } from "../replay/bindings.vibe"
@@ -137,15 +138,15 @@ effect function liveRepository(repository: string, githubId: string, nodeId: str
 }
 
 export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads, requireNoActive = false) {
-  let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount, requireNoActive }, dispatch)
-  for (const observation of classified.observations) state = try apply(state, observation, dispatch)
+  let state = try advanceAudit(initialAuditState, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount, requireNoActive }, dispatch)
+  for (const observation of classified.observations) state = try advanceAudit(state, observation, dispatch)
   return state
 }
 
 export effect function sealedCut(state: AssessmentAudit, fresh: boolean) {
-  const checked = try apply(state, { type: "changeCheckpoint", affectsScope: !fresh }, dispatch)
+  const checked = try advanceAudit(state, { type: "changeCheckpoint", affectsScope: !fresh }, dispatch)
   try require(canSeal(checked), "Historical assessment catalog: assessment qualification changed during collection")
-  return try apply(checked, { type: "seal" }, dispatch)
+  return try advanceAudit(checked, { type: "seal" }, dispatch)
 }
 
 export effect function auditedScope(setPhase: (phase: AuditPhase) => void, replay: boolean) {
@@ -197,7 +198,7 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
     receiptDigest: classified.receipt.receiptSha256,
   }
   if (!catalogsComplete(state) || classified.receipt.status === "incomplete") {
-    const sealed = try apply(state, { type: "seal" }, dispatch)
+    const sealed = try advanceAudit(state, { type: "seal" }, dispatch)
     try require(sealedStatus[sealed.status] === "incomplete" && classified.receipt.status === "incomplete", "Assessment catalog could not be reconciled")
     try Console.log(JSON.stringify({ ...report, blockerCodes: classified.receipt.blockers }))
     throw refusal("Assessment catalog could not be reconciled")
