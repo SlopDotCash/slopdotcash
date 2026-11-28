@@ -76,6 +76,33 @@ it.live('A changed attribution source fails the run before any retained-copy pro
   try same({ pull: requested(world, /^GET \/repos\/ada\/widgets\/pulls\/1$/u), commitPages: requested(world, /^GET \/repos\/ada\/widgets\/commits\//u), feed: feed.asked.length }, { pull: 1, commitPages: 0, feed: 0 })
 })
 
+it.live('GitHub read failures report a safe stage and endpoint family (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
+  const world = try seeded()
+  const feed: Feed = { status: 200, asked: [] }
+  const outcome = try outcomeOf(world, { commits: [{ oid: world.head, author: null, parentCount: 1 }] })
+  const responseFailure: Handler = (request) => {
+    const url = new URL(request.url)
+    if (url.pathname === `/repos/${repository}/pulls/1/reviews` && url.searchParams.has("page")) {
+      return new WebResponse("private upstream error", { status: 503 })
+    }
+    return world.fake.handler(request)
+  }
+  provide inputsOver(world, feed, responseFailure) {
+    try same(try loaded({ value: [], attribution: [outcome] }), {
+      kind: "ValueEvidenceRefused",
+      message: "GitHubUnavailable during retained attribution (endpoint: pull requests, HTTP 503)",
+    })
+  }
+  const transportFailure: Handler = (request) => Promise.reject(new Error(`private upstream error for ${request.url}`))
+  provide inputsOver(world, feed, transportFailure) {
+    try same(try loaded({ value: [outcome], attribution: [] }), {
+      kind: "ValueEvidenceRefused",
+      message: "GitHubUnavailable during assessment decisions (endpoint: repository)",
+    })
+  }
+  try same(feed.asked, [])
+})
+
 it.live('A census source without recorded history is decided missing, and a feed outage keeps the previous window (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
   const world = try seeded()
   const feed: Feed = { status: 200, asked: [] }

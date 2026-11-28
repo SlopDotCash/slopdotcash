@@ -16,6 +16,7 @@ schema ActiveVersion { readonly version_id: string; readonly percentage: number 
 schema DeploymentStatus { readonly versions: ReadonlyArray<ActiveVersion> }
 schema VersionEntry { readonly id: string; readonly annotations?: Record<string, string> }
 schema PhaseRow { readonly phase: string; readonly result: string }
+schema CommandFailure { readonly failed: true; readonly category: string }
 
 schema Binding { readonly type: string; readonly name: string; readonly id?: string; readonly bucket_name?: string; readonly queue_name?: string; readonly text?: string }
 schema Settings { readonly bindings: ReadonlyArray<Binding> }
@@ -79,9 +80,11 @@ export interface Hosted {
 const uuidPattern = /^[a-f0-9-]{36}$/u
 const hex32 = /^[a-f0-9]{32}$/u
 const commandSeconds = 180
+const retentionCommandSeconds = 360
 const cycleSeconds = 240
 const deploySeconds = 120
 const migrationSeconds = 300
+const safeCategory = /^[A-Za-z][A-Za-z0-9 -]{0,119}$/u
 
 function refused(message: string) {
   return new RecoveryRefused({ message })
@@ -253,16 +256,22 @@ export effect function hostedQualification(hosted: Hosted) {
     return Number(row?.n ?? 0)
   }
 
-  effect function command(action: string) {
+  effect function command(action: string, seconds = commandSeconds) {
     if (!bindingsVerified) throw refused("Qualification bindings are not verified")
     const work = owned.queues[0]
     if (work === undefined) throw refused("The work queue is not owned by this run")
     deliveries += 1
     const delivery = `${action}-${deliveries}`
     try api("command", "POST", `queues/${work.queue_id}/messages`, { content_type: "json", body: { qualification: run, action, delivery } })
-    try waited(commandSeconds, "Qualification command was not completed", effect {
+    try waited(seconds, `Qualification ${action} command timed out`, effect {
       if ((try query(owned.databases[0]?.uuid ?? "", "SELECT id FROM qualification_deliveries WHERE id=?", [`command:${delivery}`])).length === 1) return true
-      if ((try query(owned.databases[0]?.uuid ?? "", "SELECT phase FROM qualification_results WHERE phase=?", [`failed-${action}`])).length > 0) throw refused("Qualification command was not completed")
+      const [failed] = try query(owned.databases[0]?.uuid ?? "", "SELECT result FROM qualification_results WHERE phase=?", [`failed-${action}`])
+      if (failed !== undefined) {
+        const result = typeof failed.result === "string" ? (try json(failed.result, "command failure")) : undefined
+        const decodedFailure = Schema.decodeUnknownEffect(CommandFailure)(result) catch () => undefined
+        const message = `Qualification ${action} command failed`
+        throw refused(decodedFailure !== undefined && safeCategory.test(decodedFailure.category) ? `${message}: ${decodedFailure.category}` : message)
+      }
       return undefined
     })
   }
@@ -408,7 +417,7 @@ export effect function hostedQualification(hosted: Hosted) {
     report.results.acknowledgedVerifyCommands = 2
     try command("corrupt")
     report.results.corrupt = try waitFor("corrupt")
-    try command("retention")
+    try command("retention", retentionCommandSeconds)
     report.results.retention = try waitFor("retention")
     try command("retention")
     report.results.replayedRetention = try waitFor("retention")
