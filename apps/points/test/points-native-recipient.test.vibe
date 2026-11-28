@@ -143,6 +143,15 @@ const retired = { id: "PR_retired", number: 2, headSha: "2".repeat(40), mergedAt
 const tied = { id: "PR_tied", number: 15, headSha: "3".repeat(40), mergedAt: original.mergedAt }
 const late = { id: "PR_late", number: 16, headSha: "4".repeat(40), mergedAt: "2026-10-25T22:06:39.000Z" }
 const earlierAcceptedSha = "8".repeat(40)
+const archivedLate = { id: "PR_archived", number: 17, mergedAt: "2026-10-30T03:01:43.000Z", headSha: "a".repeat(40) }
+const archiveRoot = `/repos/${repository}`
+const archiveApi = `https://api.github.com${archiveRoot}`
+const archiveUrl = `https://github.com/${repository}/pull/${archivedLate.number}`
+const archiveEvent = {
+  event: "merged", id: 99, node_id: "ME_archive", created_at: "2026-10-30T03:01:42Z", commit_id: "6".repeat(40),
+  commit_url: `${archiveApi}/commits/${"6".repeat(40)}`, url: `${archiveApi}/issues/events/99`,
+}
+
 
 function share(source: typeof early, keyDigit: string, revisionDigit: string, amount: number, previous: string | null = null): Revision {
   return {
@@ -182,12 +191,26 @@ const groupPacket = {
 }
 const carrierProof = { ...proof, claimIds: ["7".repeat(64)] }
 
-function groupGithub(reads: string[], outside = false) {
+function groupGithub(reads: string[], outside = false, changedArchive = false) {
   const sources = [original, carrier, sibling, ...(outside ? [foreign] : [])]
   const otherMerges = [late, tied, retired, early]
   const unsupported = () => die("Unexpected GitHub method")
   return Layer.succeed(GitHub, {
-    json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
+    bytes: unsupported, send: unsupported, status: unsupported,
+    pages: (path, schema) => effect {
+      if (path !== `${archiveRoot}/issues/${archivedLate.number}/timeline`) return try die("Unexpected archive timeline")
+      reads.push("archive timeline")
+      return try orDie(Schema.decodeUnknownEffect(Schema.Array(schema))([{ event: "closed" }, archiveEvent]))
+    },
+    json: (path, schema) => effect {
+      if (path !== `${archiveRoot}/issues/events/${archiveEvent.id}`) return try die("Unexpected archive event")
+      reads.push("archive event")
+      return try orDie(Schema.decodeUnknownEffect(schema)({ ...archiveEvent, issue: {
+        node_id: changedArchive ? "PR_different" : archivedLate.id, number: archivedLate.number, state: "closed",
+        url: `${archiveApi}/issues/${archivedLate.number}`, html_url: archiveUrl, repository_url: archiveApi,
+        pull_request: { html_url: archiveUrl, url: `${archiveApi}/pulls/${archivedLate.number}`, merged_at: archivedLate.mergedAt },
+      } }))
+    },
     graphql: (_query, variables, schema) => effect {
       const ids = variables.ids
       if (Array.isArray(ids)) {
@@ -233,13 +256,13 @@ it.effect('A linked carrier verifies its complete official membership including 
       assert.deepEqual(requests[0]?.earlierPositive, {
         baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length,
         sources: [
-          { ...early, acceptedSha: earlierAcceptedSha, awards: [
+          { id: early.id, number: early.number, mergedAt: early.mergedAt, acceptedSha: earlierAcceptedSha, awards: [
             { key: earlyPositive.award.key, revisionId: earlyPositive.id, amount: 30, occurredAt: early.mergedAt },
             { key: earlyZero.award.key, revisionId: earlyZero.id, amount: 0, occurredAt: early.mergedAt },
           ] },
-          { ...tied, acceptedSha: earlierAcceptedSha, awards: [{ key: "4".repeat(64), revisionId: "5".repeat(64), amount: 30, occurredAt: tied.mergedAt }] },
+          { id: tied.id, number: tied.number, mergedAt: tied.mergedAt, acceptedSha: earlierAcceptedSha, awards: [{ key: "4".repeat(64), revisionId: "5".repeat(64), amount: 30, occurredAt: tied.mergedAt }] },
         ],
-        laterCandidates: [{ ...late, acceptedSha: earlierAcceptedSha, awards: [{ key: "5".repeat(64), revisionId: "6".repeat(64), amount: 30, occurredAt: late.mergedAt }] }],
+        laterCandidates: [{ id: late.id, number: late.number, mergedAt: late.mergedAt, acceptedSha: earlierAcceptedSha, awards: [{ key: "5".repeat(64), revisionId: "6".repeat(64), amount: 30, occurredAt: late.mergedAt }] }],
       })
       const sameTerminalSourceIds = [original.id, carrier.id, sibling.id]
       assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), { ...proof, sameTerminalSourceIds })
@@ -287,5 +310,34 @@ it.effect('A linked carrier refuses a stale baseline and earlier positive shares
       const result = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
       try Effect.try(() => assert.equal(result, "ReviewedRefused"))
     }
+  }
+})
+
+
+it.effect('A removed later approval must retain its official issue identity and merged commit (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+  const reads: string[] = []
+  const requests: NativeCarrierGroupRequest[] = []
+  const verify = (request: NativeCarrierGroupRequest) => effect {
+    requests.push(request)
+    return new Map([[original.id, proof], [carrier.id, carrierProof]])
+  }
+  const lateArchive = share(archivedLate, "5", "6", 30)
+  const context = { ...baseline, revisions: baseline.revisions.map((row) => row.award.sourceId === late.id ? lateArchive : row) }
+  provide groupGithub(reads) {
+    try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context)
+    try Effect.try(() => {
+      assert.deepEqual(reads.slice(-2), ["archive timeline", "archive event"])
+      assert.deepEqual(requests[0]?.earlierPositive.laterCandidates, [{
+        id: archivedLate.id, number: archivedLate.number, mergedAt: archivedLate.mergedAt, acceptedSha: archiveEvent.commit_id,
+        awards: [{ key: lateArchive.award.key, revisionId: lateArchive.id, amount: 30, occurredAt: archivedLate.mergedAt }],
+      }])
+    })
+  }
+  provide groupGithub([], false, true) {
+    const rival = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(rival, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
   }
 })
