@@ -232,7 +232,7 @@ export function testInputs(root: string, mode: TestProfile = "normal", read: Inp
 export const testReceipt = (root: string, mode: TestProfile = "normal") => path.join(root, ".cache", `test-result-${mode}.json`);
 
 /** Where code cites a story or rule (AGENTS.md, "Tests"). */
-const CITATION = /(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g;
+const CITATION = /(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "((?:[^"]|"(?=[^\s"';),`])[^"]*")+)"/g;
 export const HAS_CITATION = new RegExp(CITATION.source);
 /** A citation of `heading` in `spec`; `at` is `file:line`, a path from the checking root. */
 export interface Citation { at: string; spec: string; heading: string }
