@@ -229,7 +229,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Layer.provideMerge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('EIP-712 consent, attester binds, an unrelated wallet pays, contributor nets 98 of 100 (spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature"; spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet\'s own signature"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version"; spec/settlement/signer.md, "Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim")', () => effect {
+  it.effect(`EIP-712 consent, attester binds, an unrelated wallet pays, contributor nets 98 of 100 (spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version"; spec/settlement/signer.md, "Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim")`, () => effect {
     const { escrow, vault } = try Bench
     const contributor = try claim(101, escrow.roles.recipient)
     const id = try award(contributor, 0xb101n, 100n)
@@ -388,7 +388,7 @@ layer(Layer.provideMerge(Started, webCrypto), { excludeTestServices: true, timeo
     try same(refusals, ["Proxy deployment has no reviewed implementation", "Escrow asset, factory or registrar does not match reviewed deployment"])
   })
 
-  it.effect('Forged facts: a consent signed by another wallet is refused and an expiring consent is never submitted (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet\'s own signature"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version")', () => effect {
+  it.effect(`Forged facts: a consent signed by another wallet is refused and an expiring consent is never submitted (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version")`, () => effect {
     const { escrow, vault } = try Bench
     const forged = try claim(106, escrow.roles.registrar)
     try award(forged, 0xb106n, 600n)

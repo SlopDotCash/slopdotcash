@@ -94,7 +94,7 @@ effect function dryRunQualification(world: World) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('A merged pull request is assessed once and published, then read as current (spec/slopbot/valueInference.md, "Take all source leases or none"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order")', () => effect {
+  it.effect(`A merged pull request is assessed once and published, then read as current (spec/slopbot/valueInference.md, "Take all source leases or none"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order")`, () => effect {
     const { world } = try Journey
     try batch(requested("inference-1a", 1, "2026-11-10T00:00:00.000Z"))
     try Effect.try(() => world.providers.reply((call) => sonnet(call) && about(1)(call), { text: unresolvedVerdict(1), model: "claude-sonnet-5.5" }, { input: 120, output: 80, costMicro: 1500 }))

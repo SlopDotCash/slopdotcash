@@ -81,6 +81,7 @@ describe("Close and reopen an account without losing history", () => {
   it("a closed account signs out everywhere and only an", async () => {
     await site.allow("^console Failed to load resource: the server responded with a status of 40[19]", "^409 POST /api/v1/points/join$", "^401 GET /api/v1/payments/me$");
     await signIn(users.lin.login, "/account");
+    await shown(named("textbox", "Email address")).toMatchObject({ visible: true });
     await shown(named("form", "Close account")).toMatchObject({ count: 0 });
     const [before] = await membersOf(users.lin.id);
     expect(before).toMatchObject({ public: 1, closed_at: null });

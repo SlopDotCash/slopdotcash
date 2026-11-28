@@ -34,7 +34,7 @@ effect function asked(cookie: string | undefined, expected?: string) {
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('A session cookie names one open member until it expires, and the expected-actor header only narrows it (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")', () => effect {
+  it.effect(`A session cookie names one open member until it expires, and the expected-actor header only narrows it (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")`, () => effect {
     const area = try Area
     try member("actor-live", "41", live, "2099-01-01T00:00:00.000Z")
     try member("actor-expired", "42", expired, "2020-01-01T00:00:00.000Z")

@@ -195,7 +195,7 @@ function withoutHonor(reward: Record<string, unknown>): Record<string, unknown> 
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('An owner publishes, keeps and removes an honor-system promise in immutable revisions (spec/backend/projects.md, "An honor-system promise is the owner\'s opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1")', () => effect {
+  it.effect(`An owner publishes, keeps and removes an honor-system promise in immutable revisions (spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1")`, () => effect {
     const area = try Area
     const world = try World
     const steward = try member(stewardId)

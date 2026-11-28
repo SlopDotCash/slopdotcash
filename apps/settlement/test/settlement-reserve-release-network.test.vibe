@@ -50,7 +50,7 @@ const ports = Layer.mergeAll(
 )
 
 layer(Layer.mergeAll(ports, KeyValueStore.layerMemory))((it) => {
-  it.effect('A Solana release is refused by name after the owner check, and an outsider writes nothing (spec/settlement/reserveRelease.md, "Only an EVM vault\'s release reaches service approval")', () => effect {
+  it.effect(`A Solana release is refused by name after the owner check, and an outsider writes nothing (spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval")`, () => effect {
     const outsider = try refuseUnsupportedNetwork(request, deployment, { githubId: stranger }).pipe(Effect.flip)
     const untouched = try release(scope)
     const owner = try refuseUnsupportedNetwork(request, deployment, { githubId: steward }).pipe(Effect.flip)

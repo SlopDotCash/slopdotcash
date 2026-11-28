@@ -244,7 +244,7 @@ function omittedCountReads(world: Seeded, head: string, scenario: CountScenario)
   }
 }
 
-it.live('An ordinary commit recovers omitted counts only when its exact patch and every changed path reconcile (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit\'s totals")', () => effect {
+it.live(`An ordinary commit recovers omitted counts only when its exact patch and every changed path reconcile (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals")`, () => effect {
   const world = try seeded()
   const { base, head } = try seededCountOmission(world)
   for (const scenario of ["exact", "altered-text", "wrong-total", "missing-file"] as const) {

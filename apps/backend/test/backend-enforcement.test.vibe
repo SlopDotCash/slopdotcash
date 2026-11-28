@@ -175,7 +175,7 @@ effect function revised(as: Session, expectedRevision: number, next: unknown) {
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('Moderators restrict, decide malice and decide appeals independently (spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing")', () => effect {
+  it.effect('Moderators restrict, decide malice and decide appeals independently (spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account or a moderator files one open project appeal"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing")', () => effect {
     const area = try Area
     const [a, b, admin, owner, outsider] = [try member(moderatorA), try member(moderatorB), try member(administrator), try member(steward), try member("61")]
     try project("clear-demo", [{ status: "active", tier: "community", kind: "Created" }], "1001")
@@ -271,7 +271,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     })
   })
 
-  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project\'s open request")', () => effect {
+  it.effect(`Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project's open request")`, () => effect {
     const area = try Area
     const a = try member(moderatorA)
     const b = try member(moderatorB)
