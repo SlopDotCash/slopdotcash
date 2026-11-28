@@ -17,7 +17,7 @@ schema ApiError { readonly code: number }
 schema Envelope {
   readonly success: boolean
   readonly result: Schema.Unknown
-  readonly errors?: ReadonlyArray<ApiError>
+  readonly errors?: ReadonlyArray<ApiError> | null
 }
 
 const accountPattern = /^[a-f0-9]{32}$/u
