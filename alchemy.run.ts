@@ -173,7 +173,7 @@ const VerifySlopDeployment = Alchemy.Action(
         ? await verifyDeploymentEndpoints(
             input.identityUrl,
             [{ path: "/v1/oauth/authorize", expectedStatus: [400, 404] }],
-            { throwOnFailure: false },
+            {},
           )
         : undefined;
       return {
@@ -453,13 +453,11 @@ function provisionScheduledWorkers(
   });
 }
 
-const initialStageTarget = resolveStage({ cwd: rootDir });
-
 export default Alchemy.Stack(
   "SlopDotCash",
   {
     providers: Cloudflare.providers(),
-    state: resolveSlopStateLayer(initialStageTarget),
+    state: resolveSlopStateLayer(rootDir),
   },
   Effect.gen(function* () {
     const stageName = yield* Alchemy.Stage;

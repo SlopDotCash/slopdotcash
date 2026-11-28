@@ -23,6 +23,7 @@ import {
   resolveSlopStatePrefix,
   verifyPinnedMigrationLedger,
 } from "./catalog.ts";
+import { describeSlopStateBackend, resolveSlopStateLayer } from "./state.ts";
 
 const rootDir = path.resolve(import.meta.dirname, "..");
 const appDistDir = path.join(rootDir, "apps/app/dist");
@@ -72,11 +73,38 @@ describe("slopdotcash Alchemy catalog and stage invariants", () => {
   it("isolates remote state prefixes by GitHub environment and stage", () => {
     const prodTarget = resolveStage({ stage: "production", cwd: rootDir });
     const stagingTarget = resolveStage({ stage: "staging", cwd: rootDir });
+    const devTarget = resolveStage({ mode: "dev", cwd: rootDir });
     expect(resolveSlopStatePrefix(stagingTarget, {})).toBe("alchemy/slop-staging/");
     expect(resolveSlopStatePrefix(prodTarget, {})).toBe("alchemy/slop-production/");
     expect(
       resolveSlopStatePrefix(prodTarget, { SLOP_GITHUB_ENVIRONMENT: "eliza-army-production" }),
     ).toBe("alchemy/eliza-army-production/");
+
+    const r2Env = {
+      CLOUDFLARE_ACCOUNT_ID: "acct-test",
+      R2_STATE_BUCKET: "slop-state",
+      R2_STATE_ACCESS_KEY_ID: "key-id",
+      R2_STATE_SECRET_ACCESS_KEY: "secret-key",
+    };
+    expect(describeSlopStateBackend(devTarget, r2Env)).toEqual({ kind: "local" });
+    expect(describeSlopStateBackend(stagingTarget, r2Env)).toEqual({
+      kind: "r2",
+      prefix: "alchemy/slop-staging/",
+      config: {
+        kind: "s3",
+        accountId: "acct-test",
+        bucket: "slop-state",
+        accessKeyId: "key-id",
+        secretAccessKey: "secret-key",
+      },
+    });
+    expect(
+      describeSlopStateBackend(prodTarget, {
+        CLOUDFLARE_ACCOUNT_ID: "acct-test",
+        ALCHEMY_STATE_STORE: "cloudflare",
+      }),
+    ).toEqual({ kind: "cloudflare", accountId: "acct-test" });
+    expect(resolveSlopStateLayer(rootDir, {})).toBeDefined();
   });
 });
 
