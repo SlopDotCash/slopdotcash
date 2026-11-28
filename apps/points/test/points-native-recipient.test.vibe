@@ -4,6 +4,7 @@ import { GitHub } from "@repo/platform/github"
 import type { CorrectionManifest } from "../src/corrections/apply/manifest.vibe"
 import { type NativeCarrierGroupRequest, type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
 import type { PacketRecipientCorrection, SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+import type { Revision } from "../src/kernels/records/canonical.ts"
 
 const repository = "SlopDotCash/slopdotcash"
 const nodeId = "R_slop"
@@ -137,6 +138,27 @@ it.effect('Direct ordinary corrections and separately assessed work units retain
 
 const sibling = { id: "PR_other", number: 13, headSha: "e".repeat(40), mergedAt: original.mergedAt }
 const foreign = { id: "PR_outside", number: 14, headSha: "f".repeat(40), mergedAt: "2026-09-26T00:00:00.000Z" }
+const early = { id: "PR_early", number: 1, headSha: "1".repeat(40), mergedAt: "2026-08-20T00:00:00.000Z" }
+const retired = { id: "PR_retired", number: 2, headSha: "2".repeat(40), mergedAt: early.mergedAt }
+const tied = { id: "PR_tied", number: 15, headSha: "3".repeat(40), mergedAt: original.mergedAt }
+const late = { id: "PR_late", number: 16, headSha: "4".repeat(40), mergedAt: "2026-10-25T22:06:39.000Z" }
+const earlierAcceptedSha = "8".repeat(40)
+
+function share(source: typeof early, keyDigit: string, revisionDigit: string, amount: number, previous: string | null = null): Revision {
+  return {
+    id: revisionDigit.repeat(64), previous, recordedAt: "2026-11-20T00:00:00.000Z", sourceDigest: "a".repeat(64), sourceRule: "fixture",
+    award: { key: keyDigit.repeat(64), actor, projectId: "slopdotcash", category: "merged-pull-request", amount, occurredAt: source.mergedAt,
+      sourceId: source.id, sourceUrl: "https://github.com/" + repository + "/pull/" + source.number, workUnitId: "earlier", provisional: true },
+  }
+}
+
+const earlyOriginal = share(early, "2", "1", 30)
+const earlyZero = share(early, "2", "2", 0, earlyOriginal.id)
+const earlyPositive = share(early, "1", "3", 30)
+const retiredOriginal = share(retired, "3", "4", 30)
+const baseline = { baselineDigest: "d".repeat(64), revisions: [earlyOriginal, earlyPositive, retiredOriginal, share(tied, "4", "5", 30),
+  share(late, "5", "6", 30), share(original, "6", "7", 30), earlyZero, share(retired, "3", "8", 0, retiredOriginal.id)] }
+
 const directCorrection = {
   ...correction,
   sourceId: carrier.id,
@@ -154,12 +176,15 @@ const groupPacket = {
   ...packet,
   sourceAudit: { ...sourceAudit, sources: [original, carrier, sibling] },
   corrections: groupCorrections,
+  baselineDigest: baseline.baselineDigest,
+  baselineRevisionCount: baseline.revisions.length,
   recipientCorrections: [correction, directCorrection],
 }
 const carrierProof = { ...proof, claimIds: ["7".repeat(64)] }
 
 function groupGithub(reads: string[], outside = false) {
   const sources = [original, carrier, sibling, ...(outside ? [foreign] : [])]
+  const otherMerges = [late, tied, retired, early]
   const unsupported = () => die("Unexpected GitHub method")
   return Layer.succeed(GitHub, {
     json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
@@ -182,8 +207,9 @@ function groupGithub(reads: string[], outside = false) {
       reads.push("merged repository")
       return try orDie(Schema.decodeUnknownEffect(schema)({
         repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
-          totalCount: sources.length,
-          nodes: sources.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: acceptedSha } })),
+          totalCount: sources.length + otherMerges.length,
+          nodes: [...sources.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: acceptedSha } })),
+            ...otherMerges.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: earlierAcceptedSha } }))],
           pageInfo: { hasNextPage: false, endCursor: null },
         } },
       }))
@@ -199,18 +225,28 @@ it.effect('A linked carrier verifies its complete official membership including 
     return new Map([[original.id, proof], [carrier.id, carrierProof]])
   }
   provide groupGithub(reads) {
-    const actual = try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify)
+    const actual = try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, baseline)
     try Effect.try(() => {
       assert.deepEqual(reads, [original.id, carrier.id, "merged repository", sibling.id])
       assert.deepEqual(requests[0]?.sameTerminalSources, [original, carrier, sibling])
       assert.deepEqual(requests[0]?.correctedSources, [original, carrier])
+      assert.deepEqual(requests[0]?.earlierPositive, {
+        baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length,
+        sources: [
+          { ...early, acceptedSha: earlierAcceptedSha, awards: [
+            { key: earlyPositive.award.key, revisionId: earlyPositive.id, amount: 30, occurredAt: early.mergedAt },
+            { key: earlyZero.award.key, revisionId: earlyZero.id, amount: 0, occurredAt: early.mergedAt },
+          ] },
+          { ...tied, acceptedSha: earlierAcceptedSha, awards: [{ key: "4".repeat(64), revisionId: "5".repeat(64), amount: 30, occurredAt: tied.mergedAt }] },
+        ],
+      })
       const sameTerminalSourceIds = [original.id, carrier.id, sibling.id]
       assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), { ...proof, sameTerminalSourceIds })
       assert.deepEqual(actual.get(nativeCarrierCorrectionKey(directCorrection)), { ...carrierProof, sameTerminalSourceIds })
     })
   }
   provide groupGithub([], true) {
-    const unreviewedSource = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify) catch (error) => error._tag
+    const unreviewedSource = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, baseline) catch (error) => error._tag
     try Effect.try(() => {
       assert.equal(unreviewedSource, "ReviewedRefused")
       assert.equal(requests.length, 1)
@@ -225,12 +261,28 @@ it.effect('A direct carrier cannot select its own weights or assign the same nat
   provide groupGithub([]) {
     const unmarked = { ...directCorrection, nativeCarrierAliases: undefined, nativeCarrierSourceId: undefined }
     const bypass = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [unmarked] }, integrationBranch) catch (error) => error._tag
-    const duplicate = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, duplicateClaims) catch (error) => error._tag
-    const omitted = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [directCorrection] }, integrationBranch, undefined, duplicateClaims) catch (error) => error._tag
+    const duplicate = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, duplicateClaims, baseline) catch (error) => error._tag
+    const omitted = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [directCorrection] }, integrationBranch, undefined, duplicateClaims, baseline) catch (error) => error._tag
     try Effect.try(() => {
       assert.equal(bypass, "ReviewedRefused")
       assert.equal(duplicate, "ReviewedRefused")
       assert.equal(omitted, "ReviewedRefused")
     })
+  }
+})
+
+
+it.effect('A linked carrier refuses a stale baseline and earlier positive shares without exact official source identity (spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
+  const verify = (_request: NativeCarrierGroupRequest) => die("Unbound earlier Points reached native verification")
+  const unavailable = { ...early, id: "PR_unavailable" }
+  const drift = { ...early, mergedAt: "2026-08-21T00:00:00.000Z" }
+  const bad = [undefined, { ...baseline, baselineDigest: "e".repeat(64) }, { ...baseline, revisions: [] },
+    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyPositive ? share(unavailable, "1", "3", 30) : row) },
+    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyZero ? share(drift, "2", "2", 0, earlyOriginal.id) : row) }]
+  provide groupGithub([]) {
+    for (const context of bad) {
+      const result = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+      try Effect.try(() => assert.equal(result, "ReviewedRefused"))
+    }
   }
 })

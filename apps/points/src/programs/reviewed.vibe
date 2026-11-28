@@ -207,7 +207,8 @@ effect function published<E, R, G, S>(setPhase: (phase: PublicationPhase) => voi
   setPhase("value record verification")
   try verifyHistoricalValueRecords(packet, { qualifiedReplay: qualification !== undefined })
   setPhase("native original recipient verification")
-  const verifiedNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup)
+  const verifiedNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup,
+    { baselineDigest, revisions: baseline.revisions })
   setPhase("historical Points reconstruction")
   const candidate = try reconstructHistoricalPoints({
     packet,
@@ -238,7 +239,8 @@ effect function published<E, R, G, S>(setPhase: (phase: PublicationPhase) => voi
         try verifyHistoricalProtection(packet)
         try verifyCarrierTips(packet, identical)
         if (packet.recipientCorrections.some((correction) => correction.nativeCarrierAliases !== undefined)) try verifyHistoricalCensus(packet)
-        const currentNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup)
+        const currentNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup,
+          { baselineDigest, revisions: baseline.revisions })
         try require(JSON.stringify([...currentNativeCarriers]) === JSON.stringify([...verifiedNativeCarriers]), "Native recipient evidence changed before import")
         for (const check of beforeImport) try check
         setPhase("protected import and readback")

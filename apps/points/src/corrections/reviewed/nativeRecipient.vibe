@@ -1,7 +1,8 @@
 // spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { GitHub } from "@repo/platform/github"
 import { type AuditedSource, type HistoricalPacket, type PacketNativeCarrierAlias, type PacketRecipientCorrection, type ReviewedRefused, digestPattern, isIso, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
-import { mergedRepositorySources } from "./mergedRepository.vibe"
+import { type NativeCarrierBaseline, type NativeCarrierEarlierPositive, earlierPositiveOf } from "./earlierPositive.vibe"
+import { type RepositoryMerge, mergedRepositorySources } from "./mergedRepository.vibe"
 
 schema Repository {
   readonly id: string
@@ -39,6 +40,7 @@ export interface NativeCarrierGroupRequest {
   readonly correctedSources: ReadonlyArray<AuditedSource>
   readonly sameTerminalSources: ReadonlyArray<AuditedSource>
   readonly aliases: ReadonlyArray<PacketNativeCarrierAlias>
+  readonly earlierPositive: NativeCarrierEarlierPositive
 }
 
 export interface VerifiedNativeRecipient {
@@ -56,7 +58,8 @@ export interface VerifiedNativeCarrierCorrection {
 export type VerifyNativeCarrier<E, R> = (request: NativeCarrierRequest) => VerifiedNativeCarrierCorrection!(E | ReviewedRefused)!R
 export type VerifyNativeCarrierGroup<E, R> = (request: NativeCarrierGroupRequest) => ReadonlyMap<string, VerifiedNativeCarrierCorrection>!(E | ReviewedRefused)!R
 export type VerifiedNativeCarriers = ReadonlyMap<string, VerifiedNativeCarrierCorrection>
-type NativeCorrectionScope = Pick<HistoricalPacket, "projectId" | "sourceAudit" | "recipientCorrections" | "corrections">
+type NativeCorrectionScope = Pick<HistoricalPacket, "projectId" | "sourceAudit" | "recipientCorrections" | "corrections"> &
+  Partial<Pick<HistoricalPacket, "baselineDigest" | "baselineRevisionCount">>
 
 const nodeQuery = "query HistoricalRecipientCarriers($ids:[ID!]!) { nodes(ids:$ids) { ... on PullRequest { id number url state mergedAt headRefOid repository { id databaseId isPrivate nameWithOwner } mergeCommit { oid parents(first: 20) { totalCount nodes { oid } } } } } }"
 
@@ -127,7 +130,8 @@ function distinctAliases(aliases: ReadonlyArray<PacketNativeCarrierAlias>) {
 }
 
 effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: PacketRecipientCorrection, expected: ReadonlyMap<string, AuditedSource>,
-  observed: ReadonlyMap<string, MergedPull>, integrationBranch: string | undefined, verify: VerifyNativeCarrierGroup<E, R> | undefined) {
+  observed: ReadonlyMap<string, MergedPull>, merged: ReadonlyArray<RepositoryMerge>, baseline: NativeCarrierBaseline | undefined,
+  integrationBranch: string | undefined, verify: VerifyNativeCarrierGroup<E, R> | undefined) {
   const carrier = observed.get(direct.sourceId)
   const directCensus = expected.get(direct.sourceId)
   const aliases = direct.nativeCarrierAliases
@@ -135,6 +139,10 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
     aliases === undefined || !distinctAliases(aliases) || direct.nativeCarrierSourceId !== direct.sourceId ||
     !directlyIntegrated(carrier) || carrier.mergeCommit.parents.nodes[1]?.oid !== directCensus.headSha) {
     throw refusal("Native carrier group is unavailable or changed")
+  }
+  if (baseline === undefined || !digestPattern.test(baseline.baselineDigest) || baseline.baselineDigest !== packet.baselineDigest ||
+    baseline.revisions.length !== packet.baselineRevisionCount) {
+    throw refusal("Native carrier group requires the exact reviewed Points baseline")
   }
 
   const acceptedSha = carrier.mergeCommit.oid
@@ -163,10 +171,11 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
     sameTerminalSources.push(census)
   }
 
+  const earlierPositive = try earlierPositiveOf(packet.projectId, packet.sourceAudit.repository, baseline, merged, sameTerminalSources)
   const verified = try verify({
     carrier: { repository: packet.sourceAudit.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, repositoryDatabaseId: carrier.repository.databaseId,
       integrationBranch, original: directCensus, carrier: directCensus, acceptedSha },
-    correctedSources, sameTerminalSources: sameTerminalSources.sort((left, right) => left.number - right.number), aliases,
+    correctedSources, sameTerminalSources: sameTerminalSources.sort((left, right) => left.number - right.number), aliases, earlierPositive,
   })
   const claims = new Set<string>()
   const proofByCorrection = new Map<string, VerifiedNativeCarrierCorrection>()
@@ -184,7 +193,8 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
 }
 
 export effect function verifyNativeCarrierRecipients<E = never, R = never, G = never, S = never>(
-  packet: NativeCorrectionScope, integrationBranch: string | undefined, verify?: VerifyNativeCarrier<E, R>, verifyGroup?: VerifyNativeCarrierGroup<G, S>
+  packet: NativeCorrectionScope, integrationBranch: string | undefined, verify?: VerifyNativeCarrier<E, R>, verifyGroup?: VerifyNativeCarrierGroup<G, S>,
+  baseline?: NativeCarrierBaseline,
 ) {
   const selected = new Map<string, VerifiedNativeCarrierCorrection>()
   const corrections = packet.recipientCorrections
@@ -223,11 +233,12 @@ export effect function verifyNativeCarrierRecipients<E = never, R = never, G = n
     return correction.nativeCarrierSourceId === undefined && source !== undefined && directlyIntegrated(source) &&
       matchingScopes(packet, correction).some((candidate) => candidate.kind === "pull-request")
   })
+  let merged: ReadonlyArray<RepositoryMerge> = []
   if (directGroups.size > 0 || directOrdinary) {
     const terminals = new Set([...observed.values()].filter(directlyIntegrated).map(({ mergeCommit }) => mergeCommit.oid))
-    const full = try mergedRepositorySources(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId)
-    try require(full.every((source) => source.acceptedSha !== null), "Same-terminal membership is incomplete")
-    const members = full.filter(({ acceptedSha }) => acceptedSha !== null && terminals.has(acceptedSha))
+    merged = try mergedRepositorySources(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId)
+    try require(merged.every((source) => source.acceptedSha !== null), "Same-terminal membership is incomplete")
+    const members = merged.filter(({ acceptedSha }) => acceptedSha !== null && terminals.has(acceptedSha))
     const remaining = new Map<string, AuditedSource>()
     for (const { id, number, headSha, mergedAt } of members) {
       const source = audit.get(id)
@@ -245,7 +256,7 @@ export effect function verifyNativeCarrierRecipients<E = never, R = never, G = n
     try require(members.every(({ id, acceptedSha }) => observed.get(id)?.mergeCommit.oid === acceptedSha), "Same-terminal source acceptance changed")
   }
   for (const direct of directGroups.values()) {
-    const proofs = try correctedGroup(packet, direct, audit, observed, integrationBranch, verifyGroup)
+    const proofs = try correctedGroup(packet, direct, audit, observed, merged, baseline, integrationBranch, verifyGroup)
     for (const [key, proof] of proofs) selected.set(key, proof)
   }
   for (const correction of corrections) {
