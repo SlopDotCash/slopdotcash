@@ -1,10 +1,12 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
-import { type PublicMergeRepository, withPublicGitObjects } from "@repo/platform/git"
+import { type PublicMergeRepository, collectVerifiedMergeResolutions, withPublicGitObjects } from "@repo/platform/git"
 import { sha256Of } from "@repo/platform/git/bytes"
-import type { CommitAttribution, Evidence } from "../evidence/types.vibe"
-import { CarrierLineProofUnavailable, readCarrierGit, readCarrierGitBytes, verifyCarrierLines } from "./carrierLines.vibe"
-import { type NativeCarrierHistory, type NativeCommitBytes, type NativeCommitObject, parseNativeCommitObject, verifyNativeCarrierPartition } from "./carrierPartition.vibe"
-import type { WorkUnitSource } from "./types.vibe"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import type { Actor, CommitAttribution, Evidence } from "../evidence/types.vibe"
+import { type CarrierLineProof, CarrierLineProofUnavailable, readCarrierGit, readCarrierGitBytes, verifyCarrierLines } from "./carrierLines.vibe"
+import { type NativeCarrierHistory, type NativeCarrierPartition, type NativeCommitBytes, type NativeCommitObject, parseNativeCommitObject, verifyNativeCarrierPartition } from "./carrierPartition.vibe"
+import { mergeInputOf } from "./merge.vibe"
+import { claimKey } from "./types.vibe"
 
 const oid = /^[0-9a-f]{40}$/u
 const proofObjectLimit = 8192
@@ -23,6 +25,7 @@ function historyOf(evidence: Evidence) {
     attribution.set(row.sha, row)
   }
   return {
+    baseSha: evidence.pull.base.sha,
     headSha: evidence.pull.head.sha,
     commitCount: evidence.pull.commits,
     commits: evidence.commits.map((commit) => {
@@ -57,12 +60,13 @@ function pathObjects(baseSha: string, boundary: string, rows: string) {
     new Set(ids).size === ids.length ? ids : undefined
 }
 
-export effect function reconstructCarrierProof(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory & { readonly baseSha: string }, acceptanceSha: string) {
+export effect function reconstructCarrierProof(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory, acceptanceSha: string) {
   const { baseSha, headSha } = carrier
-  const all = new Set([baseSha, headSha, acceptanceSha, ...original.commits.map(({ sha }) => sha), ...carrier.commits.map(({ sha }) => sha)])
+  const all = new Set([original.baseSha, original.headSha, baseSha, headSha, acceptanceSha, ...original.commits.map(({ sha }) => sha), ...carrier.commits.map(({ sha }) => sha)])
   if (!oid.test(original.headSha) || all.size > proofObjectLimit || [...all].some((sha) => !oid.test(sha))) throw refused()
   const shallow = try readCarrierGit(directory, ["rev-parse", "--is-shallow-repository"])
   if (shallow !== "false\n") throw refused()
+  const originalParentRows = try readCarrierGit(directory, ["rev-list", "--parents", original.headSha, "^" + original.baseSha], rangeByteLimit)
   const parentRows = try readCarrierGit(directory, ["rev-list", "--parents", headSha, "^" + baseSha], rangeByteLimit)
   const objects: NativeCommitBytes[] = []
   const known = new Map<string, NativeCommitObject>()
@@ -95,15 +99,58 @@ export effect function reconstructCarrierProof(directory: string, original: Nati
     covered = baseAncestors(baseSha, known)
     if (!covered.has(boundary)) throw refused()
   }
-  const partition = verifyNativeCarrierPartition({ original, carrier, acceptanceSha, objects, trustedRange: { baseSha, headSha, parentRows } })
+  const partition = verifyNativeCarrierPartition({ original, carrier, acceptanceSha, objects,
+    trustedOriginalRange: { baseSha: original.baseSha, headSha: original.headSha, parentRows: originalParentRows },
+    trustedRange: { baseSha, headSha, parentRows },
+  })
   if (partition === undefined) throw refused()
   const lineProof = try verifyCarrierLines(directory, { baseSha, acceptedSha: acceptanceSha })
   return { partition, lineProof }
 }
 
-export effect function collectNativeCarrierProof(original: WorkUnitSource, carrier: WorkUnitSource, repository: PublicMergeRepository) {
-  const from = original.evidence
-  const to = carrier.evidence
+interface OriginalCarrierClaim {
+  readonly id: string
+  readonly commitSha: string
+  readonly path: string
+  readonly actor: Actor
+  readonly additions: number
+  readonly deletions: number
+}
+
+effect function acceptedOriginalClaims(directory: string, evidence: Evidence, partition: NativeCarrierPartition, lineProof: CarrierLineProof) {
+  const novel = new Set(partition.newlyAcceptedCommitShas)
+  const commits = evidence.commits.filter(({ sha }) => novel.has(sha))
+  const ordinary = commits.filter(({ parents }) => parents.length < 2)
+  const authors = new Map(ordinary.map(({ sha, author }) => [sha, author]))
+  const commitAttribution = evidence.commitAttribution.filter(({ sha }) => novel.has(sha))
+  const attributedPaths = new Map(commitAttribution.map(({ sha, changedPaths }) => [sha, new Set(changedPaths ?? [])]))
+  const sourcePaths = new Set([...attributedPaths.values()].flatMap((paths) => [...paths]))
+  const resolutions = try collectVerifiedMergeResolutions(mergeInputOf({ ...evidence, commits, commitAttribution }), directory)
+  if (resolutions.length + ordinary.length !== commits.length || resolutions.some(({ paths }) => paths.length > 0)) {
+    throw new CarrierLineProofUnavailable({ reason: "Newly accepted original merge work has no exact line attribution" })
+  }
+  const result: OriginalCarrierClaim[] = []
+  for (const path of lineProof.paths) {
+    if (!sourcePaths.has(path.path)) continue
+    if (path.unresolvedAdditions !== 0 || path.unresolvedDeletions !== 0) {
+      throw new CarrierLineProofUnavailable({ reason: "Original contribution has competing accepted lines" })
+    }
+    for (const edit of path.claims) {
+      if (!authors.has(edit.sha)) continue
+      const actor = authors.get(edit.sha)
+      if (attributedPaths.get(edit.sha)?.has(path.path) !== true ||
+        actor === null || actor === undefined || !isCreditEligibleCommitAuthor({ id: actor.node_id, kind: actor.type })) throw refused()
+      result.push({
+        id: sha256Of(claimKey(evidence.repositoryNodeId, edit.sha, path.path)),
+        commitSha: edit.sha, path: path.path, actor, additions: edit.additions, deletions: edit.deletions,
+      })
+    }
+  }
+  if (result.length === 0) throw new CarrierLineProofUnavailable({ reason: "Original contribution has no surviving accepted lines" })
+  return result.sort((left, right) => left.id.localeCompare(right.id))
+}
+
+export effect function collectNativeCarrierProof(from: Evidence, to: Evidence, repository: PublicMergeRepository) {
   const native = from.nativeMergeAcceptance
   const accepted = to.mergeCommitEvidence
   const baseSha = to.pull.base.sha
@@ -123,6 +170,16 @@ export effect function collectNativeCarrierProof(original: WorkUnitSource, carri
   const originalHistory = historyOf(from)
   const carrierHistory = historyOf(to)
   if (originalHistory === undefined || carrierHistory === undefined) throw refused()
-  const objects = [from.pull.head.sha, to.pull.head.sha, baseSha, acceptanceSha]
-  return try withPublicGitObjects(repository, objects, (directory) => reconstructCarrierProof(directory, originalHistory, { ...carrierHistory, baseSha }, acceptanceSha))
+  const objects = [originalHistory.baseSha, originalHistory.headSha, carrierHistory.baseSha, carrierHistory.headSha, acceptanceSha]
+  const reconstructed = try withPublicGitObjects(repository, objects, (directory) => effect {
+    const proof = try reconstructCarrierProof(directory, originalHistory, carrierHistory, acceptanceSha)
+    const originalClaims = try acceptedOriginalClaims(directory, from, proof.partition, proof.lineProof)
+    return { ...proof, originalClaims }
+  })
+  return {
+    ...reconstructed,
+    repositoryNodeId: from.repositoryNodeId,
+    originalPullRequestId: from.pull.node_id,
+    carrierPullRequestId: to.pull.node_id,
+  }
 }

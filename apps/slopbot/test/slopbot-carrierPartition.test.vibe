@@ -25,7 +25,8 @@ function parentRows(members: ReadonlyArray<NativeCarrierMember>) {
 }
 
 function stackedCarrier() {
-  const older = commit("previous ordinary edit", [])
+  const originalBase = commit("original pull request base", [])
+  const older = commit("previous ordinary edit", [originalBase])
   const earlier = commit("previous branch update", [older])
   const base = commit("carrier base marker", [earlier])
   const novel = commit("original retained work", [earlier])
@@ -33,38 +34,44 @@ function stackedCarrier() {
   const head = commit("separate carrier follow-up", [base, originalHead])
   const terminal = commit("native accepted terminal", [base, head])
   const carrierCommits = [member(head, [base, originalHead], maintainer), member(originalHead, [novel, older]), member(novel, [earlier])]
+  const originalCommits = [member(originalHead, [novel, older]), member(novel, [earlier]), member(earlier, [older]), member(older, [originalBase])]
   const input = {
-    original: { headSha: originalHead.sha, commitCount: 3, commits: [member(older, []), member(novel, [earlier]), member(originalHead, [novel, older])] },
+    original: { baseSha: originalBase.sha, headSha: originalHead.sha, commitCount: 4, commits: originalCommits },
     carrier: { baseSha: base.sha, headSha: head.sha, commitCount: 3, commits: carrierCommits },
     acceptanceSha: terminal.sha,
-    objects: [head, older, earlier, base, novel, originalHead, terminal],
+    objects: [head, originalBase, older, earlier, base, novel, originalHead, terminal],
+    trustedOriginalRange: { baseSha: originalBase.sha, headSha: originalHead.sha, parentRows: parentRows(originalCommits) },
     trustedRange: { baseSha: base.sha, headSha: head.sha, parentRows: parentRows(carrierCommits) },
   } satisfies NativeCarrierPartitionInput
-  return { input, older, earlier, base, novel, originalHead, head, terminal }
+  return { input, originalBase, older, earlier, base, novel, originalHead, head, terminal }
 }
 
 it.effect('Proves the restored original partition from exact Git bytes and the observed carrier range (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
-  const { input, older, base, novel, originalHead, terminal } = stackedCarrier()
+  const { input, originalBase, older, earlier, base, novel, originalHead, head, terminal } = stackedCarrier()
   const reversed = { ...input, objects: [...input.objects].reverse(), trustedRange: { ...input.trustedRange, parentRows: parentRows([...input.carrier.commits].reverse()) } }
   const accepted = verifyNativeCarrierPartition(input)
   try orDie(Effect.try(() => {
     assert.deepStrictEqual(accepted, {
+      originalBaseSha: originalBase.sha,
+      originalHeadSha: originalHead.sha,
       baseSha: base.sha,
+      carrierHeadSha: head.sha,
       acceptedSha: terminal.sha,
-      priorBaseCommitShas: [older.sha],
+      priorBaseCommitShas: [earlier.sha, older.sha].sort(),
       newlyAcceptedCommitShas: [novel.sha, originalHead.sha].sort(),
     })
     assert.deepStrictEqual(verifyNativeCarrierPartition(reversed), accepted)
-    assert.lengthOf(input.original.commits, 3)
+    assert.lengthOf(input.original.commits, 4)
   }))
 })
 
 it.effect('Holds partial, forged or conflicting histories before producing credit (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
-  const { input, older, earlier, base, novel, originalHead, head, terminal } = stackedCarrier()
+  const { input, originalBase, older, earlier, base, novel, originalHead, head, terminal } = stackedCarrier()
   const swapped = commit("reversed native terminal", [head, base])
-  const inventedRange = [...input.carrier.commits, member(older, [])]
+  const inventedRange = [...input.carrier.commits, member(older, [originalBase])]
   const invalid: ReadonlyArray<NativeCarrierPartitionInput> = [
     { ...input, objects: input.objects.filter((item) => item.sha !== earlier.sha) },
+    { ...input, objects: input.objects.filter((item) => item.sha !== originalBase.sha) },
     { ...input, objects: input.objects.filter((item) => item.sha !== base.sha) },
     { ...input, objects: input.objects.filter((item) => item.sha !== terminal.sha) },
     { ...input, objects: [...input.objects, terminal] },
@@ -77,6 +84,9 @@ it.effect('Holds partial, forged or conflicting histories before producing credi
     { ...input, carrier: { ...input.carrier, commitCount: inventedRange.length, commits: inventedRange }, trustedRange: { ...input.trustedRange, parentRows: parentRows(inventedRange) } },
     { ...input, original: { ...input.original, commitCount: 2, commits: input.original.commits.filter((item) => item.sha !== originalHead.sha) } },
     { ...input, original: { ...input.original, commits: input.original.commits.filter((item) => item.sha !== older.sha) } },
+    { ...input, original: { ...input.original, commitCount: 3, commits: input.original.commits.filter((item) => item.sha !== older.sha) } },
+    { ...input, trustedOriginalRange: { ...input.trustedOriginalRange, baseSha: earlier.sha } },
+    { ...input, trustedOriginalRange: { ...input.trustedOriginalRange, headSha: head.sha } },
     { ...input, original: { ...input.original, commitCount: 4, commits: [...input.original.commits, member(head, [base, originalHead], maintainer)] } },
     { ...input, original: { ...input.original, commits: input.original.commits.map((item) => item.sha === novel.sha ? { ...item, author: maintainer } : item) } },
     { ...input, original: { ...input.original, commits: input.original.commits.map((item) => item.sha === novel.sha ? { ...item, attributionDigest: "f".repeat(64) } : item) } },

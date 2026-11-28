@@ -20,6 +20,7 @@ export interface NativeCarrierMember {
 }
 
 export interface NativeCarrierHistory {
+  readonly baseSha: string
   readonly headSha: string
   readonly commitCount: number
   readonly commits: ReadonlyArray<NativeCarrierMember>
@@ -33,14 +34,18 @@ export interface TrustedNativeCarrierRange {
 
 export interface NativeCarrierPartitionInput {
   readonly original: NativeCarrierHistory
-  readonly carrier: NativeCarrierHistory & { readonly baseSha: string }
+  readonly carrier: NativeCarrierHistory
   readonly acceptanceSha: string
   readonly objects: ReadonlyArray<NativeCommitBytes>
+  readonly trustedOriginalRange: TrustedNativeCarrierRange
   readonly trustedRange: TrustedNativeCarrierRange
 }
 
 export interface NativeCarrierPartition {
+  readonly originalBaseSha: string
+  readonly originalHeadSha: string
   readonly baseSha: string
+  readonly carrierHeadSha: string
   readonly acceptedSha: string
   readonly priorBaseCommitShas: ReadonlyArray<string>
   readonly newlyAcceptedCommitShas: ReadonlyArray<string>
@@ -108,15 +113,15 @@ function checkedHistory(history: NativeCarrierHistory, objects: ParentGraph) {
   return members.has(history.headSha) ? members : undefined
 }
 
-function exactNativeRange(range: TrustedNativeCarrierRange, carrier: ReadonlyMap<string, NativeCarrierMember>) {
+function exactNativeRange(range: TrustedNativeCarrierRange, history: ReadonlyMap<string, NativeCarrierMember>) {
   const { parentRows } = range
   if (parentRows.length === 0 || parentRows.length > maximumRangeCharacters || !parentRows.endsWith("\n")) return undefined
   const rows = parentRows.slice(0, -1).split("\n")
-  if (rows.length !== carrier.size) return undefined
+  if (rows.length !== history.size) return undefined
   const listed = new Set<string>()
   for (const row of rows) {
     const [sha = "", ...parents] = row.split(" ")
-    const member = carrier.get(sha)
+    const member = history.get(sha)
     if (member === undefined || listed.has(sha) || !sameParents(member.parents, parents)) return undefined
     listed.add(sha)
   }
@@ -140,17 +145,19 @@ function sameCopiedMember(original: NativeCarrierMember, accepted: NativeCarrier
 }
 
 export function verifyNativeCarrierPartition(input: NativeCarrierPartitionInput): NativeCarrierPartition | undefined {
-  const { acceptanceSha, trustedRange } = input
+  const { acceptanceSha, trustedOriginalRange, trustedRange } = input
   const { baseSha, headSha } = input.carrier
-  if (trustedRange.baseSha !== baseSha || trustedRange.headSha !== headSha || acceptanceSha === baseSha || acceptanceSha === headSha) return undefined
+  const { baseSha: originalBaseSha, headSha: originalHeadSha } = input.original
+  if (trustedRange.baseSha !== baseSha || trustedRange.headSha !== headSha || acceptanceSha === baseSha || acceptanceSha === headSha ||
+    trustedOriginalRange.baseSha !== originalBaseSha || trustedOriginalRange.headSha !== originalHeadSha || originalBaseSha === originalHeadSha) return undefined
   const graph = rawObjectGraph(input.objects)
   const acceptance = graph?.get(acceptanceSha)
-  if (graph === undefined || !graph.has(baseSha) || acceptance === undefined || !sameParents(acceptance.parents, [baseSha, headSha])) return undefined
+  if (graph === undefined || !graph.has(originalBaseSha) || !graph.has(baseSha) || acceptance === undefined || !sameParents(acceptance.parents, [baseSha, headSha])) return undefined
   const original = checkedHistory(input.original, graph)
   const carrier = checkedHistory(input.carrier, graph)
   if (original === undefined || carrier === undefined) return undefined
   const nativeRange = exactNativeRange(trustedRange, carrier)
-  if (nativeRange === undefined) return undefined
+  if (nativeRange === undefined || exactNativeRange(trustedOriginalRange, original) === undefined) return undefined
   const beforeCarrier = reachable(baseSha, graph)
   const carrierReach = reachable(headSha, carrier, beforeCarrier)
   if (carrierReach.size !== nativeRange.size || [...carrierReach].some((sha) => !nativeRange.has(sha))) return undefined
@@ -167,5 +174,5 @@ export function verifyNativeCarrierPartition(input: NativeCarrierPartitionInput)
     if (copy === undefined || !sameCopiedMember(member, copy)) return undefined
     newlyAcceptedCommitShas.push(member.sha)
   }
-  return { baseSha, acceptedSha: acceptanceSha, priorBaseCommitShas: priorBaseCommitShas.sort(), newlyAcceptedCommitShas: newlyAcceptedCommitShas.sort() }
+  return { originalBaseSha, originalHeadSha, baseSha, carrierHeadSha: headSha, acceptedSha: acceptanceSha, priorBaseCommitShas: priorBaseCommitShas.sort(), newlyAcceptedCommitShas: newlyAcceptedCommitShas.sort() }
 }
