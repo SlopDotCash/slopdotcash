@@ -7,6 +7,9 @@
   },
   "scripts": {
     "dev": "turbo run dev //#studio",
+    "dev:cf": "ALCHEMY_FAST_DISTILLED=1 alchemy dev",
+    "deploy": "ALCHEMY_FAST_DISTILLED=1 alchemy deploy",
+    "deploy:plan": "ALCHEMY_FAST_DISTILLED=1 alchemy plan",
     "studio": "node vibestack/spec.ts studio",
     "cli": "node packages/cli/src/main.ts",
     "check": "node vibestack/spec.ts check",
@@ -26,8 +29,9 @@
     "prepack": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
     "test": "vitest run",
     "test:browser": "node vibestack/spec.ts tasks test:browser",
+    "test:deploy": "vitest run --config deploy/vitest.config.ts",
     "test:models": "node vibestack/spec.ts tasks check",
-    "typecheck": "vibelang --noEmit -p tsconfig.json",
+    "typecheck": "vibelang --noEmit -p tsconfig.json && tsc --noEmit -p deploy/tsconfig.json",
     "lint": "node vibestack/spec.ts tasks //#lint:js //#lint:css",
     "lint:js": "NODE_OPTIONS=--max-old-space-size=6144 node eslint.config.js",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
@@ -73,6 +77,8 @@
     "vibelang-runtime": "0.0.13"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/test": "catalog:",
     "@effect/vitest": "4.1.1",
     "@eslint-react/eslint-plugin": "catalog:",
     "@eslint/js": "catalog:",
@@ -80,6 +86,7 @@
     "@types/node": "^26.6.6",
     "@vitest/browser": "catalog:",
     "@vitest/browser-playwright": "catalog:",
+    "alchemy": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-better-tailwindcss": "catalog:",
     "eslint-plugin-boundaries": "catalog:",
@@ -114,6 +121,7 @@
   },
   "packageManager": "pnpm@10.24.0",
   "exports": {
+    "./alchemy": "./vibestack/alchemy.ts",
     "./formal": "./vibestack/formal.ts",
     "./testing": "./vibestack/testing/index.ts",
     "./testing/vitest": "./vibestack/testing/vitest.ts",
@@ -128,6 +136,7 @@
   },
   "publishConfig": {
     "exports": {
+      "./alchemy": "./dist/alchemy.js",
       "./formal": "./dist/formal.js",
       "./testing": "./dist/testing/index.js",
       "./testing/vitest": "./dist/testing/vitest.js",

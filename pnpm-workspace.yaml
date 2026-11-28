@@ -60,6 +60,8 @@ catalog:
   "@fontsource-variable/bricolage-grotesque": 5.2.10
   "@fontsource/jetbrains-mono": 5.2.8
   # Slop: chain encoding and verification, wallets, Cloudflare tooling, at the versions development pins.
+  "@alchemy.run/cloudflare": 2.0.0-beta.85
+  "@alchemy.run/test": 2.0.0-beta.85
   "@cloudflare/sandbox": 0.12.14
   "@noble/curves": 2.4.0
   "@noble/hashes": 2.4.0
@@ -68,6 +70,7 @@ catalog:
   "@wallet-standard/app": 1.1.1
   "@wallet-standard/base": 1.1.1
   "@wallet-standard/features": 1.1.1
+  alchemy: 2.0.0-beta.85
   viem: 2.57.3
   wrangler: 4.129.1
 
@@ -86,6 +89,7 @@ peerDependencyRules:
 allowBuilds:
   esbuild: true
   protobufjs: false
+  workerd: true
 
 patchedDependencies:
   picomatch@2.3.2: patches/picomatch@2.3.2.patch

@@ -29,7 +29,8 @@ build/
 **/test/__traces__/
 .DS_Store
 .claude/worktrees/
-# Cloudflare local state and secrets: never committed.
+# Cloudflare and Alchemy local state and secrets: never committed.
+.alchemy/
 .wrangler/
 .dev.vars
 .dev.vars.*

@@ -218,6 +218,8 @@ export default {
   "workspaces": {
     ".": {
       "entry": [
+        "alchemy.run.ts",
+        "deploy/**/*.test.ts",
         "vibestack/design/cli.ts",
         "vibestack/stories/cli.ts",
         "vibestack/remote-cache.ts",
@@ -226,6 +228,7 @@ export default {
         "vibestack/testing/test/fixture/*/src/*.{schema,contract}.{ts,vibe}"
       ],
       "project": [
+        "deploy/**/*.ts",
         "vibestack/**/*.{ts,tsx,vibe,vibex}",
         "!vibestack/studio/**"
       ],

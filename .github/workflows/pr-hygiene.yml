@@ -30,8 +30,26 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing pull request head commit."; exit 1; }
-          runs="$(gh run list --commit "$HEAD_SHA" --limit 100 --json databaseId,event,status \
-            --jq '.[] | select(.status != "completed") | select(.event == "pull_request" or .event == "pull_request_target") | .databaseId')"
+          runs=""
+          for status in in_progress queued waiting; do
+            err_file="$(mktemp)"
+            if page="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&status=$status&per_page=30" \
+              --jq '.workflow_runs[] | select(.event == "pull_request" or .event == "pull_request_target") | .id' 2>"$err_file")"; then
+              if [ -n "$page" ]; then
+                runs="${runs}${runs:+$'\n'}${page}"
+              fi
+              rm -f "$err_file"
+            else
+              err="$(cat "$err_file")"
+              rm -f "$err_file"
+              if grep -qiE 'rate limit|HTTP 403' <<<"$err"; then
+                echo "::warning::GitHub API rate limit hit while listing $status runs for closed head $HEAD_SHA; skipping remaining cancellations."
+                exit 0
+              fi
+              echo "$err" >&2
+              exit 1
+            fi
+          done
           echo "Active pull request runs for $HEAD_SHA: $(echo "$runs" | grep -c . || true)"
           for run in $runs; do
             if [ "$run" != "$SELF_RUN" ]; then
