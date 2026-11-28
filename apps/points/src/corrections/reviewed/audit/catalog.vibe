@@ -294,7 +294,14 @@ export effect function assertHistoricalAssessmentFreshness(scope: HistoricalAsse
   try requireCatalog(try historicalAssessmentFreshness(scope, heads), "assessment qualification changed during collection")
 }
 
-export effect function readHistoricalAssessmentCatalog(requested: HistoricalAssessmentScope, through?: HistoricalAssessmentJournalHeads) {
+export type AssessmentCatalogPhase =
+  | "assessment catalog scope read"
+  | "assessment catalog checkpoint comparison"
+  | "joint assessment catalog read"
+  | "legacy assessment catalog read"
+
+export effect function readHistoricalAssessmentCatalog(requested: HistoricalAssessmentScope, through?: HistoricalAssessmentJournalHeads, setPhase?: (phase: AssessmentCatalogPhase) => void) {
+  setPhase?.("assessment catalog scope read")
   const scope = { ...requested }
   const { projectId, repositoryNodeId, jointScope, legacyScope } = try assessmentJournalScopes(scope)
   const revision = try integer(scope.revision)
@@ -333,9 +340,12 @@ export effect function readHistoricalAssessmentCatalog(requested: HistoricalAsse
     registryRevision: try integer(head.registry_revision),
     registryManifestSha256: try validatedText(head.registry_manifest_sha256, digestPattern),
   }
+  setPhase?.("assessment catalog checkpoint comparison")
   try requireCatalog(heads.registryRevision === revision && heads.registryManifestSha256 === manifestSha256 && heads.d1PointsDigest === expectedPointsDigest &&
     heads.jointScopedCount <= heads.jointThrough && heads.legacyRepoCount <= heads.legacyThrough, "registry, Points checkpoint or journal heads changed")
+  setPhase?.("joint assessment catalog read")
   const joint = try readSource({ table: "slopbot_work_unit_journal", scopeSql: jointScope, columns: jointIndexColumns, count: heads.jointScopedCount, through: heads.jointThrough, decode: jointDecoder(scope) })
+  setPhase?.("legacy assessment catalog read")
   const legacy = try readSource({ table: "slopbot_value_journal", scopeSql: legacyScope, columns: legacyColumns, count: heads.legacyRepoCount, through: heads.legacyThrough, decode: legacyDecoder(scope) })
   return { heads, joint, legacy } satisfies HistoricalAssessmentCatalog
 }
