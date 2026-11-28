@@ -53,7 +53,7 @@ function requiredLines(lines: ReadonlyArray<string>, observed: Iterable<string>)
 }
 
 effect function priorPatch(directory: string, earlier: ReadonlyArray<NativeCommitObject>, retained: ReadonlyMap<string, RetainedCarrierAlias>) {
-  const headers = new Map([...retained.keys()].map((path) => [`diff --git a/${path} b/${path}`, path] as const))
+  const headers = new Map<string, string>([...retained.keys()].map((path) => [`diff --git a/${path} b/${path}`, path] as const))
   const evidence: Array<{ readonly accepted: ReadonlyArray<readonly [string, string, string | undefined]>; readonly patchSha256: string }> = []
   for (let offset = 0; offset < earlier.length; offset += batchSize) {
     const batch = earlier.slice(offset, offset + batchSize)
