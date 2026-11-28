@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Account identity, sessions and membership"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
+// spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
 import type { Fetcher } from "@repo/platform/bindings"
 import { type Outcome, exchanged } from "@repo/platform/browser"
 import { nowSeconds } from "@repo/platform/clock"

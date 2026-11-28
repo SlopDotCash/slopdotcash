@@ -186,7 +186,7 @@ layer(Layer.mergeAll(Started, webCrypto, FetchHttpClient.layer), { excludeTestSe
     try same(try held(published, published, committedOnly, new Map()), { count: 0, kept: published.map((row) => row.id) })
   })
 
-  it.effect('Read the private protected months only from this site\'s route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site\'s own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+  it.effect(`Read the private protected months only from this site's route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")`, () => effect {
     const union = answer([{ projectId: "feed", period: "2026-10" }, { projectId: "alpha", period: "2026-10" }], ["eliza"])
     const notConfigured = try privateRead({ url: "", token: Redacted.make(secret) }, listing(union))
     const noToken = try privateRead({ url: route, token: Redacted.make("") }, listing(union))

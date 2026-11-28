@@ -116,7 +116,7 @@ effect function choose(code: unknown, token = memberToken) {
 }
 
 layer(Layer.merge(ApiStarted, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
+  it.effect(`Choose a name for a member's referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member's referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")`, () => effect {
     const backend = try ApiWorker
     try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [migrationCount(), []]))
     try signIn("actor-1", "1", memberToken, "2099-01-01T00:00:00.000Z")
@@ -673,7 +673,7 @@ const payoutWallet = {
 }
 
 layer(Layer.merge(LocalSite, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('A signed-in member creates a project, chooses a referral name, registers a payout wallet and closes the account (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Every account outcome is reachable from the launch state"; spec/backend/projects.md, "Reachable registry outcomes"; spec/backend/projectComposition.md, "Reachable composed outcomes")', () => effect {
+  it.effect(`A signed-in member creates a project, chooses a referral name, registers a payout wallet and closes the account (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member's referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Every account outcome is reachable from the launch state"; spec/backend/projects.md, "Reachable registry outcomes"; spec/backend/projectComposition.md, "Reachable composed outcomes")`, () => effect {
     const area = try Area
     const world = try World
     const steward = try member(stewardId)
@@ -839,7 +839,7 @@ effect function callback(url: string, cookies: ReadonlyArray<string>) {
 }
 
 layer(Layer.merge(IdentityStarted, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('A website sign-in completes only in the browser that started it, and the terminal keeps its unbound protocol (spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity")', () => effect {
+  it.effect(`A website sign-in completes only in the browser that started it, and the terminal keeps its unbound protocol (spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow's identity")`, () => effect {
     const { db } = try Identity
     const originless = try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { "cf-connecting-ip": "198.51.100.10" } })
 

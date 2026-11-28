@@ -369,7 +369,7 @@ it.live('A tree, blob or path counts only when its Git hash matches, and only a 
   }
 })
 
-it.live('Omitted counts come only from hash-verified text, a truncated patch stays incomplete, and added binary bytes carry both digests within one budget (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit\'s totals"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order")', () => effect {
+it.live(`Omitted counts come only from hash-verified text, a truncated patch stays incomplete, and added binary bytes carry both digests within one budget (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order")`, () => effect {
   const world = try seeded()
   provide gitHubOver(world) {
     const compared = try recoverFullValueComparisons(repository, listedFiles, world.base, world.head)

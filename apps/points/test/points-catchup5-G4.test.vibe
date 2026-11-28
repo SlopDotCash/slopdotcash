@@ -115,7 +115,7 @@ function group(ratified: boolean, second: ReadonlyArray<Commit>) {
   return { first, member, third, pair, alone: unit("wu_slop_third", "micro", [claim(third, "c1")]) }
 }
 
-it.effect('A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")', () => effect {
+it.effect(`A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")`, () => effect {
   const open = group(false, [commit("b1", bob, 10)])
   const openScored = try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])]))
   try Effect.try(() => assert.deepStrictEqual(openScored, {
@@ -132,7 +132,7 @@ it.effect('A maintainer ratification of one joint member leaves the other member
   }))
 })
 
-it.effect('A withheld joint member without attribution proof holds its Points and the group\'s other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum")', () => effect {
+it.effect(`A withheld joint member without attribution proof holds its Points and the group's other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum")`, () => effect {
   const syncOnly = group(true, [{ ...commit("m1", bob, 10), parentCount: 2, attributions: [] }])
   const syncOnlyScored = try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])]))
   try Effect.try(() => assert.deepStrictEqual(syncOnlyScored, {

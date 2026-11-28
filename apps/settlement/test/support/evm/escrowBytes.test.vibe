@@ -123,7 +123,7 @@ function messageOf(error: unknown): string {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('The owner pledges three months of free funds in the escrow built from @repo/contracts, each month reads back open at its amount with the open total, the pledge events decode, and periods, counts and amounts the contract refuses never become calldata (spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"; spec/contracts/evmEscrow.md, "Anyone expires a pledge whose period\'s window closed without admission"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
+  it.effect(`The owner pledges three months of free funds in the escrow built from @repo/contracts, each month reads back open at its amount with the open total, the pledge events decode, and periods, counts and amounts the contract refuses never become calldata (spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"; spec/contracts/evmEscrow.md, "Anyone expires a pledge whose period's window closed without admission"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total")`, () => effect {
     const { escrow } = try Stack
     const { vault, from } = try opened(0x9101n)
     try promise(() => escrow.fund(vault, 40_000_000n, escrow.roles.donor.address))
@@ -180,7 +180,7 @@ layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
     }))
   })
 
-  it.effect('The escrow built from @repo/contracts computes the same domain, award id, vault key, binding digest, V1 root and monthly digests as the codecs, and binds a wallet-signed destination sent as the authority\'s type-2 transaction (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet\'s own signature"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once")', () => effect {
+  it.effect(`The escrow built from @repo/contracts computes the same domain, award id, vault key, binding digest, V1 root and monthly digests as the codecs, and binds a wallet-signed destination sent as the authority's type-2 transaction (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once")`, () => effect {
     const { escrow } = try Stack
     const { vault, domain, from } = try opened(1n)
     const owner = try address(escrow.roles.owner.address)

@@ -8,7 +8,7 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { type KeyObject, createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
 import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -257,9 +257,21 @@ const primordial = (accounts: ReadonlyArray<GenesisAccount>) =>
     executable: account.executable,
   }])));
 
-async function validatorVersion(): Promise<void> {
-  const { stdout } = await exec("solana-test-validator", ["--version"], { timeout: 60_000 });
-  if (!stdout.startsWith(`solana-test-validator ${SOLANA_VERSION} `)) throw new Error(`solana-test-validator ${SOLANA_VERSION} must be on PATH; found ${stdout.trim()}`);
+async function traceTools() {
+  const directory = process.env.SLOP_CONTRACT_SOLANA_TOOLS;
+  if (directory !== undefined && !isAbsolute(directory)) {
+    throw new Error("SLOP_CONTRACT_SOLANA_TOOLS must be an absolute Agave bin directory");
+  }
+  const executable = (name: string) => directory === undefined ? name : join(directory, name);
+  const validator = executable("solana-test-validator");
+  const genesis = executable("solana-genesis");
+  for (const [name, command] of [["solana-test-validator", validator], ["solana-genesis", genesis]] as const) {
+    const { stdout } = await exec(command, ["--version"], { timeout: 60_000 });
+    if (!stdout.startsWith(`${name} ${SOLANA_VERSION} `)) {
+      throw new Error(`${command} must report ${name} ${SOLANA_VERSION}; found ${stdout.trim()}`);
+    }
+  }
+  return { validator, genesis };
 }
 
 /**
@@ -316,7 +328,7 @@ function earlierBuild(current: Uint8Array): Uint8Array {
 }
 
 export async function launch(): Promise<Chain> {
-  await validatorVersion();
+  const tools = await traceTools();
   await mkdir(scratch, { recursive: true });
   const directory = await mkdtemp(join(scratch, "conformance-"));
   const build = await sbfBuild(solanaRoot, "programs/slop-escrow/Cargo.toml");
@@ -345,7 +357,7 @@ export async function launch(): Promise<Chain> {
 
   const start = async (ledger: string, args: ReadonlyArray<string>) => {
     const log = await open(join(ledger, "..", `validator-${generation}.log`), "w", 0o600);
-    const child = spawn("solana-test-validator", [
+    const child = spawn(tools.validator, [
       ...args, "--ledger", ledger, "--quiet", "--rpc-port", String(port), "--faucet-port", String(port + 41),
       "--dynamic-port-range", `${port + 2}-${port + 31}`, "--bind-address", "127.0.0.1",
     ], { stdio: ["ignore", log.fd, log.fd] });
@@ -502,7 +514,7 @@ export async function launch(): Promise<Chain> {
     await mkdir(ledger);
     const file = join(directory, `accounts-${generation}.json`);
     await writeFile(file, primordial(genesis));
-    await exec("solana-genesis", [
+    await exec(tools.genesis, [
       "--ledger", ledger,
       "--bootstrap-validator", bootstrap.identity.address, bootstrap.vote.address, bootstrap.stake.address,
       "--faucet-pubkey", bootstrap.faucet.address, "--faucet-lamports", "500000000000000000",

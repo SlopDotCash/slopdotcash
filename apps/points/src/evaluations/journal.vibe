@@ -1,4 +1,4 @@
-// spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision or the incident recovery"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"
+// spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { instantOf } from "../kernels/records/instants.ts"
 import { type Names, type Opened, type Repositories, type Store, advanceTo, command, heldMachine, hold } from "../journal/ledger.vibe"
