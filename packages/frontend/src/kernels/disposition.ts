@@ -37,5 +37,5 @@ export function allocationPhase({ recordedTransfer, closed, registeredWallet, be
 
 /** @throws {never} */
 export function walletRegisteredInTime(wallets: ReadonlyArray<AllocationWallet>, chain: string, closesAtMs: number): boolean {
-  return wallets.some((wallet) => wallet.chain === chain && wallet.authorized && wallet.firstAuthorizedAtMs !== undefined && wallet.firstAuthorizedAtMs < closesAtMs);
+  return wallets.some((wallet) => wallet.chain === chain && wallet.authorized && wallet.firstAuthorizedAtMs !== undefined && wallet.firstAuthorizedAtMs > 0 && wallet.firstAuthorizedAtMs < closesAtMs);
 }
