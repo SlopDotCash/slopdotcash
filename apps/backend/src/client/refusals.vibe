@@ -607,6 +607,7 @@ export const getProjectSetupById = {
 export const postProjectSetupByIdCheck = {
   ...withOriginForbiddenAndUnauthorizedV4,
   invalidRequestInvalidRequestScan: { status: 400, error: "invalid_request", message: "Invalid requestScan", headers: jsonNoStoreSlopProjectApiContract },
+  staleRevisionNoStore: putProjectsById.staleRevisionNoStore,
 } as const
 
 export const postProjectApplicationsByIdPublish = {
