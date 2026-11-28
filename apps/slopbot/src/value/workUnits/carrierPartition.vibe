@@ -1,0 +1,178 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { gitObjectId, utf8Text } from "@repo/platform/git/bytes"
+
+export interface NativeCommitBytes {
+  readonly sha: string
+  readonly raw: Uint8Array
+}
+
+export interface NativeCommitObject {
+  readonly sha: string
+  readonly treeSha: string
+  readonly parents: ReadonlyArray<string>
+}
+
+export interface NativeCarrierMember {
+  readonly sha: string
+  readonly parents: ReadonlyArray<string>
+  readonly author: { readonly nodeId: string; readonly type: string } | null
+  readonly attributionDigest?: string
+}
+
+export interface NativeCarrierHistory {
+  readonly baseSha: string
+  readonly headSha: string
+  readonly commitCount: number
+  readonly commits: ReadonlyArray<NativeCarrierMember>
+}
+
+export interface TrustedNativeCarrierRange {
+  readonly baseSha: string
+  readonly headSha: string
+  readonly parentRows: string
+}
+
+export interface NativeCarrierPartitionInput {
+  readonly original: NativeCarrierHistory
+  readonly carrier: NativeCarrierHistory
+  readonly acceptanceSha: string
+  readonly objects: ReadonlyArray<NativeCommitBytes>
+  readonly trustedOriginalRange: TrustedNativeCarrierRange
+  readonly trustedRange: TrustedNativeCarrierRange
+}
+
+export interface NativeCarrierPartition {
+  readonly originalBaseSha: string
+  readonly originalHeadSha: string
+  readonly baseSha: string
+  readonly carrierHeadSha: string
+  readonly acceptedSha: string
+  readonly priorBaseCommitShas: ReadonlyArray<string>
+  readonly newlyAcceptedCommitShas: ReadonlyArray<string>
+}
+
+type ParentGraph = ReadonlyMap<string, { readonly parents: ReadonlyArray<string> }>
+
+const objectId = /^[0-9a-f]{40}$/u
+const digest = /^[0-9a-f]{64}$/u
+const maximumObjects = 8192
+const maximumMembers = 1024
+const maximumObjectBytes = 256 * 1024
+const maximumProofBytes = 8 * 1024 * 1024
+const maximumRangeCharacters = 256 * 1024
+
+function validParents(sha: string, parents: ReadonlyArray<string>) {
+  return new Set(parents).size === parents.length && parents.every((parent) => objectId.test(parent) && parent !== sha)
+}
+
+function sameParents(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  return left.length === right.length && left.every((parent, index) => parent === right[index])
+}
+
+export function parseNativeCommitObject(sha: string, raw: Uint8Array): NativeCommitObject | undefined {
+  if (!objectId.test(sha) || raw.length === 0 || raw.length > maximumObjectBytes || raw.includes(0) || gitObjectId("commit", raw) !== sha) return undefined
+  let boundary = raw.indexOf(10)
+  while (boundary !== -1 && raw[boundary + 1] !== 10) boundary = raw.indexOf(10, boundary + 1)
+  if (boundary === -1) return undefined
+  const lines = utf8Text(raw.subarray(0, boundary))?.split("\n")
+  if (lines === undefined) return undefined
+  const treeSha = /^tree ([0-9a-f]{40})$/u.exec(lines[0] ?? "")?.[1]
+  if (treeSha === undefined) return undefined
+  const parents: string[] = []
+  let index = 1
+  for (; (lines[index] ?? "").startsWith("parent "); index += 1) parents.push((lines[index] ?? "").slice(7))
+  if (!validParents(sha, parents) || !(lines[index] ?? "").startsWith("author ") || !(lines[index + 1] ?? "").startsWith("committer ") ||
+    lines.slice(index + 2).some((line) => /^(?:tree|parent|author|committer)(?: |$)/u.test(line))) return undefined
+  return { sha, treeSha, parents }
+}
+
+function rawObjectGraph(objects: ReadonlyArray<NativeCommitBytes>) {
+  if (objects.length > maximumObjects) return undefined
+  const graph = new Map<string, NativeCommitObject>()
+  let bytes = 0
+  for (const { sha, raw } of objects) {
+    bytes += raw.length
+    if (bytes > maximumProofBytes || graph.has(sha)) return undefined
+    const commit = parseNativeCommitObject(sha, raw)
+    if (commit === undefined) return undefined
+    graph.set(sha, commit)
+  }
+  return graph
+}
+
+function checkedHistory(history: NativeCarrierHistory, objects: ParentGraph) {
+  if (history.commitCount !== history.commits.length || history.commitCount === 0 || history.commitCount > maximumMembers) return undefined
+  const members = new Map<string, NativeCarrierMember>()
+  for (const commit of history.commits) {
+    const native = objects.get(commit.sha)
+    if (members.has(commit.sha) || native === undefined || !sameParents(native.parents, commit.parents) ||
+      (commit.author !== null && (commit.author.nodeId === "" || commit.author.type === "")) ||
+      (commit.attributionDigest !== undefined && !digest.test(commit.attributionDigest))) return undefined
+    members.set(commit.sha, commit)
+  }
+  return members.has(history.headSha) ? members : undefined
+}
+
+function exactNativeRange(range: TrustedNativeCarrierRange, history: ReadonlyMap<string, NativeCarrierMember>) {
+  const { parentRows } = range
+  if (parentRows.length === 0 || parentRows.length > maximumRangeCharacters || !parentRows.endsWith("\n")) return undefined
+  const rows = parentRows.slice(0, -1).split("\n")
+  if (rows.length !== history.size) return undefined
+  const listed = new Set<string>()
+  for (const row of rows) {
+    const [sha = "", ...parents] = row.split(" ")
+    const member = history.get(sha)
+    if (member === undefined || listed.has(sha) || !sameParents(member.parents, parents)) return undefined
+    listed.add(sha)
+  }
+  return listed
+}
+
+function reachable(tip: string, graph: ParentGraph, stop?: ReadonlySet<string>) {
+  const found = new Set<string>()
+  const pending = [tip]
+  for (let sha = pending.pop(); sha !== undefined; sha = pending.pop()) {
+    if (found.has(sha) || stop?.has(sha) === true) continue
+    found.add(sha)
+    pending.push(...(graph.get(sha)?.parents ?? []))
+  }
+  return found
+}
+
+function sameCopiedMember(original: NativeCarrierMember, accepted: NativeCarrierMember) {
+  return original.author?.nodeId === accepted.author?.nodeId && original.author?.type === accepted.author?.type &&
+    (original.parents.length > 1 || (original.attributionDigest !== undefined && original.attributionDigest === accepted.attributionDigest))
+}
+
+export function verifyNativeCarrierPartition(input: NativeCarrierPartitionInput): NativeCarrierPartition | undefined {
+  const { acceptanceSha, trustedOriginalRange, trustedRange } = input
+  const { baseSha, headSha } = input.carrier
+  const { baseSha: originalBaseSha, headSha: originalHeadSha } = input.original
+  if (trustedRange.baseSha !== baseSha || trustedRange.headSha !== headSha || acceptanceSha === baseSha || acceptanceSha === headSha ||
+    trustedOriginalRange.baseSha !== originalBaseSha || trustedOriginalRange.headSha !== originalHeadSha || originalBaseSha === originalHeadSha) return undefined
+  const graph = rawObjectGraph(input.objects)
+  const acceptance = graph?.get(acceptanceSha)
+  if (graph === undefined || !graph.has(originalBaseSha) || !graph.has(baseSha) || acceptance === undefined || !sameParents(acceptance.parents, [baseSha, headSha])) return undefined
+  const original = checkedHistory(input.original, graph)
+  const carrier = checkedHistory(input.carrier, graph)
+  if (original === undefined || carrier === undefined) return undefined
+  const nativeRange = exactNativeRange(trustedRange, carrier)
+  if (nativeRange === undefined || exactNativeRange(trustedOriginalRange, original) === undefined) return undefined
+  const beforeCarrier = reachable(baseSha, graph)
+  const carrierReach = reachable(headSha, carrier, beforeCarrier)
+  if (carrierReach.size !== nativeRange.size || [...carrierReach].some((sha) => !nativeRange.has(sha))) return undefined
+  const originalReach = reachable(input.original.headSha, graph)
+  const priorBaseCommitShas: string[] = []
+  const newlyAcceptedCommitShas: string[] = []
+  for (const member of original.values()) {
+    if (!originalReach.has(member.sha)) return undefined
+    if (beforeCarrier.has(member.sha)) {
+      priorBaseCommitShas.push(member.sha)
+      continue
+    }
+    const copy = carrier.get(member.sha)
+    if (copy === undefined || !sameCopiedMember(member, copy)) return undefined
+    newlyAcceptedCommitShas.push(member.sha)
+  }
+  return { originalBaseSha, originalHeadSha, baseSha, carrierHeadSha: headSha, acceptedSha: acceptanceSha, priorBaseCommitShas: priorBaseCommitShas.sort(), newlyAcceptedCommitShas: newlyAcceptedCommitShas.sort() }
+}

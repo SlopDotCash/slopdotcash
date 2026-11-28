@@ -1,6 +1,6 @@
 // spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { type Account, type Anvil, type ForgeOutput, type Receipt, deploy, forgeBuild } from "@repo/platform/testing/chains";
-import { type Address, type Hex, encodeFunctionData, parseAbi } from "viem";
+import { type Address, type Hex, encodeFunctionData, parseAbi, zeroAddress } from "viem";
 import { type Bytes32, type EvmAddress, evmAddress, factoryAbi } from "../../../src/chain/evm/abi.ts";
 import { depositCalldata } from "../../../src/chain/evm/actions.ts";
 import type { EscrowLog } from "../../../src/chain/evm/events.ts";
@@ -11,7 +11,7 @@ import type { MonthlyEntry } from "../../../src/chain/evm/monthlyRoot.ts";
 
 const contracts = new URL("../../../../../packages/contracts/evm", import.meta.url).pathname;
 const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "integration/TestDollar.sol"];
-const dollarAbi = parseAbi(["function mint(address to, uint256 amount)", "function approve(address who, uint256 amount) returns (bool)", "function balanceOf(address) view returns (uint256)"]);
+const dollarAbi = parseAbi(["function mint(address to, uint256 amount)", "function approve(address who, uint256 amount) returns (bool)", "function balanceOf(address) view returns (uint256)", "function blockAddress(address who)"]);
 
 export const FEE_RECIPIENT = "0x0000000000000000000000000000000000000fee" as EvmAddress;
 
@@ -35,6 +35,7 @@ export interface EscrowStack extends AsyncDisposable {
   call(to: EvmAddress, data: Hex): Promise<Hex>;
   send(from: Address, to: EvmAddress, data: Hex, value?: bigint): Promise<Receipt>;
   fund(vault: EvmAddress, amount: bigint, from: Address): Promise<Receipt>;
+  blockDestination(destination: EvmAddress | null): Promise<Receipt>;
   logs(address: EvmAddress, fromBlock: bigint, toBlock: bigint): Promise<ReadonlyArray<EscrowLog>>;
   head(): Promise<bigint>;
   signTypedData(signer: Address, typedData: unknown): Promise<Hex>;
@@ -144,6 +145,7 @@ export async function escrowStack(chain: Anvil): Promise<EscrowStack> {
         await send(from, dollar, encodeFunctionData({ abi: dollarAbi, functionName: "approve", args: [vault, amount] }));
         return send(from, vault, depositCalldata(amount));
       },
+      blockDestination: (destination) => send(roles.owner.address, dollar, encodeFunctionData({ abi: dollarAbi, functionName: "blockAddress", args: [destination ?? zeroAddress] })),
       logs: async (address, fromBlock, toBlock) => {
         const answer = await chain.rpc("eth_getLogs", [{ address, fromBlock: `0x${fromBlock.toString(16)}`, toBlock: `0x${toBlock.toString(16)}` }]);
         if (!Array.isArray(answer)) throw new Error("eth_getLogs answered no list");

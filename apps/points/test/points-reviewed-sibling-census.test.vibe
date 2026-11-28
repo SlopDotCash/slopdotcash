@@ -1,0 +1,104 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import { assert, it } from "@effect/vitest"
+import { GitHub } from "@repo/platform/github"
+import { completeReviewedMergedReferences, type SearchCensus } from "../src/collect/merged/census.vibe"
+import { commitLineLoader } from "../src/collect/merged/commits.vibe"
+import { type AuditedSource, slopCensusNode } from "../src/corrections/reviewed/packet.vibe"
+import { historicalSourceAudit } from "../src/corrections/reviewed/verify.vibe"
+import { Graphql } from "../src/ingestion/graphql.vibe"
+
+const repository = "SlopDotCash/slopdotcash"
+const mergedAt = "2026-10-25T22:06:38Z"
+const earlier = { id: "PR_earlier", number: 1248, headRefOid: "a".repeat(40), mergedAt }
+const restored = { id: "PR_restored", number: 1249, headRefOid: "b".repeat(40), mergedAt }
+
+type Scenario = "exact" | "moved" | "different-repo" | "count-changed" | "duplicate" | "outside-window"
+
+function githubOf(scenario: Scenario, requests: Array<string>) {
+  const unsupported = () => die("Unexpected historical provider method")
+  return Layer.succeed(GitHub, {
+    json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
+    graphql: (query, variables, schema) => effect {
+      const search = query.includes("HistoricalPointsCensus")
+      const after = variables.after
+      requests.push(search ? "search" : after === null ? "first" : "last")
+      const page = { issueCount: 1, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ ...earlier, repository: { id: slopCensusNode } }] }
+      const changed = scenario === "moved" ? { ...earlier, headRefOid: "c".repeat(40) } : earlier
+      const next = scenario === "duplicate" ? changed : scenario === "outside-window" ? { ...restored, mergedAt: "2026-11-01T00:00:00Z" } : restored
+      const pulls = after === null
+        ? { totalCount: 2, pageInfo: { hasNextPage: true, endCursor: "one" }, nodes: [changed] }
+        : { totalCount: scenario === "count-changed" ? 3 : 2, pageInfo: { hasNextPage: false, endCursor: "two" }, nodes: [next] }
+      const reply = search ? { search: page } : {
+        repository: { id: scenario === "different-repo" ? "R_other" : slopCensusNode, nameWithOwner: repository, isPrivate: false, pullRequests: pulls },
+      }
+      return try orDie(Schema.decodeUnknownEffect(schema)(reply))
+    },
+  })
+}
+
+it.effect("The complete Slop connection retains a restored merged PR that Search omits", () => effect {
+  const requests: string[] = []
+  provide githubOf("exact", requests) {
+    const found = try historicalSourceAudit(repository, slopCensusNode)
+    const expected = [earlier, restored].map(({ headRefOid, ...row }) => ({ ...row, headSha: headRefOid, mergedAt: "2026-10-25T22:06:38.000Z" }))
+    try Effect.try(() => {
+      assert.deepEqual(found.sources, expected)
+      assert.deepEqual(requests, ["search", "first", "last"])
+    })
+  }
+  provide githubOf("outside-window", []) {
+    const found = try historicalSourceAudit(repository, slopCensusNode)
+    try Effect.try(() => assert.deepEqual(found.sources.map(({ number }) => number), [1248]))
+  }
+})
+
+it.effect("A changed search row, wrong repository, drift or duplicate cannot seal the Slop census", () => effect {
+  for (const scenario of ["moved", "different-repo", "count-changed", "duplicate"] as const) {
+    provide githubOf(scenario, []) {
+      const result = historicalSourceAudit(repository, slopCensusNode) catch (error) => error._tag
+      try Effect.try(() => assert.equal(result, "ReviewedRefused", scenario))
+    }
+  }
+})
+
+function restoredNode(scenario: "exact" | "moved") {
+  return {
+    ...restored, __typename: "PullRequest", state: "MERGED", title: "Verified local evidence", url: `https://github.com/${repository}/pull/1249`,
+    body: "", createdAt: mergedAt, updatedAt: mergedAt, author: null, additions: 0, deletions: 0, baseRefName: "development",
+    baseRefOid: "d".repeat(40), headRefOid: scenario === "moved" ? "e".repeat(40) : restored.headRefOid,
+    repository: { id: slopCensusNode }, commits: { totalCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+  }
+}
+
+function graphOf(scenario: "exact" | "moved", reads: Array<ReadonlyArray<string>>) {
+  const unsupported = () => die("Unexpected historical data provider method")
+  return Layer.succeed(Graphql, {
+    compareCommitPage: unsupported, ensureBudget: () => Effect.void, availableBudget: () => succeed(1000),
+    tryReferenceDiscussion: unsupported, requestCount: () => succeed(reads.length), rateLimit: unsupported,
+    execute: (_query, variables) => effect {
+      const ids = variables?.ids
+      if (!Array.isArray(ids) || ids.length !== 1 || ids[0] !== restored.id) return try die("Unexpected reviewed merge selector")
+      reads.push([restored.id])
+      return { nodes: [restoredNode(scenario)] }
+    },
+  })
+}
+
+it.effect("Historical hydration only adds a missing source after exact identity and head readback", () => effect {
+  const target = { owner: "SlopDotCash", name: "slopdotcash", expectedNodeId: slopCensusNode }
+  const expected = [{ id: restored.id, number: restored.number, headSha: restored.headRefOid, mergedAt }] satisfies ReadonlyArray<AuditedSource>
+  const census = { target, fromMs: Date.parse("2026-09-27"), toMs: Date.parse("2026-11-01"), qualifier: "merged", kindQualifier: "is:pr is:merged",
+    expectedKind: "PullRequest", stats: { searchSliceCount: 0 }, commitLines: commitLineLoader(), repositoryNodeId: slopCensusNode } satisfies SearchCensus<never, never>
+  const reads: Array<ReadonlyArray<string>> = []
+  provide graphOf("exact", reads) {
+    const actual = try completeReviewedMergedReferences([], expected, census)
+    try Effect.try(() => {
+      assert.deepEqual(actual.map((value) => value.outcome?.number), [1249])
+      assert.deepEqual(reads, [[restored.id]])
+    })
+  }
+  provide graphOf("moved", []) {
+    const result = completeReviewedMergedReferences([], expected, census) catch (error) => error._tag
+    try Effect.try(() => assert.equal(result, "MergedRecordInvalid"))
+  }
+})

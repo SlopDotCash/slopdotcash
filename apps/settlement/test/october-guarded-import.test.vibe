@@ -12,7 +12,7 @@ import { ordinaryFeeBase } from "../src/kernels/fees.ts"
 import { loadedMonth } from "../src/monthly/owner.vibe"
 import type { MonthFacts } from "../src/monthly/store.vibe"
 import { executeOctober, octoberStatements } from "../src/october/import.vibe"
-import type { compileOctoberElizaProposal } from "../src/october/plan.ts"
+import type { compileOctoberProposal } from "../src/october/plan.ts"
 
 const now = "2026-11-25T00:00:00.000Z"
 const later = "2026-11-26T00:00:00.000Z"
@@ -24,7 +24,7 @@ const manifest = JSON.stringify({
   escrow: { chain: "solana", effectiveCycle: "2026-10", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "solana-mainnet", vault, asset }] },
 })
 function awardsFixture() {
-  const awards: ReturnType<typeof compileOctoberElizaProposal>["proposal"]["awards"] = []
+  const awards: ReturnType<typeof compileOctoberProposal>["proposal"]["awards"] = []
   let feeBase = 0n
   for (let index = 0n; index < 79n; index++) {
     const actor = String(1000n + index)
@@ -58,7 +58,20 @@ const proposal = {
   feeBase: feeBase.toString(),
   netBase: (1_000_000_000n - feeBase).toString(),
   awards,
-} satisfies ReturnType<typeof compileOctoberElizaProposal>["proposal"]
+} satisfies ReturnType<typeof compileOctoberProposal>["proposal"]
+
+const slopId = "slopdotcash"
+const baseVault = "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36"
+const baseUsdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const slopManifest = JSON.stringify({
+  id: slopId, status: "active",
+  reward: { kind: "monthly-pool", monthlyCapMinor: "1000000000", cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "0" }], rewardStartAt: "2026-10-11T00:00:00.000Z" },
+  escrow: { chain: "base", effectiveCycle: "2026-10", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "base-mainnet", vault: baseVault, asset: baseUsdc }] },
+})
+const slop = {
+  ...proposal, id: slopId, network: "base-mainnet", vault: baseVault, assetAddress: baseUsdc,
+  manifestSha256: "d".repeat(64), sourceSnapshotSha256: "e".repeat(64), pointsBatch: "b".repeat(64),
+} satisfies ReturnType<typeof compileOctoberProposal>["proposal"]
 
 schema Count { n: number }
 service OctoberTest { db: D1Database }
@@ -76,6 +89,13 @@ effect function seed() {
   try db.run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('eliza', 1, ${manifest}, ${proposal.manifestSha256}, 'fixture', ${now})`)
   try db.run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('eliza', 'active', 1, ${manifest}, ${proposal.manifestSha256}, ${now}, ${now})`)
   try db.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${proposal.pointsBatch}, ${now}, '[]', 0)`)
+}
+
+effect function seedSlop() {
+  const db = try D1
+  try db.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${slop.pointsBatch}, ${later}, '[]', 0)`)
+  try db.run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${slopId}, 1, ${slopManifest}, ${slop.manifestSha256}, 'fixture', ${now})`)
+  try db.run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${slopId}, 'active', 1, ${slopManifest}, ${slop.manifestSha256}, ${now}, ${now})`)
 }
 
 effect function count() {
@@ -129,12 +149,53 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         assert.equal(canFinalize(consumed.state, 0, { actor: 2, role: "RepositoryAdmin", banned: false, revision: 1 }), true)
         assert.equal(canAutoFreeze(consumed.state), false)
       })
-      try database.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${"b".repeat(64)}, ${"2026-11-27T00:00:00.000Z"}, '[]', 0)`)
+      try seedSlop()
       const repeated = try executeOctober(current, true, () => effect {})
       try observed(repeated, "already-imported", [1, 79])
       const different = octoberStatements({ ...proposal, sourceSnapshotSha256: "f".repeat(64) }, manifest, now, [])
       const replaced = executeOctober(different, true, () => effect {}) catch () => "refused"
       try observed(replaced, "refused", [1, 79])
+
+      const slopPlan = octoberStatements(slop, slopManifest, now, [sql`1`])
+      const slopPreview = try executeOctober(slopPlan, false, () => effect {})
+      const slopApplied = try executeOctober(slopPlan, true, () => effect {})
+      const slopMonth = try loadedMonth({ projectId: slopId, period }, {
+        ...facts, current: { number: 1, manifest: slopManifest, manifestSha256: slop.manifestSha256 }, served: new Set([slop.network]),
+      })
+      try Effect.sync(() => {
+        assert.deepEqual([slopPreview, slopApplied], ["preview", "applied"])
+        assert.equal(slopMonth.state.phase, "Proposed")
+        assert.equal(fromAmount(slopMonth.state.total), 1_000_000_000n)
+        assert.equal(slopMonth.state.revision.vault, baseVault)
+        assert.equal(slopMonth.state.revision.asset, baseUsdc)
+        assert.deepEqual(slopMonth.rows.proposed.map((row) => [row.github_user_id, row.gross_base]),
+          awards.map((row) => [row.githubUserId, row.grossBase]))
+        assert.equal(slopMonth.state.reviewedOctober, true)
+        assert.equal(fromAmount(slopMonth.state.revision.monthlyAmount), 0n)
+        assert.equal(fromAmount(slopMonth.state.currentRevision.monthlyAmount), 0n)
+        assert.equal(canFinalize(slopMonth.state, 0, { actor: 2, role: "RepositoryAdmin", banned: false, revision: 1 }), true)
+        assert.equal(canAutoFreeze(slopMonth.state), false)
+      })
+      const elizaCounts = try count()
+      try Effect.sync(() => assert.deepEqual(elizaCounts, [1, 79]))
+    }
+  })
+})
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect(`An October direct transfer recorded during Slop import blocks the entire proposal (spec/settlement/octoberImport.md, "An apply run writes only under the reviewed digest, current main and the production lock")`, () => effect {
+    const { db } = try OctoberTest
+    provide d1(db), settableClock(Date.parse(now)).layer {
+      const database = try D1
+      try seedSlop()
+      const slopPlan = octoberStatements(slop, slopManifest, now, [sql`1`])
+      const direct = sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at)
+        VALUES ('base-mainnet', '0x01', ${slopId}, '2026-10', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'base', '0x0000000000000000000000000000000000000001', '1000000', '2026-10-25T00:00:00.000Z', '1', 'direct/slop-fixture.json', ${now})`
+      const slopRefusal = executeOctober(slopPlan, true, () => effect { try database.run(direct) }) catch () => "refused"
+      const slopHeaders = try first(Count, sql`SELECT count(*) AS n FROM monthly_reward_bases WHERE project_id = ${slopId}`)
+      const slopAwards = try first(Count, sql`SELECT count(*) AS n FROM monthly_reward_base_rows WHERE project_id = ${slopId}`)
+      const transferred = try first(Count, sql`SELECT count(*) AS n FROM payment_direct_transfers WHERE project_id = ${slopId} AND contribution_month = '2026-10'`)
+      try Effect.sync(() => assert.deepEqual([slopRefusal, slopHeaders?.n, slopAwards?.n, transferred?.n], ["refused", 0, 0, 1]))
     }
   })
 })

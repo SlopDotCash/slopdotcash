@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
 import { sha256Of } from "@repo/platform/git/bytes"
 module compression {
   import { crc32 as checksum } from "node:zlib"
@@ -8,12 +9,16 @@ module compression {
 import { crc32 } from compression
 import { inventoryBinds } from "../src/admission/binding.ts"
 import { parseResult, resultProblems } from "../src/admission/result.ts"
+import { summarize } from "../src/admission/summary.ts"
+import { scanClearanceView } from "../src/client/enforcement.vibe"
 import { localInstallHelpers } from "../src/scanner/inspect/helpers.ts"
 import { inspectRepository } from "../src/scanner/inspect/inspection.ts"
-import { SCAN_THREATS, type ScanInputFile } from "../src/scanner/inspect/model.ts"
+import { type RepositoryInspection, SCAN_THREATS, type ScanInputFile } from "../src/scanner/inspect/model.ts"
 import { type CoverageGap, type ScannerEvidence, type ScannerProfile, reviewedReply, startedEvidence } from "../src/scanner/providers/review.ts"
 import { verifyCoverage } from "../src/scanner/review/coverage.ts"
 import { composeScanResult, primaryOutcome, specialistOutcome } from "../src/scanner/run/compose.ts"
+import { ScanService } from "../src/scanner/run/service.vibe"
+import { inspectIsolatedArtifacts } from "../src/scanner/sandboxClient/client.vibe"
 
 const encoder = new TextEncoder()
 const utf8 = (text: string) => encoder.encode(text)
@@ -253,8 +258,9 @@ function answer(input: Answer, inventorySha256: string): ScannerEvidence {
   }
 }
 
-effect function composed(primary: Answer, specialist: Answer | null, files: ReadonlyArray<ScanInputFile> = [{ path: "README.md", bytes: utf8("Hello.\n") }]) {
-  const inspection = inspectRepository({ files })
+effect function composed(primary: Answer, specialist: Answer | null, files: ReadonlyArray<ScanInputFile> = [{ path: "README.md", bytes: utf8("Hello.\n") }], isolated?: RepositoryInspection) {
+  const source = inspectRepository({ files })
+  const inspection = isolated ?? source
   const scope = { kind: "single" as const, supplied: new Set(files.map((entry) => entry.path)), elsewhere: new Set<string>(), covered: new Set<string>() }
   const read = (input: Answer) => verifyCoverage(answer(input, inspection.inventorySha256), scope)
   return try orDie(Effect.try(() => composeScanResult({
@@ -268,7 +274,7 @@ effect function composed(primary: Answer, specialist: Answer | null, files: Read
     specialist: specialist === null ? null : read({ ...specialist, reviewer: "astra" }),
     execution: null,
     executionEvidenceSha256s: [],
-    sourceInventorySha256: inspection.inventorySha256,
+    sourceInventorySha256: source.inventorySha256,
   })))
 }
 
@@ -306,6 +312,41 @@ describe('Scan clearance (spec/security/admission.md, "The primary review decide
       { length: download?.length, withinLimit: scan.result.visibilityGaps.every((gap) => gap.length <= 300), disposition: scan.result.disposition, parses: parseResult(recorded).kind },
       { length: 300, withinLimit: true, disposition: "incomplete", parses: "parsed" },
     )
+  })
+
+  it.effect('An unsupported artifact remains quarantined and visible in the incomplete result (spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets")', () => effect {
+    const files: ReadonlyArray<ScanInputFile> = [
+      { path: "README.md", bytes: utf8("Hello.\n") },
+      { path: "vendor/unsupported.wasm", bytes: utf8("Inert fixture text.\n") },
+    ]
+    let sandboxRequests = 0
+    const refusedFetch: typeof globalThis.fetch = () => {
+      sandboxRequests += 1
+      return Promise.reject(new Error("This artifact must not be sent to a sandbox"))
+    }
+    provide webCrypto, FetchHttpClient.layer, FetchHttpClient.Fetch = refusedFetch, ScanService = { origin: "https://slop.invalid", key: Redacted.make("unused") } {
+      const isolated = try inspectIsolatedArtifacts(files, inspectRepository({ files }))
+      const { result } = try composed({}, {}, files, isolated.inspection)
+      const summary = summarize({
+        id: result.assessmentId, revision: result.revision, state: result.disposition,
+        commitSha: result.assessed.commitSha, templateSha256: result.assessed.templateSha256,
+        policyVersion: result.policyVersion, requestedAt: result.scan.startedAt, completedAt: result.scan.completedAt, result,
+      })
+      const clearance = scanClearanceView(summary)
+      try Effect.try(() => assert.deepStrictEqual({
+        sandboxRequests,
+        execution: isolated.execution,
+        disposition: result.disposition,
+        artifact: result.artifacts.map(({ path, state, requestedExecution }) => ({ path, state, requestedExecution })),
+        coverage: clearance?.coverage.map(({ label }) => label),
+      }, {
+        sandboxRequests: 0,
+        execution: null,
+        disposition: "incomplete",
+        artifact: [{ path: "vendor/unsupported.wasm", state: "quarantined", requestedExecution: false }],
+        coverage: ["downloads partial", "1 artifact held", "Isolated analysis does not yet support these artifacts: 1 artifact records"],
+      }))
+    }
   })
 
   it("Secret-sending prompt-injection detection scopes negation to the clause and honors trailing refusals", () => {

@@ -11,11 +11,12 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { Journal, Revision } from "../src/kernels/records/canonical.ts"
 import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
-import type { SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+import { type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
 import { type HistoricalAssessmentCatalog, type HistoricalAssessmentJournalHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition, readHistoricalAssessmentCatalog, readHistoricalAssessmentJournalHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
 import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/audit/reconcile.vibe"
-import { capturedCut, historicalReplayRequiresCollection, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
+import { type AuditPhase, auditedScope, capturedCut, historicalReplayRequiresCollection, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
 import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings, historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
+import { phased } from "../src/corrections/reviewed/replay/services.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { jsonReply } from "./support/catchup3-e2/replies.ts"
 
@@ -31,7 +32,9 @@ const occurredAt = "2026-10-05T00:00:00.000Z"
 const closedPull = "PR_legacy_closed"
 const closedMarker = "a".repeat(40)
 const baselineDigest = "b".repeat(64)
-const manifest = JSON.stringify({ id: "fixture", status: "active", authority: { repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] })
+const project = { id: "fixture", status: "active", authority: { repositoryId: "42", repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] }
+const manifest = JSON.stringify(project)
+const unregisteredProject = { ...project, id: "unregistered-audit-fixture" }
 const scope: HistoricalAssessmentScope = { projectId: "fixture", repositoryNodeId: "R_audit", revision: 5, manifestSha256: sha256Of(manifest), expectedPointsDigest: baselineDigest }
 const audit: SourceAudit = {
   repository: "fixture/repo",
@@ -102,6 +105,29 @@ effect function joint(pull: string) {
   try (try D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (${sha256Of(raw)}, ${sha256Of(`joint ${raw}`)}, 'fixture', ${sourceDigest}, ${raw}, ${recordedAt})`)
 }
 
+function withJointAssessment(catalog: HistoricalAssessmentCatalog, assessedAt: string): HistoricalAssessmentCatalog {
+  const source = {
+    repository: audit.repository, repositoryNodeId: audit.repositoryNodeId, repositoryDatabaseId: 42,
+    pullRequestNodeId: "PR_known", pullRequestNumber: 7, headSha, mergeSha: policySha,
+    policySha, sourceDigest, occurredAt,
+  }
+  const raw = JSON.stringify({
+    schemaVersion: "slop-work-unit-record:v1", projectId: scope.projectId, sourceDigest,
+    sources: [source], claims: [], units: [], supersedes: [], legacyPredecessors: [], revisionReason: null,
+    model: { provider: "surplus", requested: "claude-opus-5.5", reported: "claude-opus-5.5" },
+    producerRevision: "f".repeat(40), assessedAt, rubricVersion: "slop-value-2026-10-01",
+  })
+  return {
+    ...catalog,
+    heads: { ...catalog.heads, jointThrough: 1, jointScopedCount: 1 },
+    joint: [{
+      sequence: 1, record_digest: sha256Of(raw), record_json: raw, recorded_at: recordedAt,
+      project_id: scope.projectId, source_digest: sourceDigest,
+      source_keys_json: JSON.stringify([[source.repositoryNodeId, source.pullRequestNodeId]]),
+    }],
+  }
+}
+
 effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean, requireNoActive = false) {
   const classified = try classifyHistoricalAssessmentScope(catalog, audit, "fixture")
   const sealed = sealedCut(try capturedCut(classified, catalog.heads, requireNoActive), fresh) catch (error) => error._tag
@@ -158,6 +184,40 @@ function answered(request: HttpClientRequest.HttpClientRequest, status: number, 
   return HttpClientResponse.fromWeb(request, jsonReply(body, { status, headers: { "content-type": "application/json" } }))
 }
 
+function auditApi(censusStatus: number) {
+  const network = HttpClient.make((request) => {
+    if (request.url === "https://slop.cash/api/v1/projects") {
+      return succeed(answered(request, 200, { schemaVersion: "1", projects: [unregisteredProject], restrictions: [] }))
+    }
+    if (request.url === "https://slop.cash/api/v1/project-revisions") {
+      return succeed(answered(request, 200, { schemaVersion: "1", revisions: [{ projectId: unregisteredProject.id, revision: scope.revision, manifestSha256: digestText(unregisteredProject), manifest: unregisteredProject }] }))
+    }
+    if (request.url === "https://api.github.com/repos/fixture/repo") {
+      return succeed(answered(request, 200, { id: 42, node_id: "R_audit", private: false, full_name: "fixture/repo" }))
+    }
+    if (request.url === "https://api.github.com/graphql" && censusStatus === 200) {
+      return succeed(answered(request, 200, { data: { search: {
+        issueCount: 1, pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{ id: "PR_known", number: 7, headRefOid: headSha, mergedAt: occurredAt, repository: { id: "R_audit" } }],
+      } } }))
+    }
+    return succeed(answered(request, censusStatus, { message: "PRIVATE SOURCE DIAGNOSTIC" }))
+  })
+  return Layer.provideMerge(github({ token: Redacted.make("t"), userAgent: "slopbot" }), Layer.succeed(HttpClient.HttpClient, network))
+}
+
+effect function auditRefusal(censusStatus: number, source: string, baseline: string) {
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
+    HISTORICAL_ASSESSMENT_PROJECT: unregisteredProject.id,
+    HISTORICAL_SOURCE_AUDIT_SHA256: source,
+    HISTORICAL_POINTS_BASELINE_SHA256: baseline,
+  }))
+  provide auditApi(censusStatus), environment {
+    const failure = try Effect.flip(phased("main source verification" as AuditPhase, (setPhase) => auditedScope(setPhase, false)))
+    return failure.message
+  }
+}
+
 function closedContextApi(seen: string[], observed: unknown, rest: unknown) {
   const network = HttpClient.make((request) => {
     seen.push(`${request.method} ${request.url}`)
@@ -208,6 +268,15 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
       try same([try historicalReplayRequiresCollection("no-scoped-active-assessments", true), try historicalReplayRequiresCollection("requires-value-replay", false)], [false, true])
       const blockedReplay = historicalReplayRequiresCollection("requires-value-replay", true) catch (error) => error._tag
       try same(blockedReplay, "ReviewedRefused")
+
+      for (const suffix of ["Z", "+00:00"]) {
+        const retained = withJointAssessment(empty, `2026-10-06T00:00:00.123456${suffix}`)
+        try same(try conclusion(retained, true), { receipt: "requires-value-replay", blockers: [], sealed: "RequiresValueReplay" })
+      }
+      for (const assessedAt of ["2026-10-06T00:00:00.123456+01:00", "2026-11-31T00:00:00.123456Z"]) {
+        const malformed = withJointAssessment(empty, assessedAt)
+        try same(try conclusion(malformed, true), { receipt: "incomplete", blockers: ["invalid-joint-history"], sealed: "AuditIncomplete" })
+      }
 
       try legacy("PR_known")
       const active = try readHistoricalAssessmentCatalog(scope)
@@ -272,6 +341,21 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
     const held = { status: "incomplete", blockers: ["missing-from-merged-audit"], empty: 0, sealed: "AuditIncomplete" }
     try same([...guarded, awarded].map(outcome), [...guarded, awarded].map(() => held))
     try same(awarded.seen, [])
+  })
+
+  it.effect('An assessment audit reports the refused check without exposing private inputs (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {
+    const world = try World
+    provide d1(world.db) {
+      const refused = (phase: string) => `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner`
+      const rejectedRead = try auditRefusal(403, sourceDigest, baselineDigest)
+      const mismatchedCensus = try auditRefusal(200, sourceDigest, baselineDigest)
+      const unavailableCheckpoint = try auditRefusal(200, digestText(audit), baselineDigest)
+      try same([rejectedRead, mismatchedCensus, unavailableCheckpoint], [
+        refused("historical census verification"),
+        refused("historical census digest comparison"),
+        refused("assessment catalog scope read"),
+      ])
+    }
   })
 
   it.effect('An assessment audit outside the trusted main dispatch reads nothing (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {

@@ -1,13 +1,20 @@
-name: Prepare reviewed Eliza October 2026 allocation
+name: Prepare reviewed October 2026 allocation
 on:
   workflow_dispatch:
     inputs:
+      project:
+        description: "Project named by the owner-reviewed October packet"
+        type: choice
+        default: eliza
+        options:
+          - eliza
+          - slopdotcash
       reviewed_packet_sha256:
         description: "Owner-reviewed SHA-256 of the private October packet"
         required: true
         type: string
       apply:
-        description: "Import the reviewed Eliza proposal after private validation"
+        description: "Import the selected reviewed proposal after private validation"
         type: boolean
         default: false
 permissions:
@@ -36,13 +43,14 @@ jobs:
       - run: pnpm all build --filter=@repo/operations --filter=@repo/settlement
       - name: Snapshot the production registry
         run: node apps/operations/dist/programs/main.js release registry production "$RUNNER_TEMP/october-rewards"
-      - name: Validate and optionally import the private Eliza October proposal
+      - name: Validate and optionally import the private October proposal
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SLOPBOT_APP_ID: ${{ secrets.SLOPBOT_APP_ID }}
           SLOPBOT_APP_PRIVATE_KEY: ${{ secrets.SLOPBOT_APP_PRIVATE_KEY }}
-          OCTOBER_REWARDS_REVIEWED_PACKET: ${{ secrets.OCTOBER_REWARDS_REVIEWED_PACKET }}
+          OCTOBER_REWARDS_REVIEWED_PACKET: ${{ secrets[inputs.project == 'slopdotcash' && 'OCTOBER_SLOP_REWARDS_REVIEWED_PACKET' || 'OCTOBER_REWARDS_REVIEWED_PACKET'] }}
           REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
           OCTOBER_APPLY: ${{ inputs.apply }}
+          OCTOBER_PROJECT: ${{ inputs.project }}
         run: node apps/settlement/dist/programs/main.js october-rewards "$RUNNER_TEMP/october-rewards/registry/snapshot.json"

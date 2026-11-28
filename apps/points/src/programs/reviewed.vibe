@@ -11,10 +11,11 @@ import { projectOfRegistry } from "../corrections/apply/derive.vibe"
 import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
 import { type BeforeImportCheck, verifyHistoricalNetOutcomes } from "../corrections/reviewed/netOutcome.vibe"
+import { type VerifyNativeCarrier, verifyNativeCarrierRecipients } from "../corrections/reviewed/nativeRecipient.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
 import { type PacketStorage, type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
-import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
+import { type AuditPhase, auditAssessments } from "../corrections/reviewed/audit/run.vibe"
 import type { HistoricalAssessmentReceipt } from "../corrections/reviewed/audit/reconcile.vibe"
 import type { HistoricalProject } from "../client/snapshot/validate.vibe"
 import { latestOf } from "../corrections/reviewed/replay/latest.vibe"
@@ -34,14 +35,13 @@ module verified {
 import { githubUserIdFromNodeId } from verified
 
 export type PublicationPhase =
+  | AuditPhase
   | "trusted invocation"
-  | "main source verification"
   | "private packet read"
   | "reviewed packet validation"
   | "enforcement checkpoint read"
   | "project and repository verification"
   | "owner authority verification"
-  | "historical census verification"
   | "duplicate acceptance order verification"
   | "accepted squash verification"
   | "financial protection verification"
@@ -49,13 +49,7 @@ export type PublicationPhase =
   | "trusted replay receipt read"
   | "assessment qualification match"
   | "value record verification"
-  | "complete assessment catalog read"
-  | "assessment source reconciliation"
-  | "historical assessment replay"
-  | "assessment qualification recheck"
-  | "private replay review staging"
-  | "assessment receipt"
-  | "public Points read"
+  | "native original recipient verification"
   | "recipient and account restriction verification"
   | "published checkpoint verification"
   | "historical Points reconstruction"
@@ -141,7 +135,7 @@ effect function retainedActors(packet: HistoricalPacket, baseline: Journal) {
   return actors
 }
 
-effect function published(setPhase: (phase: PublicationPhase) => void, invocation: Invocation) {
+effect function published<E, R>(setPhase: (phase: PublicationPhase) => void, invocation: Invocation, verifyNativeCarrier?: VerifyNativeCarrier<E, R>) {
   setPhase("main source verification")
   try exactMainHead("Historical publication source changed")
   setPhase("private packet read")
@@ -203,6 +197,8 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   }
   setPhase("value record verification")
   try verifyHistoricalValueRecords(packet, { qualifiedReplay: qualification !== undefined })
+  setPhase("native original recipient verification")
+  const verifiedNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier)
   setPhase("historical Points reconstruction")
   const candidate = try reconstructHistoricalPoints({
     packet,
@@ -217,6 +213,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     preview: !invocation.apply,
     closedReviews,
     verifiedRetirements: { duplicates, order },
+    verifiedNativeCarriers,
   })
   if (assessmentReceipt !== undefined) try assertRemovedMergeGroupsPreserved(candidate.revisions.slice(baseline.revisions.length), assessmentReceipt, latestOf(baseline.revisions))
   setPhase("import preparation")
@@ -231,6 +228,8 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
         try verifyOwnerAuthority(packet, project.manifest)
         try verifyHistoricalProtection(packet)
         try verifyCarrierTips(packet, identical)
+        const currentNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier)
+        try require(JSON.stringify([...currentNativeCarriers]) === JSON.stringify([...verifiedNativeCarriers]), "Native recipient evidence changed before import")
         for (const check of beforeImport) try check
         setPhase("protected import and readback")
       },
@@ -248,7 +247,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   }))
 }
 
-export effect function reviewed(args: ReadonlyArray<string>) {
+export effect function reviewed<E = never, R = never>(args: ReadonlyArray<string>, verifyNativeCarrier?: VerifyNativeCarrier<E, R>) {
   const [operation, ...rest] = args
   if (operation === "replay-review") return try replayReview(rest)
   try require(operation !== "--replay-assessments", replayUsage)
@@ -256,6 +255,6 @@ export effect function reviewed(args: ReadonlyArray<string>) {
     try trustedMain("Reviewed historical publication requires manual main workflow")
     if (args.length === 1 && operation === "--audit-assessments") return try reviewedServices(auditAssessments(setPhase))
     const invocation = try invocationOf(args)
-    try reviewedServices(published(setPhase, invocation))
+    try reviewedServices(published(setPhase, invocation, verifyNativeCarrier))
   })
 }

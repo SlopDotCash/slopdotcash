@@ -1,0 +1,12 @@
+// spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"
+import { apply, decodeEvent, decodeSender, initial, type AssessmentAudit, type Event } from "../../../../gen/points__assessmentAudit.effect.vibe"
+
+export const initialAuditState = initial
+
+export effect function advanceAudit(state: AssessmentAudit, event: Event, by: unknown) {
+  return try apply(state, event, try decodeSender(by))
+}
+
+export effect function receiveAudit(state: AssessmentAudit, input: unknown, by: unknown) {
+  return try advanceAudit(state, try decodeEvent(input), by)
+}
