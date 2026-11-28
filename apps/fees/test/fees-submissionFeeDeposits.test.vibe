@@ -248,7 +248,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     }))
   })
 
-  it.effect('Short, foreign, unknown and second deposits are refused, and only accepted tokens are refunded once final (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row\'s due outcome or a refund"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+  it.effect(`Short, foreign, unknown and second deposits are refused, and only accepted tokens are refunded once final (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row's due outcome or a refund"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events")`, () => effect {
     const { ledger, clock } = try World
     try ask(3, 3)
     try ask(4, 4)
@@ -312,7 +312,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     }))
   })
 
-  it.effect('Only a finalized kept stablecoin deposit counts as kept fee income (spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+  it.effect(`Only a finalized kept stablecoin deposit counts as kept fee income (spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events")`, () => effect {
     const { ledger } = try World
     try ask(5, 5)
     deposit(ledger, { id: 10n, item: item(5), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 60 })
@@ -346,7 +346,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     }))
   })
 
-  it.effect('A standing row follows its deposit through a reorganisation, changed contents and the finalized refund or keep (spec/fees/submissionFeeStandingDeposits.md, "A standing deposit pays its row only as burned SLOP on the standing ledger"; spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+  it.effect(`A standing row follows its deposit through a reorganisation, changed contents and the finalized refund or keep (spec/fees/submissionFeeStandingDeposits.md, "A standing deposit pays its row only as burned SLOP on the standing ledger"; spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events")`, () => effect {
     const { standingLedger: ledger, standingNetwork } = try World
     const due = 100_000_000_000_000_000_000n
     try write(sql`INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at)

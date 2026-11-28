@@ -4380,7 +4380,8 @@ import { seededGithub, slopbotFake } from fakes
     return f
   }
 
-  describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
+  describe(`Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")`, () => {
+    // spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"
     it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
@@ -4389,6 +4390,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
+    // spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"
     it.effect("path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path", () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture(true))
@@ -4405,6 +4407,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
+    // spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"
     it.effect("a mixed submitted and squash proof refuses every changed binding", () => effect {
       provide webCrypto {
         for (const change of changes) {
@@ -4415,6 +4418,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
+    // spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers"
     it.effect("the reviewed packet is read only under its exact digest", () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
@@ -4430,6 +4434,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
+    // spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"
     it.effect("an untrusted publication is refused before any private input is read", () => effect {
       provide Layer.mergeAll(NodeServices.layer, webCrypto, outbound, Layer.provide(systemGit, NodeServices.layer)) {
         const digest = sha256Of(actor.id)
@@ -5130,7 +5135,7 @@ import { seededGithub, slopbotFake } from fakes
       })
     })
 
-    it.effect('Read the private protected months only from this site\'s route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site\'s own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    it.effect(`Read the private protected months only from this site's route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")`, () => effect {
       const union = answer([{ projectId: "feed", period: "2026-10" }, { projectId: "alpha", period: "2026-10" }], ["eliza"])
       const notConfigured = try privateRead({ url: "", token: Redacted.make(secret) }, listing(union))
       const noToken = try privateRead({ url: route, token: Redacted.make("") }, listing(union))
@@ -5362,7 +5367,7 @@ import { seededGithub, slopbotFake } from fakes
     return { first, member, third, pair, alone: unit("wu_slop_third", "micro", [claim(third, "c1")]) }
   }
 
-  it.effect('A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")', () => effect {
+  it.effect(`A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")`, () => effect {
     const open = group(false, [commit("b1", bob, 10)])
     const scored5 = try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])]))
     try Effect.try(() => assert.deepStrictEqual(scored5, {
@@ -5379,7 +5384,7 @@ import { seededGithub, slopbotFake } from fakes
     }))
   })
 
-  it.effect('A withheld joint member without attribution proof holds its Points and the group\'s other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum")', () => effect {
+  it.effect(`A withheld joint member without attribution proof holds its Points and the group's other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum")`, () => effect {
     const syncOnly = group(true, [{ ...commit("m1", bob, 10), parentCount: 2, attributions: [] }])
     const scored7 = try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])]))
     try Effect.try(() => assert.deepStrictEqual(scored7, {
@@ -6399,7 +6404,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   layer(Composed, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-    it.effect('The points area of src/live.vibe mounts the journal, dispute and protected-months routes and provides ClosedMonth to a settlement-shaped caller on real migrations (spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/rewardWeights.md, "One month\'s weights follow the journal until settlement freezes them")', () => effect {
+    it.effect(`The points area of src/live.vibe mounts the journal, dispute and protected-months routes and provides ClosedMonth to a settlement-shaped caller on real migrations (spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them")`, () => effect {
       const area = try Area
       const operator = (token: string) => area.request("/api/v1/operator/protected-point-months", { headers: { authorization: `Bearer ${token}` } })
       const unpublished = shown(try area.get("/api/v1/points/journal"))

@@ -312,7 +312,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('An administrator imports a pre-November subscription assessment once, and a joint import with a later unmerged context source is published once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
+  it.effect(`An administrator imports a pre-November subscription assessment once, and a joint import with a later unmerged context source is published once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")`, () => effect {
     const journal = "SELECT COUNT(*) AS n FROM slopbot_value_journal"
     const steps = [
       try call(importUrl, { origin: "https://elsewhere.test", cookie: "7", json: envelope(7) }),
