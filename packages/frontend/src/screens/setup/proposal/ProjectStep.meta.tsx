@@ -16,9 +16,11 @@ export const meta: ComponentMeta<ProjectStepProps> = {
     Links: { proposal: { ...filled, website: "http://ntwrk.party", x: "@elizaOS" }, shown: (field) => (field === "website" ? "Use an https:// address." : undefined) },
   },
   play: {
-    // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
+    // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
     Default: async () => {
       await expect(["automatic-closure", "field-submissionFee", "field-wantedIssues", "field-reportDeposit"].map((id) => document.getElementById(id)?.getAttribute("aria-checked"))).toEqual(["false", "true", "true", "true"]);
+      await expect(screen.getByText("Copyright model")).toBeTruthy();
+      await expect(screen.getByText("Inbound terms")).toBeTruthy();
     },
     // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
     Bounty: async () => {

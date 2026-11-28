@@ -93,15 +93,13 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
       </div>
       {p.fundingMode === "bounty" ? null : <ClosureConsent value={p.automaticClosure} onChange={(value) => onChange("automaticClosure", value)} />}
       <ContributionSettings bountyOnly={p.fundingMode === "bounty"} value={{ submissionFee: p.submissionFee, wantedIssues: p.wantedIssues, reportDeposit: p.reportDeposit }} onChange={onChange} />
-      {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
-        <section aria-label="Saved legal terms" className="flex flex-col gap-4">
-          <ChoiceField label="Copyright model" name="copyrightModel" value={p.copyrightModel} options={copyrightModels} error={shown("copyrightModel")} onChange={(value) => onChange("copyrightModel", value)} />
-          {p.copyrightModel === "sponsor-owned" ? text({ field: "legalHolder", label: "Copyright holder" }) : null}
-          <ChoiceField label="Inbound terms" name="inboundMode" value={p.inboundMode} options={inboundModes} onChange={(value) => onChange("inboundMode", value)} />
-          {p.inboundMode !== "unknown" ? inboundTerms.map(text) : null}
-          {p.copyrightModel === "sponsor-owned" || p.inboundMode === "assignment" ? assignmentTerms.map(text) : null}
-        </section>
-      ) : null}
+      <section aria-label="Saved legal terms" className="flex flex-col gap-4">
+        <ChoiceField label="Copyright model" name="copyrightModel" value={p.copyrightModel} options={copyrightModels} error={shown("copyrightModel")} onChange={(value) => onChange("copyrightModel", value)} />
+        {p.copyrightModel === "sponsor-owned" ? text({ field: "legalHolder", label: "Copyright holder" }) : null}
+        <ChoiceField label="Inbound terms" name="inboundMode" value={p.inboundMode} options={inboundModes} onChange={(value) => onChange("inboundMode", value)} />
+        {p.inboundMode !== "unknown" ? inboundTerms.map(text) : null}
+        {p.copyrightModel === "sponsor-owned" || p.inboundMode === "assignment" ? assignmentTerms.map(text) : null}
+      </section>
     </div>
   );
 }
