@@ -428,7 +428,7 @@ jobs:
       - name: Mint collector token
         id: collector-token
         if: >-
-          github.ref == 'refs/heads/main' &&
+          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
           inputs.use_published_data != true &&
           vars.COLLECTOR_APP_CLIENT_ID != ''
         continue-on-error: true

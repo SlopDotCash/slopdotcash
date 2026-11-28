@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const skillRoot = ".agents/skills";
+export const TOOL_IGNORE_DIRS = ["gen", ".spec-cache", ".studio", "dist", ".vibe", ".cache", ".turbo", ".alchemy", ".wrangler"] as const;
 const generatedAgentDirectories = [".claude", ".codex", ".cursor", ".droid", ".factory", ".gemini", ".grok", ".grokbot", ".muse", ".t3"];
 const generatedAgentIgnores = ["/.claude/", "/CLAUDE.md", ...generatedAgentDirectories.filter((agent) => agent !== ".claude").map((agent) => `/${agent}/skills`)];
 
@@ -141,7 +142,7 @@ export function setupProjectAgents(project: string, warn: (message: string) => v
 
   const ignore = path.join(project, ".gitignore");
   const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, "utf8") : "";
-  const missing = ["gen/", ".spec-cache/", ".studio/", "dist/", ".vibe/", ".cache/", ".turbo/", "test/__traces__/", ...generatedAgentIgnores].filter((pattern) => !ignored.split(/\r?\n/).includes(pattern));
+  const missing = [...TOOL_IGNORE_DIRS.map((dir) => `${dir}/`), "test/__traces__/", ...generatedAgentIgnores].filter((pattern) => !ignored.split(/\r?\n/).includes(pattern));
   if (missing.length) {
     fs.writeFileSync(ignore, ignored + (ignored && !ignored.endsWith("\n") ? "\n" : "") + missing.join("\n") + "\n");
     added.push(".gitignore");

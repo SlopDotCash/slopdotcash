@@ -2,6 +2,7 @@ import { existsSync, globSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path"
 import { designSystem } from "./design/eslint.ts"
 import { parseTokens } from "./design/tokens.ts"
+import { TOOL_IGNORE_DIRS } from "./skill-links.ts"
 
 interface SourcePos {
   readonly line: number
@@ -131,11 +132,7 @@ const TYPE_DECL_EXTENSIONS: readonly string[] = [".d.ts", ".d.mts", ".d.cts"]
 const DEFAULT_SCAN_EXCLUDES: readonly string[] = [
   "**/node_modules/**",
   "**/.git/**",
-  "**/dist/**",
-  "**/gen/**",
-  "**/.spec-cache/**",
-  "**/.cache/**",
-  "**/.turbo/**",
+  ...TOOL_IGNORE_DIRS.map((dir) => `**/${dir}/**`),
   "**/storybook-static/**",
   "**/test/fixtures/**",
 ]
@@ -1128,18 +1125,12 @@ export interface VibestackConfigOptions {
 }
 
 const DEFAULT_IGNORES = [
-  "**/gen/",
-  "**/.vibe/",
-  "**/dist/",
-  "**/.cache/",
-  "**/.spec-cache/",
+  ...TOOL_IGNORE_DIRS.map((dir) => `**/${dir}/`),
   "**/generated/",
   "**/storybook-static/",
   "**/test/fixtures/",
   ".claude/",
   ".lemmascript/",
-  ".studio/",
-  ".turbo/",
   "_apalache-out/",
 ]
 
@@ -1296,7 +1287,7 @@ export function vibestackConfig(options: VibestackConfigOptions): FlatConfig[] {
   const tsx = options.tsx ?? ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}"]
   const own = options.own ?? ["apps/**", "packages/**"]
   const uiPackage = options.uiPackage ?? "packages/ui"
-  const untyped = options.untyped ?? ["*.{js,ts}", "**/.storybook/**", ...(design ? [`${design}/**`] : [])]
+  const untyped = options.untyped ?? ["*.{js,ts}", "**/.storybook/**", "**/deploy/**", ...(design ? [`${design}/**`] : [])]
   const commented = options.commented ?? {}
   const scheduled = options.scheduled ?? {}
   const jsPlugin = plugins.js as any

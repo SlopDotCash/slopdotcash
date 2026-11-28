@@ -12,6 +12,7 @@ concurrency:
 
 env:
   TURBO_TELEMETRY_DISABLED: "1"
+  ALCHEMY_FAST_DISTILLED: "1"
 
 permissions:
   contents: read
@@ -81,6 +82,9 @@ jobs:
         env:
           VITEST_MAX_WORKERS: "2"
         run: pnpm verify --concurrency=3 --continue=dependencies-successful --summarize --log-order=stream
+      - id: verify-deploy-workerd
+        name: Run offline Alchemy workerd deploy tests
+        run: pnpm all //#test:deploy --summarize --log-order=stream
       - name: Report Turbo task timings
         if: ${{ !cancelled() }}
         run: |
