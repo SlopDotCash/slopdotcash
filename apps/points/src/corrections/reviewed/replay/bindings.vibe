@@ -7,7 +7,8 @@ import { valueReferenceQuery } from "../../collect/cache.vibe"
 import type { HistoricalAssessmentHeads, Row } from "../audit/catalog.vibe"
 import { type EmptyLegacyClosureFacts, type HistoricalAssessmentReceipt, type HistoricalEvidence, InvalidAssessmentJournal, type JointCandidate, type VerifiedClosure, isHistoricalClosedFinding, isStandaloneHistoricalReview } from "../audit/reconcile.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
-import { apply, catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { advanceAudit } from "../audit/cut.vibe"
 import { latestOf } from "./latest.vibe"
 import type { HistoricalEmptyLegacyClosureBinding } from "./merged.vibe"
 
@@ -230,10 +231,10 @@ export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAsses
   let bound = state
   for (const record of receipt.records) {
     for (const source of record.sources) {
-      if (source.finding === "retained-removed-merge") bound = try apply(bound, { type: "bindRemovedMerge", removal: goodRemoval }, dispatch)
-      if (source.finding === "verified-closed-context") bound = try apply(bound, { type: "bindClosureReview", closure: goodClosure }, dispatch)
+      if (source.finding === "retained-removed-merge") bound = try advanceAudit(bound, { type: "bindRemovedMerge", removal: goodRemoval }, dispatch)
+      if (source.finding === "verified-closed-context") bound = try advanceAudit(bound, { type: "bindClosureReview", closure: goodClosure }, dispatch)
       if (source.finding === "verified-standalone-closed-review") {
-        bound = try apply(bound, { type: "bindClosureReview", closure: { ...goodClosure, auditedMergedAnchor: false, standaloneReviewOnlyRecord: true } }, dispatch)
+        bound = try advanceAudit(bound, { type: "bindClosureReview", closure: { ...goodClosure, auditedMergedAnchor: false, standaloneReviewOnlyRecord: true } }, dispatch)
       }
     }
   }
