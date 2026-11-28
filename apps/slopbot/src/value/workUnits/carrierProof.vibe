@@ -18,7 +18,7 @@ function refused() {
   return new CarrierLineProofUnavailable({ reason: "Native carrier scope changed or has incomplete ancestry" })
 }
 
-function historyOf(evidence: Evidence) {
+export function carrierHistoryOf(evidence: Evidence) {
   const attribution = new Map<string, CommitAttribution>()
   for (const row of evidence.commitAttribution) {
     if (attribution.has(row.sha)) return undefined
@@ -172,8 +172,8 @@ export effect function collectNativeCarrierProof(from: Evidence, to: Evidence, r
     repository.full_name?.toLowerCase() !== from.repository.toLowerCase() || repository.full_name?.toLowerCase() !== to.repository.toLowerCase()) {
     throw refused()
   }
-  const originalHistory = historyOf(from)
-  const carrierHistory = historyOf(to)
+  const originalHistory = carrierHistoryOf(from)
+  const carrierHistory = carrierHistoryOf(to)
   if (originalHistory === undefined || carrierHistory === undefined) throw refused()
   const objects = [originalHistory.baseSha, originalHistory.headSha, carrierHistory.baseSha, carrierHistory.headSha, acceptanceSha]
   const reconstructed = try withPublicGitObjects(repository, objects, (directory) => effect {

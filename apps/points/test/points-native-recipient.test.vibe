@@ -204,8 +204,9 @@ it.effect('A linked carrier verifies its complete official membership including 
       assert.deepEqual(reads, [original.id, carrier.id, "merged repository", sibling.id])
       assert.deepEqual(requests[0]?.sameTerminalSources, [original, carrier, sibling])
       assert.deepEqual(requests[0]?.correctedSources, [original, carrier])
-      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), proof)
-      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(directCorrection)), carrierProof)
+      const sameTerminalSourceIds = [original.id, carrier.id, sibling.id]
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), { ...proof, sameTerminalSourceIds })
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(directCorrection)), { ...carrierProof, sameTerminalSourceIds })
     })
   }
   provide groupGithub([], true) {

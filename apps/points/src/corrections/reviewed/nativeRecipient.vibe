@@ -50,6 +50,7 @@ export interface VerifiedNativeCarrierCorrection {
   readonly sourceSha256: string
   readonly claimIds: ReadonlyArray<string>
   readonly recipients: ReadonlyArray<VerifiedNativeRecipient>
+  readonly sameTerminalSourceIds?: ReadonlyArray<string>
 }
 
 export type VerifyNativeCarrier<E, R> = (request: NativeCarrierRequest) => VerifiedNativeCarrierCorrection!(E | ReviewedRefused)!R
@@ -64,7 +65,7 @@ function whenMerged(value: string) {
   return Number.isFinite(clock) ? new Date(clock).toISOString() : ""
 }
 
-export function nativeCarrierCorrectionKey(correction: PacketRecipientCorrection) {
+export function nativeCarrierCorrectionKey(correction: Pick<PacketRecipientCorrection, "sourceId" | "workUnitId">) {
   return JSON.stringify([correction.sourceId, correction.workUnitId])
 }
 
@@ -165,7 +166,7 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
   const verified = try verify({
     carrier: { repository: packet.sourceAudit.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, repositoryDatabaseId: carrier.repository.databaseId,
       integrationBranch, original: directCensus, carrier: directCensus, acceptedSha },
-    correctedSources, sameTerminalSources, aliases,
+    correctedSources, sameTerminalSources: sameTerminalSources.sort((left, right) => left.number - right.number), aliases,
   })
   const claims = new Set<string>()
   const proofByCorrection = new Map<string, VerifiedNativeCarrierCorrection>()
@@ -177,7 +178,7 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
       throw refusal("Native carrier group repeats or omits a canonical claim")
     }
     for (const id of proof.claimIds) claims.add(id)
-    proofByCorrection.set(nativeCarrierCorrectionKey(correction), proof)
+    proofByCorrection.set(nativeCarrierCorrectionKey(correction), { ...proof, sameTerminalSourceIds: sameTerminalSources.map(({ id }) => id) })
   }
   return proofByCorrection
 }
