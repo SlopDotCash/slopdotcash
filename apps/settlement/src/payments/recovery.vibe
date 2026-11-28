@@ -41,9 +41,10 @@ function identityOf(observed: Observed): AttemptIdentity {
   return { idempotencyKey: observed.key, obligationId: observed.obligationId, network: observed.served.deployment.network, vault: observed.served.deployment.vault }
 }
 
-effect function deliveryOf(observed: Observed, rows: ObligationRows, inspections: ReadonlyArray<Inspection> = []) {
+effect function deliveryOf(observed: Observed, rows: ObligationRows, captured?: Inspection) {
   const row = rows.obligation
-  if (row === undefined || row.state !== "reserved") return undefined
+  if (row === undefined || (row.state !== "reserved" && captured === undefined)) return undefined
+  const inspections = captured === undefined ? [] : [captured]
   const projection = { ...try projectionFor(observed.served.deployment, observed.served.asset, row.github_user_id), inspections }
   return (try project(projection, rows)).settlement.delivery
 }
@@ -161,7 +162,7 @@ effect function retireReverted(served: ServedVault, row: SubmittedRow) {
   const proof = try finalizedRevert(served.deployment, captured.tx)
   if (proof === undefined || proof.height <= 0) return false
   return try update(obligationAggregate(row.obligation_id), (rows) => effect {
-    const delivery = try deliveryOf(observed, rows, [captured])
+    const delivery = try deliveryOf(observed, rows, captured)
     if (delivery === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
     const prior = attempt(delivery, captured.key)
     const next = try stepped(delivery, { type: "settleFailure", inspectionId, failure: { key: captured.key, tx: captured.tx, network: delivery.target.network, scope: delivery.target.scope, height: proof.height, finalized: true, reverted: true } })
