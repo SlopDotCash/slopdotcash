@@ -18,6 +18,23 @@ permissions:
   contents: read
 
 jobs:
+  test-deploy:
+    name: workerd deploy verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_CACHE: ${{ secrets.TURBO_TOKEN != '' && (github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r') || 'local:rw' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          job: test-deploy
+          verification: "false"
+      - name: Run offline Alchemy workerd deploy tests
+        run: pnpm all //#test:deploy --concurrency=3 --summarize --log-order=stream
+
   vibestack-precompute-simulations:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -82,9 +99,6 @@ jobs:
         env:
           VITEST_MAX_WORKERS: "2"
         run: pnpm verify --concurrency=3 --continue=dependencies-successful --summarize --log-order=stream
-      - id: verify-deploy-workerd
-        name: Run offline Alchemy workerd deploy tests
-        run: pnpm all //#test:deploy --summarize --log-order=stream
       - name: Report Turbo task timings
         if: ${{ !cancelled() }}
         run: |

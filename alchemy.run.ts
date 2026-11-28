@@ -102,6 +102,7 @@ const PublishPagesRelease = Alchemy.Action(
     readonly stage: string;
     readonly environment: "staging" | "production";
     readonly projectName: string;
+    readonly workerNames: readonly string[];
     readonly assetHash: string;
     readonly manifestSha256: string;
     readonly bundleDir: string;
@@ -114,6 +115,7 @@ const PublishPagesRelease = Alchemy.Action(
           published: false,
           mode: "planned-only" as const,
           projectName: input.projectName,
+          workerCount: input.workerNames.length,
           assetHash: input.assetHash,
           manifestSha256: input.manifestSha256,
         };
@@ -144,6 +146,7 @@ const PublishPagesRelease = Alchemy.Action(
         published: true,
         mode: "source-bound-release" as const,
         projectName: input.projectName,
+        workerCount: input.workerNames.length,
         assetHash: input.assetHash,
         manifestSha256: input.manifestSha256,
       };
@@ -155,6 +158,8 @@ const VerifySlopDeployment = Alchemy.Action(
   (input: {
     readonly url: string | undefined;
     readonly identityUrl: string | undefined;
+    readonly identityWorkerName: string;
+    readonly publicationRef: string;
     readonly assetHash: string;
     readonly commitSha: string | undefined;
     readonly localMode: boolean;
@@ -178,6 +183,8 @@ const VerifySlopDeployment = Alchemy.Action(
         : undefined;
       return {
         verified: siteReceipt.ok && (identityReceipt === undefined || identityReceipt.ok),
+        identityWorkerName: input.identityWorkerName,
+        publicationRef: input.publicationRef,
         siteReceipt,
         ...(identityReceipt ? { identityReceipt } : {}),
       };
@@ -387,14 +394,15 @@ function provisionScheduledWorkers(
   slopDb: Effect.Success<ReturnType<typeof provisionDataResources>>["slopDb"],
 ) {
   return Effect.gen(function* () {
-    if (ctx.isLocal) return;
+    const deployedNames: Array<typeof referralConfig.file.name | Alchemy.Input<string>> = [];
+    if (ctx.isLocal) return deployedNames;
 
     const feeConverterConfig = findReviewedConfig(ctx.reviewed, "fees", "feeConverter", ctx.tier);
     const referralConfig = findReviewedConfig(ctx.reviewed, "settlement", "referralAccrual", ctx.tier);
     const paymentsConfig = findReviewedConfig(ctx.reviewed, "settlement", "payments", ctx.tier);
 
     if (isServiceReleaseEnabled("FeeConverter", ctx.tier)) {
-      yield* Cloudflare.Worker("FeeConverter", {
+      const feeConverter = yield* Cloudflare.Worker("FeeConverter", {
         name: feeConverterConfig.file.name,
         main: resolveWorkerScript(feeConverterConfig),
         bundle: false,
@@ -406,6 +414,7 @@ function provisionScheduledWorkers(
           : {}),
         env: { ...workerVars(feeConverterConfig), FEE_DB: slopDb },
       }).pipe(Alchemy.AdoptPolicy.adopt(true));
+      deployedNames.push(feeConverter.workerName);
     }
 
     if (ctx.isProduction) {
@@ -415,7 +424,7 @@ function provisionScheduledWorkers(
         "submissionFee",
         "Production",
       );
-      yield* Cloudflare.Worker("SubmissionFee", {
+      const submissionFee = yield* Cloudflare.Worker("SubmissionFee", {
         name: submissionFeeConfig.file.name,
         main: resolveWorkerScript(submissionFeeConfig),
         bundle: false,
@@ -427,9 +436,10 @@ function provisionScheduledWorkers(
           : {}),
         env: { ...workerVars(submissionFeeConfig), SUBMISSION_FEE_DB: slopDb },
       }).pipe(Alchemy.AdoptPolicy.adopt(true));
+      deployedNames.push(submissionFee.workerName);
     }
 
-    yield* Cloudflare.Worker("ReferralAccrual", {
+    const referralAccrual = yield* Cloudflare.Worker("ReferralAccrual", {
       name: referralConfig.file.name,
       main: resolveWorkerScript(referralConfig),
       bundle: false,
@@ -439,8 +449,9 @@ function provisionScheduledWorkers(
       ...(referralConfig.file.triggers?.crons ? { crons: [...referralConfig.file.triggers.crons] } : {}),
       env: { ...workerVars(referralConfig), REFERRAL_DB: slopDb },
     }).pipe(Alchemy.AdoptPolicy.adopt(true));
+    deployedNames.push(referralAccrual.workerName);
 
-    yield* Cloudflare.Worker("PaymentsDispatcher", {
+    const paymentsDispatcher = yield* Cloudflare.Worker("PaymentsDispatcher", {
       name: paymentsConfig.file.name,
       main: resolveWorkerScript(paymentsConfig),
       bundle: false,
@@ -450,6 +461,9 @@ function provisionScheduledWorkers(
       ...(paymentsConfig.file.triggers?.crons ? { crons: [...paymentsConfig.file.triggers.crons] } : {}),
       env: { ...workerVars(paymentsConfig), PAYMENTS_DB: slopDb },
     }).pipe(Alchemy.AdoptPolicy.adopt(true));
+    deployedNames.push(paymentsDispatcher.workerName);
+
+    return deployedNames;
   });
 }
 
@@ -474,7 +488,7 @@ export default Alchemy.Stack(
 
     const data = yield* provisionDataResources(ctx);
     const core = yield* provisionCoreWorkers(ctx, data);
-    yield* provisionScheduledWorkers(ctx, data.slopDb);
+    const scheduledWorkerNames = yield* provisionScheduledWorkers(ctx, data.slopDb);
 
     const pagesConfig = findReviewedConfig(reviewed, "app", "pages", tier);
     const bundleDir = process.env.SLOP_RELEASE_BUNDLE?.trim() ?? "";
@@ -512,6 +526,8 @@ export default Alchemy.Stack(
       const verification = yield* VerifySlopDeployment({
         url: localSite.url,
         identityUrl: core.identityWorker.url,
+        identityWorkerName: core.identityWorker.workerName,
+        publicationRef: localSite.workerName,
         assetHash: assets.hash,
         commitSha: undefined,
         localMode: true,
@@ -551,6 +567,13 @@ export default Alchemy.Stack(
       stage: stageTarget.stage,
       environment: envName,
       projectName: pagesProject.name,
+      workerNames: [
+        core.backupWorker.workerName,
+        core.slopbotWorker.workerName,
+        core.notifyWorker.workerName,
+        core.identityWorker.workerName,
+        ...scheduledWorkerNames,
+      ],
       assetHash: assets.hash,
       manifestSha256: manifest?.sha256 ?? assets.hash,
       bundleDir,
@@ -562,6 +585,8 @@ export default Alchemy.Stack(
     const verification = yield* VerifySlopDeployment({
       url: siteUrl,
       identityUrl: `https://${IDENTITY_DOMAINS[tier]}`,
+      identityWorkerName: core.identityWorker.workerName,
+      publicationRef: pagesPublication.mode,
       assetHash: assets.hash,
       commitSha: manifest?.sourceSha,
       localMode: false,

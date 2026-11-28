@@ -407,5 +407,5 @@ export async function database(mf: Miniflare, binding: string, worker?: string):
 }
 
 export async function storage(mf: Miniflare, binding: string): Promise<R2Bucket> {
-  return (await mf.getR2Bucket(binding)) as unknown as R2Bucket;
+  return mf.getR2Bucket(binding);
 }
