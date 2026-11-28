@@ -92,6 +92,7 @@ interface Asked {
 type Answer = (asked: Asked) => unknown
 
 const asked: string[] = []
+const ledgerReads: string[] = []
 const unasked: Answer = () => ({ errors: [{ type: "FORBIDDEN", message: "this month reads no maintainer decisions" }] })
 
 function githubOf(answer: Answer) {
@@ -123,6 +124,7 @@ function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly
   })
   const closed = Layer.succeed(ClosedMonth, {
     ledger: (month) => effect {
+      ledgerReads.push(month.projectId)
       const ledger = ledgers[month.projectId]
       return ledger === undefined || month.period !== "2026-11" ? undefined : ledger
     },
@@ -241,17 +243,20 @@ effect function ask(env: Env, path: string) {
 }
 
 layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect(`A closed month is proposed once from the closed ledger, a repeat adds nothing, paused or retired projects get no proposal, and an unusable ledger fails the run (spec/settlement/monthly.md, "Story: Propose one month once from accepted work"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately")`, () => effect {
+  it.effect(`A closed month is proposed once from the closed ledger, a repeat adds nothing, paused, retired, unverified or unfunded projects get no proposal and no ledger read, and an unusable ledger fails the run (spec/settlement/monthly.md, "Story: Propose one month once from accepted work"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately")`, () => effect {
     const { env } = try Journey
     const active = try registered(env, "alpha", "1000", {})
     const paused = try registered(env, "paused-pool", "1000", { rowStatus: "Paused", manifestStatus: "Paused" })
     const retired = try registered(env, "retired-pool", "1000", { retirement: "OwnerRemoved", listingTier: "Retired" })
+    const unverified = try registered(env, "unverified-pool", "1000", {}, { authority: { state: "unverified" } })
+    const unfunded = try registered(env, "unfunded-pool", "0", {})
     const ledgers = try ledgersOf({
       alpha: [{ githubId: "1001", login: "first", points: 3 }, { githubId: "1002", login: "second", points: 1 }, { githubId: "1003", login: "idle", points: 0 }],
       "paused-pool": [{ githubId: "1001", login: "first", points: 3 }],
       "retired-pool": [{ githubId: "1001", login: "first", points: 3 }],
     })
-    provide services(env, [active, paused, retired], ledgers) {
+    provide services(env, [active, paused, retired, unverified, unfunded], ledgers) {
+      ledgerReads.length = 0
       try proposeMonth(["--cycle", "2026-11"])
       const first = try proposals(env)
       const rows = try proposedRows(env, "alpha")
@@ -264,6 +269,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
         rows,
         repeated: [again, rowsAgain],
         state: [month.state.phase, month.state.total, month.state.cap, month.state.shares],
+        ledgerReads,
       }, {
         first: [["alpha", "1000", 2]],
         rows: [
@@ -272,6 +278,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
         ],
         repeated: [first, rows],
         state: ["Proposed", [0, 1], [0, 1], [{ actor: 1001, amount: [750] }, { actor: 1002, amount: [250] }]],
+        ledgerReads: ["alpha"],
       })
     }
     const broken = try registered(env, "broken-pool", "1000", {})

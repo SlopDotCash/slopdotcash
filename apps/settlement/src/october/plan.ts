@@ -11,14 +11,30 @@ import {
   type OctoberReviewedIdentity,
 } from "./review.ts";
 
-const eliza = "eliza";
 const octoberStart = "2026-10-01T00:00:00.000Z";
+const slopOctoberStart = "2026-10-11T00:00:00.000Z";
 const approvedPool = 1_000_000_000n;
-const approvedNetwork = "solana-mainnet";
 const approvedAsset = "USDC";
-const approvedAssetAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const approvedRails = {
+  eliza: {
+    chain: "solana",
+    network: "solana-mainnet",
+    assetAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    vaultPattern: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u,
+    fundedVault: undefined,
+  },
+  slopdotcash: {
+    chain: "base",
+    network: "base-mainnet",
+    assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    vaultPattern: /^0x[0-9a-f]{40}$/iu,
+    fundedVault: "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36",
+  },
+} as const;
 
-export interface OctoberElizaRegistry {
+type OctoberImportProject = keyof typeof approvedRails;
+
+export interface OctoberRegistry {
   readonly capturedAt: string;
   readonly enforcementGeneration: number;
   readonly revision: number;
@@ -28,7 +44,7 @@ export interface OctoberElizaRegistry {
   readonly verifiedOwnerGithubId: string;
 }
 
-export interface OctoberElizaEvidence {
+export interface OctoberEvidence {
   readonly publicPointsBatch: string;
   readonly privatePointsBatch: string;
   readonly observedWeights: ReadonlyMap<string, OctoberObservedWeight>;
@@ -36,7 +52,7 @@ export interface OctoberElizaEvidence {
   readonly eligible: ReadonlySet<string>;
 }
 
-export interface OctoberElizaAward {
+export interface OctoberAward {
   readonly githubUserId: string;
   readonly login: string;
   readonly grossBase: string;
@@ -60,7 +76,8 @@ function exactInstant(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
-function registryTerms(manifestText: string): { readonly from: string; readonly vault: string } {
+function registryTerms(projectId: OctoberImportProject, manifestText: string) {
+  const rail = approvedRails[projectId];
   const manifest = record(JSON.parse(manifestText) as unknown);
   const reward = record(manifest.reward);
   const escrow = record(manifest.escrow);
@@ -69,20 +86,34 @@ function registryTerms(manifestText: string): { readonly from: string; readonly 
     : undefined;
   const asset = manifest.rewardAsset === undefined ? undefined : record(manifest.rewardAsset);
   if (
-    manifest.id !== eliza || manifest.status !== "active" ||
-    reward.kind !== "monthly-pool" || reward.chain !== "solana" || reward.currency !== approvedAsset ||
-    reward.feeBasisPoints !== 200 || escrow.chain !== "solana" ||
+    manifest.id !== projectId || manifest.status !== "active" ||
+    reward.kind !== "monthly-pool" || reward.chain !== rail.chain || reward.currency !== approvedAsset ||
+    reward.feeBasisPoints !== 200 || escrow.chain !== rail.chain ||
     escrow.feeMode !== "deduct-from-gross" || escrow.feeBasisPoints !== 200 ||
-    deployment?.network !== approvedNetwork || deployment.asset !== approvedAssetAddress ||
-    typeof deployment.vault !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(deployment.vault) ||
+    deployment?.network !== rail.network || deployment.asset !== rail.assetAddress ||
+    typeof deployment.vault !== "string" || !rail.vaultPattern.test(deployment.vault) ||
+    (rail.fundedVault !== undefined && deployment.vault.toLowerCase() !== rail.fundedVault) ||
+    (projectId === "slopdotcash" && escrow.effectiveCycle !== octoberPeriod) ||
     (asset !== undefined &&
-      (asset.address !== approvedAssetAddress || asset.decimals !== 6 || asset.symbol !== approvedAsset ||
-        asset.network !== "solana")) ||
+      (asset.address !== rail.assetAddress || asset.decimals !== 6 || asset.symbol !== approvedAsset ||
+        asset.network !== rail.chain)) ||
     !exactInstant(reward.rewardStartAt)
   ) {
-    throw new Error("The Eliza registry does not match the approved October rail and fee.");
+    throw new Error("The project registry does not match the approved October rail and fee.");
   }
-  return { from: reward.rewardStartAt > octoberStart ? reward.rewardStartAt : octoberStart, vault: deployment.vault };
+  if (projectId === "slopdotcash") {
+    const caps = Array.isArray(reward.cycleCaps) ? reward.cycleCaps.map(record) : [];
+    const octoberCaps = caps.filter(({ cycleId }) => cycleId === octoberPeriod);
+    if (octoberCaps.length !== 1 || octoberCaps[0]?.monthlyCapMinor !== "0") {
+      throw new Error("Slop requires the explicit zero automatic cap for October.");
+    }
+    const terms = manifest.terms === undefined ? undefined : record(manifest.terms);
+    const receipt = terms?.receiptPolicy === undefined ? undefined : record(terms.receiptPolicy);
+    if (asset?.chainId !== "8453" || receipt?.state !== "active") {
+      throw new Error("Slop requires active receipts and the verified Base asset.");
+    }
+  }
+  return { rail, from: reward.rewardStartAt > octoberStart ? reward.rewardStartAt : octoberStart, vault: deployment.vault };
 }
 
 function compareActors(left: OctoberReviewedIdentity, right: OctoberReviewedIdentity): number {
@@ -91,7 +122,7 @@ function compareActors(left: OctoberReviewedIdentity, right: OctoberReviewedIden
     left.githubNodeId.localeCompare(right.githubNodeId, "en");
 }
 
-function allocateEliza(actors: readonly { readonly actor: OctoberReviewedIdentity; readonly points: bigint }[]): OctoberElizaAward[] {
+function allocateOctober(projectId: OctoberImportProject, actors: readonly { readonly actor: OctoberReviewedIdentity; readonly points: bigint }[]): OctoberAward[] {
   const actorsInLegacyTieOrder = [...actors].sort((left, right) => compareActors(left.actor, right.actor));
   const allocation = allocate(approvedPool, actorsInLegacyTieOrder.map(({ points }, index) => ({ actor: index + 1, weight: points })));
   if (allocation.kind !== "Allocated") throw new Error("October proposal allocation refused.");
@@ -105,21 +136,22 @@ function allocateEliza(actors: readonly { readonly actor: OctoberReviewedIdentit
       grossBase: amount.toString(),
       feeBase: fee.toString(),
       netBase: (amount - fee).toString(),
-      sourceDigest: sha256(JSON.stringify(["slop-escrow-origin-v2", eliza, octoberPeriod, actor.githubUserId])),
+      sourceDigest: sha256(JSON.stringify(["slop-escrow-origin-v2", projectId, octoberPeriod, actor.githubUserId])),
     };
   }).sort((left, right) => left.githubUserId.localeCompare(right.githubUserId, "en"));
 }
 
-export function compileOctoberElizaProposal(
+export function compileOctoberProposal(
+  projectId: OctoberImportProject,
   bytes: Uint8Array,
   reviewDigest: string,
-  capture: OctoberElizaRegistry,
+  capture: OctoberRegistry,
   now: string,
 ) {
   const packet = decodeOctoberReviewedPacket(bytes, reviewDigest);
   const project = packet.projects[0];
-  if (packet.projects.length !== 1 || project?.id !== eliza) {
-    throw new Error("Expected an Eliza-only October packet.");
+  if (packet.projects.length !== 1 || project?.id !== projectId) {
+    throw new Error("Expected exactly the selected project in the October packet.");
   }
   if (
     !exactInstant(capture.capturedAt) || !exactInstant(now) || capture.capturedAt < packet.reviewedAt ||
@@ -127,13 +159,14 @@ export function compileOctoberElizaProposal(
     project.revision !== capture.revision || project.manifestSha256 !== capture.manifestSha256 ||
     sha256(capture.manifest) !== capture.manifestSha256 || capture.restricted
   ) {
-    throw new Error("The current Eliza registry or enforcement differs from the reviewed packet.");
+    throw new Error("The current project registry or enforcement differs from the reviewed packet.");
   }
   if (capture.verifiedOwnerGithubId !== packet.reviewerGithubId) {
-    throw new Error("The October packet needs the verified current Eliza owner.");
+    throw new Error("The October packet needs the verified current project owner.");
   }
-  const terms = registryTerms(capture.manifest);
-  if (project.from !== terms.from || terms.from >= octoberThrough) {
+  const terms = registryTerms(projectId, capture.manifest);
+  if (project.from !== terms.from || terms.from >= octoberThrough ||
+    (projectId === "slopdotcash" && terms.from !== slopOctoberStart)) {
     throw new Error("The October review does not cover the approved contribution window.");
   }
   const identities = new Map(project.identities.map((actor) => [actor.githubUserId, actor]));
@@ -143,12 +176,12 @@ export function compileOctoberElizaProposal(
     if (actor === undefined) throw new Error("An October award lacks a reviewed identity.");
     return [{ actor, points: BigInt(acceptedWorkPoints) }];
   });
-  const awards = allocateEliza(payable);
+  const awards = allocateOctober(projectId, payable);
   const gross = awards.reduce((sum, award) => sum + BigInt(award.grossBase), 0n);
   const fees = awards.reduce((sum, award) => sum + BigInt(award.feeBase), 0n);
-  if (gross !== approvedPool) throw new Error("The Eliza proposal must conserve the approved gross.");
+  if (gross !== approvedPool) throw new Error("The October proposal must conserve the approved gross.");
   const proposal = {
-    id: eliza,
+    id: projectId,
     period: octoberPeriod,
     through: octoberThrough,
     revision: project.revision,
@@ -156,10 +189,10 @@ export function compileOctoberElizaProposal(
     sourceSnapshotSha256: reviewDigest,
     pointsBatch: packet.evidence.pointsBatch,
     enforcementGeneration: capture.enforcementGeneration,
-    network: approvedNetwork,
+    network: terms.rail.network,
     vault: terms.vault,
     asset: approvedAsset,
-    assetAddress: approvedAssetAddress,
+    assetAddress: terms.rail.assetAddress,
     decimals: 6,
     grossBase: gross.toString(),
     feeBase: fees.toString(),
@@ -169,20 +202,21 @@ export function compileOctoberElizaProposal(
   return { proposal, project };
 }
 
-export function checkOctoberElizaEvidence(compiled: ReturnType<typeof compileOctoberElizaProposal>, evidence: OctoberElizaEvidence): void {
+export function checkOctoberEvidence(compiled: ReturnType<typeof compileOctoberProposal>, evidence: OctoberEvidence): void {
   if (evidence.publicPointsBatch !== compiled.proposal.pointsBatch || evidence.privatePointsBatch !== compiled.proposal.pointsBatch) {
     throw new Error("The current public and private Points batches must match the October packet.");
   }
   assertOctoberReviewedWeights(compiled.project, evidence.observedWeights, evidence.knownIdentities, evidence.eligible);
 }
 
-export function prepareOctoberElizaProposal(
+export function prepareOctoberProposal(
+  projectId: OctoberImportProject,
   bytes: Uint8Array,
   reviewDigest: string,
-  capture: OctoberElizaRegistry & OctoberElizaEvidence,
+  capture: OctoberRegistry & OctoberEvidence,
   now: string,
 ) {
-  const compiled = compileOctoberElizaProposal(bytes, reviewDigest, capture, now);
-  checkOctoberElizaEvidence(compiled, capture);
+  const compiled = compileOctoberProposal(projectId, bytes, reviewDigest, capture, now);
+  checkOctoberEvidence(compiled, capture);
   return compiled.proposal;
 }
