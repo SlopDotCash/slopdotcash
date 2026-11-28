@@ -381,6 +381,7 @@ import { seededGithub, slopbotFake } from fakes
       review("CHANGES_REQUESTED", "", 2, now - day),
       review("COMMENTED", "Reproduced the failing export and confirmed the fix.", 0, now - day),
       review("APPROVED", "Reproduced the failing export and confirmed the fix.", 0, now + 1),
+      review("APPROVED", "Reproduced the failing export and confirmed the fix.", 0, now),
       review("APPROVED", "Reproduced the failing export and confirmed the fix.", 0, now - day, { id: "U_other", login: "DEV", kind: "User" }),
       review("APPROVED", "Reproduced the failing export and confirmed the fix.", 0, now - day, { id: "B_bot", login: "helper[bot]", kind: "Bot" }),
     ]
@@ -389,6 +390,7 @@ import { seededGithub, slopbotFake } from fakes
       ["insufficient-substance", true],
       ["qualifies", false],
       ["non-decision", true],
+      ["post-merge", false],
       ["post-merge", false],
       ["self-review", false],
       ["bot-reviewer", false],

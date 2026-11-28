@@ -128,7 +128,7 @@ export function isNonBotReviewActor(actor: ReviewActor | null): boolean {
 export function reviewExclusionReason(review: ReviewFacts, pull: PullFacts): ReviewExclusion {
   //@ ensures \result === "qualifies" ==> review.author !== null
   //@ ensures \result === "qualifies" ==> isNonBotReviewActor(review.author)
-  //@ ensures \result === "qualifies" ==> 0 <= review.submittedAt && review.submittedAt <= pull.mergedAt
+  //@ ensures \result === "qualifies" ==> 0 <= review.submittedAt && review.submittedAt < pull.mergedAt
   //@ ensures \result === "qualifies" ==> review.state === "APPROVED" || review.state === "CHANGES_REQUESTED"
   const reviewer = review.author;
   const author = pull.author;
@@ -139,7 +139,7 @@ export function reviewExclusionReason(review: ReviewFacts, pull: PullFacts): Rev
   if (sameReviewActor(reviewer, author)) return "self-review";
   if (review.submittedAt < 0) return "missing-submission-time";
   if (pull.mergedAt < 0) return "unmerged-pull-request";
-  if (review.submittedAt > pull.mergedAt) return "post-merge";
+  if (review.submittedAt >= pull.mergedAt) return "post-merge";
   const content = reviewContent(review);
   if (!decided(content)) return "non-decision";
   return emptyReview(content) ? "insufficient-substance" : "qualifies";
