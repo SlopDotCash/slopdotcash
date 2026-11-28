@@ -1,5 +1,5 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
-import { sha256Of } from "./bytes.ts";
+import { sha256Of, utf8Text } from "./bytes.ts";
 
 const oid = /^[a-f0-9]{40}$/u;
 const mergeGitVersion = "git version 2.56.0";
@@ -92,18 +92,58 @@ export function mergeResolutionMatches(resolution: Resolution, commit: ResolvedC
   );
 }
 
+const cEscapeByte: Readonly<Record<string, number>> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11 };
+
+/** @throws {never} */
+export function decodeGitQuotedPath(value: string): string | null {
+  if (!value.startsWith('"')) return value;
+  if (value.length < 2 || !value.endsWith('"')) return null;
+  const bytes: number[] = [];
+  let i = 1;
+  while (i < value.length - 1) {
+    const code = value.charCodeAt(i);
+    if (code === 92) {
+      const next = value.charCodeAt(i + 1);
+      if (next === 34 || next === 92) {
+        bytes.push(next);
+        i += 2;
+        continue;
+      }
+      const escaped = cEscapeByte[String.fromCharCode(next)];
+      if (escaped !== undefined) {
+        bytes.push(escaped);
+        i += 2;
+        continue;
+      }
+      if (next >= 48 && next <= 55) {
+        let digits = 0;
+        let byte = 0;
+        while (digits < 3 && i + 1 + digits < value.length - 1) {
+          const digit = value.charCodeAt(i + 1 + digits);
+          if (digit < 48 || digit > 55) break;
+          byte = byte * 8 + (digit - 48);
+          digits += 1;
+        }
+        if (digits === 0 || byte > 255) return null;
+        bytes.push(byte);
+        i += 1 + digits;
+        continue;
+      }
+      return null;
+    }
+    if (code === 34 || code < 32 || code > 126) return null;
+    bytes.push(code);
+    i += 1;
+  }
+  return utf8Text(new Uint8Array(bytes)) ?? null;
+}
+
 function decodedPath(value: string | undefined): string | null {
   if (value === undefined) return null;
   if (value === "/dev/null") return value;
-  let decoded: unknown = value;
-  if (value.startsWith('"')) {
-    try {
-      decoded = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-  return typeof decoded === "string" && /^[ab]\//u.test(decoded) ? decoded.slice(2) : null;
+  const decoded = decodeGitQuotedPath(value);
+  if (decoded === null) return null;
+  return /^[ab]\//u.test(decoded) ? decoded.slice(2) : null;
 }
 
 function automaticSection(section: string, resolution: Automatic, counted: ReadonlyArray<LineCount>): LineCount | null {
@@ -202,7 +242,7 @@ function combinedSection(section: string, file: CombinedParent["files"][number],
     !path ||
     path.includes("\0") ||
     file.path !== path ||
-    lines[0] !== path ||
+    decodeGitQuotedPath(lines[0] ?? "") !== path ||
     file.parents.length !== parents ||
     [...file.parents, file.result].some((entry) => !["100644", "100755"].includes(entry.mode) || !oid.test(entry.blobSha))
   )
@@ -212,8 +252,8 @@ function combinedSection(section: string, file: CombinedParent["files"][number],
   if (lines[cursor]?.startsWith("mode ")) {
     if (lines[cursor++] !== `mode ${file.parents.map((parent) => parent.mode).join(",")}..${file.result.mode}`) return null;
   } else if (file.parents.some((parent) => parent.mode !== file.result.mode)) return null;
-  for (let index = 0; index < parents; index++) if (lines[cursor++] !== `--- a/${path}`) return null;
-  if (lines[cursor++] !== `+++ b/${path}`) return null;
+  for (let index = 0; index < parents; index++) if (decodedPath(lines[cursor++]?.slice(4)) !== path) return null;
+  if (decodedPath(lines[cursor++]?.slice(4)) !== path) return null;
   let remaining: number[] = [];
   let hunks = 0;
   let additions = 0;
