@@ -4,14 +4,24 @@ PRD sections 6 and 7 settle October 2026 through a one-time import of an
 owner-reviewed packet of monthly proposals, outside the normal
 [monthly proposal](./monthly.md) write. Source anchors are development
 `.github/workflows/october-rewards.yml` (manual dispatch with
-`reviewed_packet_sha256` and `apply`, default off, `main` only, the
-`slop-production` concurrency group), `apps/settlement/src/programs/octoberRewards.vibe`
-(the native Eliza operator), and `apps/settlement/src/october/import.vibe`
+`project`, `reviewed_packet_sha256` and `apply`, default off, `main` only,
+the `slop-production` concurrency group), `apps/settlement/src/programs/octoberRewards.vibe`
+(the native Eliza and Slop operator), and `apps/settlement/src/october/import.vibe`
 (the guarded insert and exact readback, including the marker for the
 reviewed manual October pool).
 The September–October band reapplication that produces the packet's
 weights is a Points rule; this unit covers only the proposal write. One
-instance is the October import of every project in the packet.
+instance imports one project. Eliza remains the default. Explicitly select
+`slopdotcash` for the approved 1,000 USDC Base proposal. The reviewed packet
+names only the selected project. For Slop, the protected registry must
+identify active receipts, the verified USDC asset on Base (chain ID 8453),
+the exact registered October vault, the 2% fee and the explicit zero
+ordinary October cycle cap. The approved pool is stored as a reviewed
+October proposal for owner finalization. The protected workflow reads
+`OCTOBER_REWARDS_REVIEWED_PACKET` for Eliza or
+`OCTOBER_SLOP_REWARDS_REVIEWED_PACKET` for Slop. The selected input enters
+the same runner variable and must match the reviewed digest for that
+project.
 
 ## Story: Write each reviewed October proposal once
 

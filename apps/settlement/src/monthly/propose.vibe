@@ -52,6 +52,9 @@ export effect function proposeProject(key: MonthKey) {
   if (!proposalWindowOpen(opened)) return skipped(projectId, windowSkip(opened))
   const current = facts.current
   if (current === undefined) return skipped(projectId, "NotEligible")
+  const revision = opened.currentRevision
+  if (!projectMayPropose(opened.eligibility, revision)) return skipped(projectId, "NotEligible")
+  if (fromAmount(revision.monthlyAmount) === 0n) return skipped(projectId, "Unfunded")
   const manifest = try manifestOf(projectId, current.manifest)
   if (reviewBudgetActive(manifest, key.period)) return skipped(projectId, "ReviewBudget")
   const ledger = try (try ClosedMonth).ledger({ projectId, period: formatPeriod(key.period) })
@@ -64,12 +67,9 @@ export effect function proposeProject(key: MonthKey) {
     workRows.push(row)
     logins.set(row.actor, weight.login)
   }
-  const revision = opened.currentRevision
   const basisPoints = shareBasisPointsOf(manifest, key.period)
   let share: ShareSplit | undefined = undefined
   if (basisPoints > 0) {
-    if (!projectMayPropose(opened.eligibility, revision)) return skipped(projectId, "NotEligible")
-    if (fromAmount(revision.monthlyAmount) === 0n) return skipped(projectId, "Unfunded")
     const split = splitMonth({ projectId, period: key.period, basisPoints, amount: revision.monthlyAmount, exclusions: revision.exclusions, repositories: countedRepositoriesOf(manifest, key.period) }) catch (error) => error.reason
     if (typeof split === "string") return { kind: "Unread", projectId, reason: split } satisfies Proposed
     share = split
@@ -78,10 +78,7 @@ export effect function proposeProject(key: MonthKey) {
   const snapshot: WorkSnapshot = { project: projectId, period: key.period, digest: ledger.sha256, coverage: "CompleteCoverage", rows: workRows }
   const event: Event = { type: "propose", snapshot, exclusions: revision.exclusions, revision, basisPoints: share?.basisPoints ?? 0, record: share?.record ?? noShareRecord }
   const next = apply(opened, event) catch () => undefined
-  if (next === undefined) {
-    if (!projectMayPropose(opened.eligibility, revision)) return skipped(projectId, "NotEligible")
-    return fromAmount(revision.monthlyAmount) === 0n ? skipped(projectId, "Unfunded") : failed(projectId, "Refused")
-  }
+  if (next === undefined) return failed(projectId, "Refused")
   try (try D1).batch(try proposalWrites(key, next, current, ledger.sha256, logins, share))
   const stored = try readRows(key)
   if (stored.base === undefined || stored.base.source_snapshot_sha256 !== ledger.sha256 || stored.proposed.length !== stored.base.recipient_count) return { kind: "Incomplete", projectId } satisfies Proposed

@@ -12,7 +12,7 @@ import { holdsAll, verifyCurrentOwner } from "../closeout/run.vibe"
 import { configuredEnforcementPorts } from "../jobs/services.vibe"
 import { manifestOf } from "../monthly/store.vibe"
 import { executeOctober, octoberStatements } from "../october/import.vibe"
-import { checkOctoberElizaEvidence, compileOctoberElizaProposal } from "../october/plan.ts"
+import { checkOctoberEvidence, compileOctoberProposal } from "../october/plan.ts"
 import { decodeOctoberReviewedPacket, octoberPeriod } from "../october/review.ts"
 
 export error OctoberStopped { message: string }
@@ -26,7 +26,6 @@ schema Generation { readonly generation: number }
 schema ProjectRow { readonly manifest: string; readonly manifest_sha256: string; readonly revision: number }
 
 const userAgent = "slop-reviewed-october"
-const projectId = "eliza"
 
 effect function environment(name: string) {
   return try Config.withDefault(Config.String(name), "")
@@ -51,10 +50,12 @@ export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: Oct
     const [registryPath, ...rest] = args
     const source = try environment("GITHUB_SHA")
     const apply = try environment("OCTOBER_APPLY")
+    const projectId = try Config.withDefault(Config.String("OCTOBER_PROJECT"), "eliza")
     const digest = try environment("REVIEWED_PACKET_SHA256")
     const encoded = try Config.Redacted("OCTOBER_REWARDS_REVIEWED_PACKET")
     if (
       registryPath === undefined || rest.length !== 0 ||
+      (projectId !== "eliza" && projectId !== "slopdotcash") ||
       (try environment("GITHUB_ACTIONS")) !== "true" ||
       (try environment("GITHUB_REPOSITORY")).toLowerCase() !== "slopdotcash/slopdotcash" ||
       (try environment("GITHUB_EVENT_NAME")) !== "workflow_dispatch" ||
@@ -67,7 +68,7 @@ export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: Oct
     stage = "reviewed packet and production registry"
     const bytes = new TextEncoder().encode(Redacted.value(encoded))
     const packet = try Effect.try(() => decodeOctoberReviewedPacket(bytes, digest))
-    if (packet.projects.length !== 1 || packet.projects[0]?.id !== projectId) throw new OctoberStopped({ message: "Expected an Eliza-only reviewed October packet." })
+    if (packet.projects.length !== 1 || packet.projects[0]?.id !== projectId) throw new OctoberStopped({ message: "Expected exactly the selected project in the reviewed October packet." })
     const repositories = try repositoryRegistry(try checkedSnapshot(registryPath))
     const appId = try Config.String("SLOPBOT_APP_ID")
     const privateKey = try Config.Redacted("SLOPBOT_APP_PRIVATE_KEY")
@@ -85,14 +86,14 @@ export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: Oct
       if (view === undefined || row === undefined || row.revision !== view.revision || row.manifest_sha256 !== view.manifestSha256 ||
         view.rowStatus !== "Active" || view.manifestStatus !== "Active" || view.retirement !== "NotRetired" || view.listingTier === "Retired" ||
         (try generation()) !== enforcementGeneration) {
-        throw new OctoberStopped({ message: "The current Eliza registry changed." })
+        throw new OctoberStopped({ message: "The current project registry changed." })
       }
       const manifest = try manifestOf(projectId, row.manifest)
 
-      stage = "current Eliza owner authority"
+      stage = "current project owner authority"
       try verifyCurrentOwner(row.manifest, packet.reviewerGithubId)
       const now = try isoNow()
-      const compiled = try Effect.try(() => compileOctoberElizaProposal(bytes, digest, {
+      const compiled = try Effect.try(() => compileOctoberProposal(projectId, bytes, digest, {
         capturedAt: now,
         enforcementGeneration,
         revision: row.revision,
@@ -121,7 +122,7 @@ export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: Oct
           if (!standing.banned) eligible.add(githubUserId)
           eligibility.push(sql`(${clear}) = ${standing.banned ? 0 : 1}`)
         }
-        try Effect.try(() => checkOctoberElizaEvidence(compiled, {
+        try Effect.try(() => checkOctoberEvidence(compiled, {
           publicPointsBatch: weights.digest,
           privatePointsBatch: batch?.digest ?? "",
           observedWeights: weights.weights,
@@ -148,6 +149,6 @@ export effect function octoberRewards<E>(args: ReadonlyArray<string>, seams: Oct
     }
   }
   run catch effect () => {
-    throw new OctoberStopped({ message: `Eliza October import refused during ${stage}.` })
+    throw new OctoberStopped({ message: `October import refused during ${stage}.` })
   }
 }

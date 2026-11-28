@@ -2,7 +2,21 @@
 
 The owner approved five gross October pools and the ordinary 2% fee, rounded up per recipient. This one-time preparation serves PRD sections 6 and 7. The adjusted October amounts live in the private October proposal base. The normal monthly scheduler still starts in November, and the original registry revisions retain their historical cap overrides.
 
-## Prepare and review
+## Native October workflow
+
+On a qualified `main`, run `october-rewards.yml` under `slop-production` with
+the owner-reviewed packet digest and `apply: false` for a read-only preview.
+Eliza defaults to `OCTOBER_REWARDS_REVIEWED_PACKET`. Select
+`project: slopdotcash` explicitly to use
+`OCTOBER_SLOP_REWARDS_REVIEWED_PACKET`. Keep each project's reviewed packet
+in its own protected secret. The selected packet must name exactly one
+project and bind the current canonical Points checkpoint and verified
+registry. An apply requests the existing atomic import. Owner finalization
+and on-chain settlement follow through the proposal's existing vault.
+
+## Legacy prepare and review
+
+The commands below refer to the legacy checkout.
 
 Use the raw owner-approved terms bytes pinned by `scripts/october-reward-review.ts`. The trusted runner supplies a reviewed source packet and the verified SHA-256 of its exact bytes. The packet binds the complete eligible October acceptance window for each selected project, resolved replacement attribution, duplicate credit, reviewed work and penalties, protected financial history, and eligibility. Record the actual producer and reviewer identities. Its Points digest must name the authoritative corrected D1 checkpoint. Evidence digests attest to reviewed records. They do not reconstruct or authenticate those records by themselves. Do not substitute the public rolling leaderboard or legacy payment weights for the reconciled source packet.
 
