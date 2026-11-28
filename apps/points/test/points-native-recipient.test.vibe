@@ -239,6 +239,7 @@ it.effect('A linked carrier verifies its complete official membership including 
           ] },
           { ...tied, acceptedSha: earlierAcceptedSha, awards: [{ key: "4".repeat(64), revisionId: "5".repeat(64), amount: 30, occurredAt: tied.mergedAt }] },
         ],
+        laterCandidates: [{ ...late, acceptedSha: earlierAcceptedSha, awards: [{ key: "5".repeat(64), revisionId: "6".repeat(64), amount: 30, occurredAt: late.mergedAt }] }],
       })
       const sameTerminalSourceIds = [original.id, carrier.id, sibling.id]
       assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), { ...proof, sameTerminalSourceIds })
@@ -275,10 +276,12 @@ it.effect('A direct carrier cannot select its own weights or assign the same nat
 it.effect('A linked carrier refuses a stale baseline and earlier positive shares without exact official source identity (spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
   const verify = (_request: NativeCarrierGroupRequest) => die("Unbound earlier Points reached native verification")
   const unavailable = { ...early, id: "PR_unavailable" }
+  const unavailableLate = { ...late, id: "PR_late_unavailable" }
   const drift = { ...early, mergedAt: "2026-08-21T00:00:00.000Z" }
   const bad = [undefined, { ...baseline, baselineDigest: "e".repeat(64) }, { ...baseline, revisions: [] },
     { ...baseline, revisions: baseline.revisions.map((row) => row === earlyPositive ? share(unavailable, "1", "3", 30) : row) },
-    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyZero ? share(drift, "2", "2", 0, earlyOriginal.id) : row) }]
+    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyZero ? share(drift, "2", "2", 0, earlyOriginal.id) : row) },
+    { ...baseline, revisions: baseline.revisions.map((row) => row.award.sourceId === late.id ? share(unavailableLate, "5", "6", 30) : row) }]
   provide groupGithub([]) {
     for (const context of bad) {
       const result = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag

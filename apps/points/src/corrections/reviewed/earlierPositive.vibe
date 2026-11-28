@@ -24,6 +24,7 @@ export interface NativeCarrierEarlierPositive {
   readonly baselineDigest: string
   readonly baselineRevisionCount: number
   readonly sources: ReadonlyArray<NativeCarrierEarlierSource>
+  readonly laterCandidates: ReadonlyArray<NativeCarrierEarlierSource>
 }
 
 export effect function earlierPositiveOf(projectId: string, repository: string, baseline: NativeCarrierBaseline,
@@ -39,21 +40,22 @@ export effect function earlierPositiveOf(projectId: string, repository: string, 
     shares.push(revision)
     bySource.set(sourceId, shares)
   }
-  const sources: NativeCarrierEarlierSource[] = []
+  const bound: NativeCarrierEarlierSource[] = []
   for (const [id, shares] of bySource) {
     if (!shares.some(({ award }) => award.amount > 0)) continue
     const source = official.get(id)
-    const occursInScope = shares.some(({ award }) => award.occurredAt <= through)
-    if (!occursInScope && (source === undefined || source.mergedAt > through)) continue
-    if (source === undefined || source.acceptedSha === null || source.mergedAt > through || !shares.every(({ award }) =>
+    if (source === undefined || source.acceptedSha === null || !shares.every(({ award }) =>
       isIso(award.occurredAt) && award.occurredAt === source.mergedAt && award.sourceUrl === pullUrl(repository, source.number) &&
       Number.isSafeInteger(award.amount) && award.amount >= 0)) {
-      throw refusal("Earlier positive Points source differs from the official merged repository")
+      throw refusal("Positive Points source differs from the official merged repository")
     }
     const awards = shares.map(({ id: revisionId, award: { key, amount, occurredAt } }) => ({ key, revisionId, amount, occurredAt }))
       .sort((left, right) => left.key.localeCompare(right.key))
-    sources.push({ ...source, acceptedSha: source.acceptedSha, awards })
+    bound.push({ ...source, acceptedSha: source.acceptedSha, awards })
   }
-  sources.sort((left, right) => left.mergedAt.localeCompare(right.mergedAt) || left.number - right.number)
-  return { baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length, sources } satisfies NativeCarrierEarlierPositive
+  bound.sort((left, right) => left.mergedAt.localeCompare(right.mergedAt) || left.number - right.number)
+  return { baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length,
+    sources: bound.filter(({ mergedAt }) => mergedAt <= through),
+    laterCandidates: bound.filter(({ mergedAt }) => mergedAt > through),
+  } satisfies NativeCarrierEarlierPositive
 }
