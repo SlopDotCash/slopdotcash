@@ -142,6 +142,13 @@ export schema HistoricalPacket {
 
 export const historicalFrom = "2026-09-27T00:00:00.000Z"
 export const historicalThrough = "2026-11-01T00:00:00.000Z"
+
+const slopCensusRepository = "slopdotcash/slopdotcash"
+export const slopCensusNode = "R_kgDOTqq9PQ"
+
+export function usesSlopRepositoryCensus(repository: string, repositoryNodeId: string) {
+  return repository.toLowerCase() === slopCensusRepository && repositoryNodeId === slopCensusNode
+}
 export const octoberStart = "2026-10-01T00:00:00.000Z"
 export const mergeGitVersion = "git version 2.56.0"
 export const digestPattern = /^[a-f0-9]{64}$/u

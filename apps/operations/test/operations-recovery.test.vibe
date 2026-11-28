@@ -4,6 +4,9 @@ import { webCrypto } from "@repo/platform/crypto"
 import { type Served, serve } from "@repo/platform/testing/chains"
 import { cloudflareApi as cloudflareFake } from "@repo/platform/testing/cloudflare"
 import { repoRoot } from "@repo/platform/testing/paths"
+import { Response } from "miniflare"
+import { ControlPlane, controlPlane } from "../src/qualification/recovery/account.vibe"
+import { safeFailure } from "../src/qualification/recovery/hosted.vibe"
 import { protectedWorkflow } from "../src/qualification/recovery/plan.vibe"
 import { recovery } from "../src/qualification/recovery/recovery.vibe"
 
@@ -35,6 +38,29 @@ effect function existingWorker(served: Served, name: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Read the hosted recovery queue inventory when Cloudflare returns null diagnostics (spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence")', () => scoped(effect {
+    const queue = { queue_id: accountId, queue_name: `${run}-work` }
+    const served = try acquireRelease(promise(() => serve((request) => {
+      const url = new URL(request.url)
+      if (request.method !== "GET" || url.pathname !== `/client/v4/accounts/${accountId}/queues`) return new Response(null, { status: 404 })
+      if (url.searchParams.get("name") === queue.queue_name) return Response.json({ success: true, result: [queue], errors: null, messages: null })
+      return Response.json({ success: false, result: null, errors: [{ code: 10000 }] })
+    })), (server) => promise(() => server.close()))
+    try configured(effect {
+      provide controlPlane {
+        const api = try ControlPlane
+        const listed = try api.call("queues", "GET", `queues?name=${queue.queue_name}`)
+        const refused = try exit(api.call("queues", "GET", `queues?name=${run}-failed`))
+        try same(listed, [queue])
+        try same(Exit.isFailure(refused) ? safeFailure(refused.cause) : undefined, { kind: "ControlRefused", reason: "queues", status: 200, cloudflareCodes: [10000] })
+      }
+    }, {
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: "journey-token",
+      CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
+    })
+  }))
+
   it.effect('Plan recovery qualification by default and refuse anything but a disposable staging run (spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path

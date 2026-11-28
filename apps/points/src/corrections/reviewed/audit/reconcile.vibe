@@ -208,8 +208,14 @@ function valueProducer(value: unknown) {
     (triageSteps.some(([provider, model]) => value.provider === provider && value.requested === model) || (value.provider === "surplus" && surplusModels.includes(value.requested)))
 }
 
+function assessmentTime(value: unknown) {
+  if (typeof value !== "string") return false
+  const utc = value.replace(/\+00:00$/u, "Z")
+  return time(utc.replace(/(\.\d{3})\d+Z$/u, "$1Z"))
+}
+
 function recordProducer(record: Row) {
-  return valueProducer(record.model) && matches(record.producerRevision, shaPattern) && time(record.assessedAt) && matches(record.rubricVersion, rubricPattern)
+  return valueProducer(record.model) && matches(record.producerRevision, shaPattern) && assessmentTime(record.assessedAt) && matches(record.rubricVersion, rubricPattern)
 }
 
 function assessmentEnvelope(value: unknown) {

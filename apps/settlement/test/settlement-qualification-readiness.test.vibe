@@ -1,0 +1,77 @@
+// spec/operations/extendedQualification.md, "Story: Record each extended scenario with its expected outcome and finality"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { program } from "@repo/platform/program"
+import { reply } from "@repo/platform/testing/github"
+import { NETWORKS } from "../src/kernels/networks.ts"
+import { paymentDeployments } from "../src/programs/deployments.vibe"
+import { readinessCommand } from "../src/programs/readiness.vibe"
+
+const evm = ["base-sepolia", "ethereum-sepolia", "robinhood-testnet"] as const
+const testnets = [...evm, "solana-devnet"] as const
+const otherNetworks = ["base-mainnet", "solana-mainnet", "solana-testnet"] as const
+const devnet = NETWORKS["solana-devnet"].genesisHash
+const liveGenesis = NETWORKS["solana-mainnet"].genesisHash
+const hash = "0x" + "1".repeat(64)
+const address = "0x" + "2".repeat(40)
+const common = { vault: address, asset: address, owner: address, identityAuthority: address, feeRecipient: address, deploymentTransaction: hash, sourceCommit: "3".repeat(40), codeSha256: "4".repeat(64), bindingDelaySeconds: "0" }
+const evmPins = evm.map((network) => ({ network, ...common, factory: address, factoryCodeSha256: common.codeSha256, registrar: address }))
+const solanaPin = { network: "solana-devnet", ...common, programId: address, projectPda: address, networkDomain: hash, genesisHash: devnet, upgradeAuthority: address, rotationAuthority: address, rotationDelaySeconds: "0" }
+const snapshot = { projects: [...evmPins, solanaPin].map((entry) => ({ id: `project-${entry.network}`, escrow: { deployments: [entry] } })) }
+
+function chainReads(calls: string[], genesis: string) {
+  return Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+    const network = new URL(request.url).hostname.split(".")[0]
+    const raw = request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : ""
+    const message = try orDie(Effect.try(() => JSON.parse(raw) as { readonly id: string; readonly method: string; readonly params: ReadonlyArray<unknown> }))
+    const { method, id, params } = message
+    calls.push(`${network}:${method}`)
+    const evmNetwork = evm.find((entry) => entry === network)
+    let result: unknown
+    if (evmNetwork !== undefined && method === "eth_chainId") result = `0x${NETWORKS[evmNetwork].chainId.toString(16)}`
+    else if (evmNetwork !== undefined && method === "eth_getBlockByNumber" && params[0] === "finalized") result = { number: "0x1", hash, parentHash: hash, timestamp: "0x2", transactions: [] }
+    else if (network === "solana-devnet" && method === "getGenesisHash") result = genesis
+    else if (network === "solana-devnet" && method === "getSlot" && JSON.stringify(params) === '[{"commitment":"finalized"}]') result = 1
+    else return try die(new Error(`Unexpected RPC: ${network}:${method}`))
+    return HttpClientResponse.fromWeb(request, reply(200, { jsonrpc: "2.0", id, result }))
+  }))
+}
+
+layer(Layer.merge(NodeServices.layer, webCrypto), { excludeTestServices: true })((it) => {
+  it.effect("Extended qualification readiness checks the four required testnets, refusing a wrong chain or executor binding", () => effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-qualification-readiness-" })
+    const registry = `${directory}/registry.json`
+    const args = ["readiness", "--registry", registry, "--extended-testnets"]
+    try fs.writeFileString(registry, JSON.stringify(snapshot))
+    const dispatcher = (network: string, service: string, binding: string) => JSON.stringify({ vars: { PAYMENT_NETWORKS: JSON.stringify([network]) }, services: [{ binding, service }] })
+    for (const network of testnets) {
+      const attester = `${directory}/${network}-attester.json`
+      const dispatch = `${directory}/${network}-dispatcher.json`
+      const name = `${network}-staging-attester`
+      const pins = try paymentDeployments(snapshot, { testnet: true, network, scope: "ordinary" })
+      try fs.writeFileString(attester, JSON.stringify({ name, vars: { SIGNER_STACK: "test", PAYMENT_NETWORK: network, PAYMENT_DEPLOYMENTS: JSON.stringify(pins) } }))
+      try fs.writeFileString(dispatch, dispatcher(network, name, NETWORKS[network].family === "evm" ? "EVM_PAYMENT_EXECUTOR" : "SOLANA_PAYMENT_EXECUTOR"))
+      args.push("--config", attester, "--config", dispatch)
+    }
+
+    const urls = Object.fromEntries([...testnets, ...otherNetworks].map((network) => [network, `https://${network}.invalid/`]))
+    const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({ PAYMENT_RPC_URLS: JSON.stringify(urls) }))
+    const run = (genesis: string, calls: string[], argv = args) => program({ services: Layer.merge(webCrypto, chainReads(calls, genesis)), commands: { readiness: readinessCommand } }).run(argv)
+    provide environment {
+      const calls: string[] = []
+      const ready = try run(devnet, calls)
+      const wrongChain: string[] = []
+      const refused = try run(liveGenesis, wrongChain)
+      const invalid: string[] = []
+      const mixed = try run(liveGenesis, invalid, [...args, "--require", "base-mainnet"])
+      try fs.writeFileString(`${directory}/ethereum-sepolia-dispatcher.json`, dispatcher("ethereum-sepolia", "base-sepolia-staging-attester", "EVM_PAYMENT_EXECUTOR"))
+      const miswired: string[] = []
+      const wrongExecutor = try run(devnet, miswired)
+      const evmReads = evm.flatMap((network) => [...Array<string>(3).fill(`${network}:eth_chainId`), `${network}:eth_getBlockByNumber`])
+      const expected = [...evmReads, ...Array<string>(3).fill("solana-devnet:getGenesisHash"), "solana-devnet:getSlot"]
+      try sync(() => assert.deepStrictEqual({ ready, calls, refused, wrongChain, mixed, invalid, wrongExecutor, miswired }, { ready: 0, calls: expected, refused: 1, wrongChain: [...evmReads, "solana-devnet:getGenesisHash"], mixed: 1, invalid: [], wrongExecutor: 1, miswired: expected }))
+    }
+  })
+})
