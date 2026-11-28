@@ -135,7 +135,7 @@ export effect function registryDigest(bundle: string) {
 }
 
 schema PublishedSnapshot {
-  readonly schemaVersion: number
+  readonly schemaVersion: number | "6"
   readonly generatedAt: string
 }
 

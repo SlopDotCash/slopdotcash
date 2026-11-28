@@ -2694,6 +2694,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           confirmed: undefined,
           unsubscribed: { status: "ready", actor: owner, message: undefined, value: ["verified", "owner@example.test", false, false, undefined, undefined], busy: false, editing: false, problem: undefined },
         })
+
+        const emailReads = requestsOf(world, "GET /api/v1/notifications/email")
+        world.useCookie("")
+        const signedOut = try email.refresh()
+        try same([signedOut.state.status, signedOut.editing, requestsOf(world, "GET /api/v1/notifications/email") - emailReads], ["signedOut", false, 0])
       }
     })
 

@@ -242,7 +242,7 @@ export function fileCitations(file: string, text: string): Citation[] {
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].includes("spec/")) continue;
-    for (const [, spec, heading] of lines[i].matchAll(CITATION)) out.push({ at: `${file}:${i + 1}`, spec, heading });
+    for (const [, spec, heading] of lines[i].matchAll(CITATION)) out.push({ at: `${file}:${i + 1}`, spec, heading: heading.replace(/(?<!\\)\\'/g, "'") });
   }
   return out;
 }
