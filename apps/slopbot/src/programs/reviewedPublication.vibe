@@ -1,12 +1,13 @@
 // spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { systemGit } from "@repo/platform/git"
 import { sha256Of } from "@repo/platform/git/bytes"
-import { type NativeCarrierRequest, type VerifiedNativeCarrierCorrection, publishReviewedHistoricalPoints } from "@repo/points/corrections"
+import { type NativeCarrierGroupRequest, type NativeCarrierRequest, type VerifiedNativeCarrierCorrection, publishReviewedHistoricalPoints } from "@repo/points/corrections"
 import { collectEvidence } from "../value/evidence/collect.vibe"
 import type { Evidence, RegisteredRepository } from "../value/evidence/types.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
 import { CarrierLineProofUnavailable } from "../value/workUnits/carrierLines.vibe"
+import { collectNativeCarrierGroup, verifiedCarrierWeights } from "../value/workUnits/carrierGroup.vibe"
 import { collectNativeCarrierProof } from "../value/workUnits/carrierProof.vibe"
 import { nativeMergeDeferralOnly } from "../value/workUnits/native.vibe"
 
@@ -34,24 +35,37 @@ export effect function verifiedNativeCarrier(request: NativeCarrierRequest) {
     const { originalClaims, partition, repositoryNodeId, originalPullRequestId, carrierPullRequestId } = try collectNativeCarrierProof(from, to, {
       id: request.repositoryDatabaseId, node_id: request.repositoryNodeId, full_name: request.repository, private: false,
     })
-    const byActor = new Map<string, { actor: { readonly id: string; readonly login: string }; count: number }>()
-    for (const { actor, additions, deletions } of originalClaims) {
-      const row = byActor.get(actor.node_id) ?? { actor: { id: actor.node_id, login: actor.login }, count: 0 }
-      row.count += additions + deletions
-      if (!Number.isSafeInteger(row.count) || row.count < 1 || row.actor.login !== actor.login) {
-        throw new CarrierLineProofUnavailable({ reason: "Verified original actor line weights disagree" })
-      }
-      byActor.set(row.actor.id, row)
-    }
-    const recipients = [...byActor.values()].sort((left, right) => left.actor.id.localeCompare(right.actor.id))
-      .map(({ actor, count }) => ({ actor, weight: String(count) }))
+    const recipients = try verifiedCarrierWeights(originalClaims)
     const sourceSha256 = sha256Of(JSON.stringify({ repositoryNodeId, originalPullRequestId, carrierPullRequestId, partition, originalClaims }))
     return { sourceSha256, claimIds: originalClaims.map(({ id }) => id), recipients } satisfies VerifiedNativeCarrierCorrection
   }
 }
 
+export effect function verifiedNativeCarrierGroup(request: NativeCarrierGroupRequest) {
+  const carrier = request.carrier
+  const policy = {
+    id: carrier.repository, projectId: "slopdotcash", integrationBranch: carrier.integrationBranch,
+    expectedNodeId: carrier.repositoryNodeId, aliases: [],
+  } satisfies RegisteredRepository
+  provide acceptanceWith(collectRetainedMergeReferences) {
+    const evidence = new Map<string, Evidence>()
+    for (const source of request.sameTerminalSources) {
+      const collected = try collectEvidence({ repository: carrier.repository, number: source.number, policy })
+      const direct = source.id === carrier.carrier.id
+      if (!bindingMatches(collected, carrier, source) ||
+        (direct ? collected.limitations.length !== 0 : !nativeMergeDeferralOnly(collected)) || evidence.has(source.id)) {
+        throw new CarrierLineProofUnavailable({ reason: "Incomplete current linked carrier source" })
+      }
+      evidence.set(source.id, collected)
+    }
+    return try collectNativeCarrierGroup(request, evidence, {
+      id: carrier.repositoryDatabaseId, node_id: carrier.repositoryNodeId, full_name: carrier.repository, private: false,
+    })
+  }
+}
+
 export effect function reviewedHistoricalPublication(args: ReadonlyArray<string>) {
   provide systemGit {
-    return try publishReviewedHistoricalPoints(args, verifiedNativeCarrier)
+    return try publishReviewedHistoricalPoints(args, verifiedNativeCarrier, verifiedNativeCarrierGroup)
   }
 }

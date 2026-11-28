@@ -11,7 +11,7 @@ import { projectOfRegistry } from "../corrections/apply/derive.vibe"
 import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
 import { type BeforeImportCheck, verifyHistoricalNetOutcomes } from "../corrections/reviewed/netOutcome.vibe"
-import { type VerifyNativeCarrier, verifyNativeCarrierRecipients } from "../corrections/reviewed/nativeRecipient.vibe"
+import { type VerifyNativeCarrier, type VerifyNativeCarrierGroup, verifyNativeCarrierRecipients } from "../corrections/reviewed/nativeRecipient.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
 import { type PacketStorage, type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
@@ -135,7 +135,8 @@ effect function retainedActors(packet: HistoricalPacket, baseline: Journal) {
   return actors
 }
 
-effect function published<E, R>(setPhase: (phase: PublicationPhase) => void, invocation: Invocation, verifyNativeCarrier?: VerifyNativeCarrier<E, R>) {
+effect function published<E, R, G, S>(setPhase: (phase: PublicationPhase) => void, invocation: Invocation,
+  verifyNativeCarrier?: VerifyNativeCarrier<E, R>, verifyNativeCarrierGroup?: VerifyNativeCarrierGroup<G, S>) {
   setPhase("main source verification")
   try exactMainHead("Historical publication source changed")
   setPhase("private packet read")
@@ -198,7 +199,8 @@ effect function published<E, R>(setPhase: (phase: PublicationPhase) => void, inv
   setPhase("value record verification")
   try verifyHistoricalValueRecords(packet, { qualifiedReplay: qualification !== undefined })
   setPhase("native original recipient verification")
-  const verifiedNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier)
+  const verifiedNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup,
+    { baselineDigest, revisions: baseline.revisions })
   setPhase("historical Points reconstruction")
   const candidate = try reconstructHistoricalPoints({
     packet,
@@ -228,7 +230,9 @@ effect function published<E, R>(setPhase: (phase: PublicationPhase) => void, inv
         try verifyOwnerAuthority(packet, project.manifest)
         try verifyHistoricalProtection(packet)
         try verifyCarrierTips(packet, identical)
-        const currentNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier)
+        if (packet.recipientCorrections.some((correction) => correction.nativeCarrierAliases !== undefined)) try verifyHistoricalCensus(packet)
+        const currentNativeCarriers = try verifyNativeCarrierRecipients(packet, project.integrationBranch, verifyNativeCarrier, verifyNativeCarrierGroup,
+          { baselineDigest, revisions: baseline.revisions })
         try require(JSON.stringify([...currentNativeCarriers]) === JSON.stringify([...verifiedNativeCarriers]), "Native recipient evidence changed before import")
         for (const check of beforeImport) try check
         setPhase("protected import and readback")
@@ -247,7 +251,8 @@ effect function published<E, R>(setPhase: (phase: PublicationPhase) => void, inv
   }))
 }
 
-export effect function reviewed<E = never, R = never>(args: ReadonlyArray<string>, verifyNativeCarrier?: VerifyNativeCarrier<E, R>) {
+export effect function reviewed<E = never, R = never, G = never, S = never>(args: ReadonlyArray<string>,
+  verifyNativeCarrier?: VerifyNativeCarrier<E, R>, verifyNativeCarrierGroup?: VerifyNativeCarrierGroup<G, S>) {
   const [operation, ...rest] = args
   if (operation === "replay-review") return try replayReview(rest)
   try require(operation !== "--replay-assessments", replayUsage)
@@ -255,6 +260,6 @@ export effect function reviewed<E = never, R = never>(args: ReadonlyArray<string
     try trustedMain("Reviewed historical publication requires manual main workflow")
     if (args.length === 1 && operation === "--audit-assessments") return try reviewedServices(auditAssessments(setPhase))
     const invocation = try invocationOf(args)
-    try reviewedServices(published(setPhase, invocation, verifyNativeCarrier))
+    try reviewedServices(published(setPhase, invocation, verifyNativeCarrier, verifyNativeCarrierGroup))
   })
 }

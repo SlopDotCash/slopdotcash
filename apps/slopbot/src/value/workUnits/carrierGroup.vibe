@@ -1,0 +1,194 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { type PublicMergeRepository, withPublicGitObjects } from "@repo/platform/git"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import type { NativeCarrierGroupRequest, VerifiedNativeCarrierCorrection } from "@repo/points/corrections"
+import type { Actor, Evidence } from "../evidence/types.vibe"
+import { type VerifiedCarrierAlias, verifyCarrierAlias } from "./carrierAlias.vibe"
+import { type CarrierLineProof, CarrierLineProofUnavailable, literalPath, readCarrierGit, verifyCarrierLines } from "./carrierLines.vibe"
+import type { NativeCarrierHistory, NativeCarrierPartition } from "./carrierPartition.vibe"
+import { carrierHistoryOf, reconstructCarrierPartition } from "./carrierProof.vibe"
+import { verifyPriorCarrierAliases } from "./carrierPrior.vibe"
+import { claimKey } from "./types.vibe"
+
+interface BoundSource {
+  readonly id: string
+  readonly history: NativeCarrierHistory
+  readonly evidence: Evidence
+}
+
+interface OwnedClaim {
+  readonly id: string
+  readonly sourceId: string
+  readonly commitSha: string
+  readonly path: string
+  readonly actor: Actor
+  readonly additions: number
+  readonly deletions: number
+}
+
+const changed = "Linked native carrier evidence is incomplete or competing"
+const rawDelta = /^:[0-7]{6} [0-7]{6} [0-9a-f]{40} [0-9a-f]{40} [AMDT]$/u
+
+function refused() {
+  return new CarrierLineProofUnavailable({ reason: changed })
+}
+
+function pairKey(path: string, left: string, right: string) {
+  return JSON.stringify([path, ...[left, right].sort()])
+}
+
+export effect function verifiedCarrierWeights(claims: ReadonlyArray<Pick<OwnedClaim, "actor" | "additions" | "deletions">>) {
+  const weights = new Map<string, { actor: { readonly id: string; readonly login: string }; count: number }>()
+  for (const { actor, additions, deletions } of claims) {
+    const row = weights.get(actor.node_id) ?? { actor: { id: actor.node_id, login: actor.login }, count: 0 }
+    row.count += additions + deletions
+    if (!Number.isSafeInteger(row.count) || row.count < 1 || row.actor.login !== actor.login) throw refused()
+    weights.set(row.actor.id, row)
+  }
+  return [...weights.values()].sort((left, right) => left.actor.id.localeCompare(right.actor.id))
+    .map(({ actor, count }) => ({ actor, weight: String(count) }))
+}
+
+function sourceClaims(partitions: ReadonlyMap<string, NativeCarrierPartition>, carrierId: string) {
+  const indirectByCommit = new Map<string, string[]>()
+  for (const [id, { newlyAcceptedCommitShas }] of partitions) {
+    if (id === carrierId) continue
+    for (const sha of newlyAcceptedCommitShas) {
+      const sources = indirectByCommit.get(sha) ?? []
+      sources.push(id)
+      indirectByCommit.set(sha, sources)
+    }
+  }
+  return indirectByCommit
+}
+
+effect function uniquelyOwned(indirect: ReadonlyMap<string, ReadonlyArray<string>>, sha: string, carrierId: string) {
+  const sources = indirect.get(sha) ?? []
+  if (sources.length > 1) throw refused()
+  return sources[0] ?? carrierId
+}
+
+effect function rawChanges(directory: string, before: string, after: string) {
+  const text = try readCarrierGit(directory, ["diff-tree", "--no-commit-id", "-r", "--raw", "--no-abbrev", "--no-renames", "-z", before, after])
+  const items = text === "" ? [] : text.split("\0")
+  if (items.length > 0 && items.pop() !== "") throw refused()
+  if (items.length % 2 !== 0) throw refused()
+  const result = new Map<string, string>()
+  for (let index = 0; index < items.length; index += 2) {
+    const delta = items[index] ?? ""
+    const path = items[index + 1] ?? ""
+    if (!rawDelta.test(delta) || !literalPath(path) || result.has(path)) throw refused()
+    result.set(path, delta)
+  }
+  return result
+}
+
+effect function repeatedChanges(directory: string, carrier: BoundSource, acceptedSha: string, indirect: ReadonlyMap<string, ReadonlyArray<string>>) {
+  const terminalPaths = try rawChanges(directory, carrier.history.baseSha, acceptedSha)
+  const byDelta = new Map<string, { readonly path: string; readonly shas: string[] }>()
+  for (const member of carrier.history.commits) {
+    const [parent] = member.parents
+    if (member.parents.length !== 1 || parent === undefined) continue
+    for (const [path, delta] of try rawChanges(directory, parent, member.sha)) {
+      if (!terminalPaths.has(path)) continue
+      const key = JSON.stringify([path, delta])
+      const group = byDelta.get(key) ?? { path, shas: [] }
+      group.shas.push(member.sha)
+      byDelta.set(key, group)
+    }
+  }
+  const pairs = new Set<string>()
+  for (const { path, shas } of byDelta.values()) {
+    if (shas.length < 2) continue
+    const owners = new Set<string>()
+    for (const sha of shas) owners.add(try uniquelyOwned(indirect, sha, carrier.id))
+    if (owners.size === 1) continue
+    if (shas.length !== 2) throw refused()
+    pairs.add(pairKey(path, shas[0] ?? "", shas[1] ?? ""))
+  }
+  return pairs
+}
+
+effect function boundAliases(directory: string, request: NativeCarrierGroupRequest, sources: ReadonlyMap<string, BoundSource>, carrier: BoundSource,
+  indirect: ReadonlyMap<string, ReadonlyArray<string>>) {
+  const acceptedSha = request.carrier.acceptedSha
+  const expected = try repeatedChanges(directory, carrier, acceptedSha, indirect)
+  const corrected = new Set(request.correctedSources.map(({ id }) => id))
+  const verified: VerifiedCarrierAlias[] = []
+  for (const { path, canonicalSha, repeatedSha } of request.aliases) {
+    const canonicalSource = try uniquelyOwned(indirect, canonicalSha, carrier.id)
+    const repeatedSource = try uniquelyOwned(indirect, repeatedSha, carrier.id)
+    const repeated = sources.get(repeatedSource)
+    if (canonicalSource === repeatedSource || !corrected.has(canonicalSource) || !corrected.has(repeatedSource) ||
+      repeated === undefined || repeatedSource === carrier.id || !expected.delete(pairKey(path, canonicalSha, repeatedSha))) throw refused()
+    verified.push(try verifyCarrierAlias(directory, { original: repeated.history, carrier: carrier.history, acceptedSha, path, commitShas: [canonicalSha, repeatedSha] }))
+  }
+  if (expected.size !== 0) throw refused()
+  return verified.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+effect function ownedClaims(lineProof: CarrierLineProof, carrier: BoundSource, indirect: ReadonlyMap<string, ReadonlyArray<string>>) {
+  const actors = new Map(carrier.evidence.commits.map(({ sha, author }) => [sha, author] as const))
+  const attributed = new Map(carrier.evidence.commitAttribution.map(({ sha, changedPaths, limitations }) =>
+    [sha, limitations.length === 0 && changedPaths !== null ? new Set(changedPaths) : undefined] as const))
+  const result: OwnedClaim[] = []
+  for (const path of lineProof.paths) {
+    const accounted = path.claims.reduce((sum, claim) => sum + claim.additions + claim.deletions, 0)
+    if (path.unresolvedAdditions !== 0 || path.unresolvedDeletions !== 0 || accounted !== path.additions + path.deletions) throw refused()
+    for (const change of path.claims) {
+      const actor = actors.get(change.sha)
+      if (actor === null || actor === undefined || attributed.get(change.sha)?.has(path.path) !== true ||
+        !isCreditEligibleCommitAuthor({ id: actor.node_id, kind: actor.type })) throw refused()
+      const sourceId = try uniquelyOwned(indirect, change.sha, carrier.id)
+      result.push({
+        id: sha256Of(claimKey(carrier.evidence.repositoryNodeId, change.sha, path.path)),
+        sourceId, commitSha: change.sha, path: path.path, actor, additions: change.additions, deletions: change.deletions,
+      })
+    }
+  }
+  return result.sort((left, right) => left.id.localeCompare(right.id))
+}
+
+export effect function reconstructNativeCarrierGroup(directory: string, request: NativeCarrierGroupRequest, evidence: ReadonlyMap<string, Evidence>) {
+  const sources = new Map<string, BoundSource>()
+  for (const { id } of request.sameTerminalSources) {
+    const recorded = evidence.get(id)
+    const history = recorded === undefined ? undefined : carrierHistoryOf(recorded)
+    if (recorded === undefined || history === undefined || sources.has(id)) throw refused()
+    sources.set(id, { id, history, evidence: recorded })
+  }
+  const carrier = sources.get(request.carrier.carrier.id)
+  if (carrier === undefined || sources.size !== evidence.size || !request.correctedSources.some(({ id }) => id === carrier.id)) throw refused()
+  const acceptedSha = request.carrier.acceptedSha
+  const partitions = new Map<string, NativeCarrierPartition>()
+  for (const { id, history } of sources.values()) {
+    partitions.set(id, try reconstructCarrierPartition(directory, history, carrier.history, acceptedSha))
+  }
+  const indirect = sourceClaims(partitions, carrier.id)
+  const aliases = try boundAliases(directory, request, sources, carrier, indirect)
+  const lineProof = try verifyCarrierLines(directory, { baseSha: carrier.history.baseSha, acceptedSha }, aliases)
+  const claims = try ownedClaims(lineProof, carrier, indirect)
+  const earlierPositiveDigest = try verifyPriorCarrierAliases(directory, request.earlierPositive, aliases, lineProof)
+  const groupDigest = sha256Of(JSON.stringify({
+    repositoryNodeId: request.carrier.repositoryNodeId, terminalSources: request.sameTerminalSources, acceptedSha,
+    partitions: [...partitions], aliases, claims, earlierPositiveDigest,
+  }))
+  const outputs = new Map<string, VerifiedNativeCarrierCorrection>()
+  for (const { id } of request.correctedSources) {
+    if (!sources.has(id) || outputs.has(id)) throw refused()
+    const owned = claims.filter(({ sourceId }) => sourceId === id)
+    if (owned.length === 0) throw refused()
+    outputs.set(id, {
+      sourceSha256: sha256Of(JSON.stringify({ groupDigest, sourceId: id, claims: owned })),
+      claimIds: owned.map(({ id }) => id),
+      recipients: try verifiedCarrierWeights(owned),
+    })
+  }
+  return outputs
+}
+
+export effect function collectNativeCarrierGroup(request: NativeCarrierGroupRequest, evidence: ReadonlyMap<string, Evidence>, repository: PublicMergeRepository) {
+  const objects = [...new Set([request.carrier.acceptedSha, ...[...evidence.values()].flatMap(({ pull }) => [pull.base.sha, pull.head.sha])])]
+  return try withPublicGitObjects(repository, objects, (directory) => reconstructNativeCarrierGroup(directory, request, evidence))
+}

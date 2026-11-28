@@ -2,6 +2,8 @@
 import { gitBytes, publicGitArguments } from "@repo/platform/git"
 import { utf8Text } from "@repo/platform/git/bytes"
 import { hunkHeader, noNewlineMarker } from "../proofs/patchReplay.ts"
+import type { VerifiedCarrierAlias } from "./carrierAlias.vibe"
+import { issuedCarrierAlias } from "./carrierAliasAttestation.vibe"
 
 export error CarrierLineProofUnavailable { reason: string }
 
@@ -46,6 +48,12 @@ export interface CarrierPathClaim {
   readonly deletions: number
 }
 
+export interface RetainedCarrierAlias {
+  readonly canonicalSha: string
+  readonly additions: ReadonlyArray<string>
+  readonly deletions: ReadonlyArray<string>
+}
+
 export interface CarrierPathLines {
   readonly path: string
   readonly additions: number
@@ -53,6 +61,7 @@ export interface CarrierPathLines {
   readonly claims: ReadonlyArray<CarrierPathClaim>
   readonly unresolvedAdditions: number
   readonly unresolvedDeletions: number
+  readonly retainedAlias?: RetainedCarrierAlias
 }
 
 const oid = /^[0-9a-f]{40}$/u
@@ -145,21 +154,22 @@ function blameMatches(row: LineOrigin | undefined, edit: string): row is LineOri
   return row !== undefined && row.contents === (edit.endsWith("\n") ? edit.slice(0, -1) : edit)
 }
 
-function literalPath(path: string) {
+export function literalPath(path: string) {
   return path !== "" && !path.includes("\0") && !path.includes("\n") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
 }
 
-export effect function readCarrierGitBytes(directory: string, args: ReadonlyArray<string>, limit = outputLimit) {
+export effect function readCarrierGitBytes(directory: string, args: ReadonlyArray<string>, limit = outputLimit, input?: string) {
   return try gitBytes({
     args: publicGitArguments(directory, ["-c", "core.quotePath=false", ...args]),
     env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory },
     seconds: 30,
     limit,
+    ...(input === undefined ? {} : { input }),
   }, unavailable)
 }
 
-export effect function readCarrierGit(directory: string, args: ReadonlyArray<string>, limit = outputLimit) {
-  const text = utf8Text(try readCarrierGitBytes(directory, args, limit))
+export effect function readCarrierGit(directory: string, args: ReadonlyArray<string>, limit = outputLimit, input?: string) {
+  const text = utf8Text(try readCarrierGitBytes(directory, args, limit, input))
   if (text === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
   return text
 }
@@ -180,7 +190,34 @@ effect function blameOf(directory: string, sha: string, path: string, needed: Re
   return rows
 }
 
-effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>) {
+interface CarrierPathEdge {
+  readonly sha: string
+  readonly parentSha: string
+}
+
+export effect function carrierAliasIngress(directory: string, path: string, canonical: CarrierPathEdge, ingress: CarrierPathEdge, laterIngress: CarrierPathEdge) {
+  const edits = try editsOf(directory, canonical.parentSha, canonical.sha, path)
+  const signed = (value: Edits) => JSON.stringify([[...value.additions.values()], [...value.deletions.values()]])
+  const first = try editsOf(directory, ingress.parentSha, ingress.sha, path)
+  const later = try editsOf(directory, laterIngress.parentSha, laterIngress.sha, path)
+  if (edits.additions.size + edits.deletions.size === 0 || signed(edits) !== signed(first) || signed(edits) === signed(later)) return false
+  const added = try blameOf(directory, ingress.sha, path, first.additions)
+  const originalDeleted = try blameOf(directory, canonical.parentSha, path, edits.deletions)
+  const ingressDeleted = try blameOf(directory, ingress.parentSha, path, first.deletions)
+  const expectedAdditions = [...edits.additions.keys()]
+  for (const [index, position] of [...first.additions.keys()].entries()) {
+    const origin = added.get(position)
+    if (origin === undefined || origin.sha !== canonical.sha || origin.path !== path || origin.number !== expectedAdditions[index]) return false
+  }
+  const expectedDeletions = [...edits.deletions.keys()].map((position) => originalDeleted.get(position))
+  return [...first.deletions.keys()].every((position, index) => {
+    const before = expectedDeletions[index]
+    const current = ingressDeleted.get(position)
+    return before !== undefined && current !== undefined && sourceLine(before) === sourceLine(current)
+  })
+}
+
+effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>, alias: VerifiedCarrierAlias | undefined) {
   const { baseSha, acceptedSha } = request
   const accepted = try editsOf(directory, baseSha, acceptedSha, path)
   const baseBlame = try blameOf(directory, baseSha, path, accepted.deletions)
@@ -201,17 +238,20 @@ effect function carrierPathLines(directory: string, request: CarrierLineRequest,
     }
   }
   const claims = new Map<string, { additions: number; deletions: number }>()
-  function count(sha: string, kind: "additions" | "deletions") {
+  const retained: { additions: string[]; deletions: string[] } = { additions: [], deletions: [] }
+  function count(sha: string, kind: "additions" | "deletions", text: string) {
     const entry = claims.get(sha) ?? { additions: 0, deletions: 0 }
     entry[kind] += 1
     claims.set(sha, entry)
+    if (alias?.canonicalSha === sha) retained[kind].push(text)
   }
   let unresolvedAdditions = 0
   for (const [position, edit] of accepted.additions) {
     const identity = acceptedBlame.get(position)
     if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
-    if (identity.path === path && byCommit.get(identity.sha)?.additions.get(identity.number) === edit) count(identity.sha, "additions")
-    else unresolvedAdditions += 1
+    if (identity.path === path && byCommit.get(identity.sha)?.additions.get(identity.number) === edit) {
+      count(identity.sha === alias?.repeatedSha ? alias.canonicalSha : identity.sha, "additions", edit)
+    } else unresolvedAdditions += 1
   }
   let unresolvedDeletions = 0
   for (const [position, edit] of accepted.deletions) {
@@ -219,7 +259,13 @@ effect function carrierPathLines(directory: string, request: CarrierLineRequest,
     if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
     const options = removalCandidates.get(sourceLine(identity)) ?? []
     const [candidate] = options
-    if (options.length === 1 && candidate !== undefined && candidate.text === edit) count(candidate.sha, "deletions")
+    const original = options.length === 1 && candidate !== undefined && candidate.text === edit && candidate.sha !== alias?.repeatedSha
+      ? candidate.sha : undefined
+    const canonical = alias !== undefined && options.length === 2 &&
+      options.some(({ sha, text }) => sha === alias.canonicalSha && text === edit) &&
+      options.some(({ sha, text }) => sha === alias.repeatedSha && text === edit) ? alias.canonicalSha : undefined
+    const owner = original ?? canonical
+    if (owner !== undefined) count(owner, "deletions", edit)
     else unresolvedDeletions += 1
   }
   return {
@@ -229,6 +275,7 @@ effect function carrierPathLines(directory: string, request: CarrierLineRequest,
     claims: [...claims].map(([sha, lines]) => ({ sha, ...lines })).sort((left, right) => left.sha.localeCompare(right.sha)),
     unresolvedAdditions,
     unresolvedDeletions,
+    ...(alias === undefined ? {} : { retainedAlias: { canonicalSha: alias.canonicalSha, ...retained } }),
   } satisfies CarrierPathLines
 }
 
@@ -260,7 +307,7 @@ effect function changedPaths(directory: string, before: string, after: string) {
   return changes
 }
 
-export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest) {
+export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest, aliases: ReadonlyArray<VerifiedCarrierAlias> = []) {
   const { baseSha, acceptedSha } = request
   if (!oid.test(baseSha) || !oid.test(acceptedSha) || baseSha === acceptedSha) {
     throw new CarrierLineProofUnavailable({ reason: "Native carrier text proof has an invalid identity" })
@@ -287,10 +334,22 @@ export effect function verifyCarrierLines(directory: string, request: CarrierLin
       candidates.set(path, rowsForPath)
     }
   }
+  const byPath = new Map<string, VerifiedCarrierAlias>()
+  for (const alias of aliases) {
+    if (!issuedCarrierAlias(alias) || alias.baseSha !== baseSha || alias.acceptedSha !== acceptedSha) {
+      throw new CarrierLineProofUnavailable({ reason: "Carrier alias is outside the verified native range" })
+    }
+    const members = candidates.get(alias.path)
+    if (byPath.has(alias.path) || alias.canonicalSha === alias.repeatedSha ||
+      members === undefined || !members.some(({ sha }) => sha === alias.canonicalSha) || !members.some(({ sha }) => sha === alias.repeatedSha)) {
+      throw new CarrierLineProofUnavailable({ reason: "Verified carrier alias disagrees with the accepted path and native scope" })
+    }
+    byPath.set(alias.path, alias)
+  }
   const paths: CarrierPathLines[] = []
   for (const { path, text } of changes) {
     if (!text) throw new CarrierLineProofUnavailable({ reason: unavailable })
-    paths.push(try carrierPathLines(directory, request, path, candidates.get(path) ?? []))
+    paths.push(try carrierPathLines(directory, request, path, candidates.get(path) ?? [], byPath.get(path)))
   }
   return { baseSha, acceptedSha, paths } satisfies CarrierLineProof
 }

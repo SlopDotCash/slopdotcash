@@ -16,6 +16,11 @@ export schema SourceAudit {
 }
 export schema ReviewedRecipient { readonly actor: ReviewedActor; readonly githubId: string; readonly weight: string }
 export schema ExpectedAward { readonly key: string; readonly actorId: string; readonly amount: number; readonly occurredAt: string }
+export schema PacketNativeCarrierAlias {
+  readonly path: string
+  readonly canonicalSha: string
+  readonly repeatedSha: string
+}
 export schema PacketRecipientCorrection {
   readonly sourceId: string
   readonly workUnitId: string
@@ -23,6 +28,7 @@ export schema PacketRecipientCorrection {
   readonly evidenceSha256: string
   readonly evidence: string
   readonly nativeCarrierSourceId?: string
+  readonly nativeCarrierAliases?: ReadonlyArray<PacketNativeCarrierAlias>
   readonly expectedAfter: ReadonlyArray<ExpectedAward>
   readonly claimIds: ReadonlyArray<string>
   readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>

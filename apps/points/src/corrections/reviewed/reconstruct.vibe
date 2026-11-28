@@ -383,7 +383,19 @@ export effect function reconstructHistoricalPoints(input: ReconstructInput) {
   const bindings = try boundMixed(mixed)
   try require(isExtension(baseline, result), "Historical candidate does not extend the published baseline")
   const before = latestOf(baseline.revisions)
+  const native = input.verifiedNativeCarriers ?? new Map()
+  const linkedSources = new Set<string>()
+  const linkedCorrections = new Set<string>()
+  for (const [key, evidence] of native) {
+    if (evidence.sameTerminalSourceIds === undefined) continue
+    for (const id of evidence.sameTerminalSourceIds) linkedSources.add(id)
+    linkedCorrections.add(key)
+  }
   for (const row of result.revisions.slice(baseline.revisions.length)) {
+    if (linkedSources.has(row.award.sourceId)) {
+      try require(row.award.category === "merged-pull-request" && linkedCorrections.has(nativeCarrierCorrectionKey(row.award)),
+        "Historical result changes an uncorrected linked carrier award")
+    }
     try require(inWindow(packet, row.award) && row.award.category !== "payout-received", "Historical delta exceeds reviewed scope")
     const previous = before.get(row.award.key)
     try require(previous === undefined || previous.award.occurredAt === row.award.occurredAt, "Original occurrence changed")

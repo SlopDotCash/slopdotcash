@@ -1,0 +1,120 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { gitObjectId, sha256Of } from "@repo/platform/git/bytes"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { issueCarrierAlias } from "./carrierAliasAttestation.vibe"
+import { CarrierLineProofUnavailable, carrierAliasIngress, literalPath, readCarrierGit, readCarrierGitBytes } from "./carrierLines.vibe"
+import type { NativeCarrierHistory, NativeCarrierMember } from "./carrierPartition.vibe"
+import { reconstructCarrierPartition } from "./carrierProof.vibe"
+
+export interface CarrierAliasRequest {
+  readonly original: NativeCarrierHistory
+  readonly carrier: NativeCarrierHistory
+  readonly acceptedSha: string
+  readonly path: string
+  readonly commitShas: readonly [string, string]
+}
+
+export interface VerifiedCarrierAlias {
+  readonly baseSha: string
+  readonly acceptedSha: string
+  readonly path: string
+  readonly canonicalSha: string
+  readonly repeatedSha: string
+  readonly actorNodeId: string
+  readonly canonicalIngressSha: string
+  readonly repeatedIngressSha: string
+  readonly pathDeltaSha256: string
+}
+
+const oid = /^[0-9a-f]{40}$/u
+const textDelta = /^:100(?:644|755) 100(?:644|755) ([0-9a-f]{40}) ([0-9a-f]{40}) M$/u
+const maximumPathChanges = 256
+
+function refused() {
+  return new CarrierLineProofUnavailable({ reason: "Native carrier alias has incomplete or competing path ownership" })
+}
+
+effect function commitIds(directory: string, args: ReadonlyArray<string>) {
+  const output = try readCarrierGit(directory, args)
+  const ids = output === "" ? [] : output.trimEnd().split("\n")
+  if (ids.some((sha) => !oid.test(sha)) || new Set(ids).size !== ids.length) throw refused()
+  return ids
+}
+
+effect function pathDelta(directory: string, path: string, before: string, after: string) {
+  const delta = try readCarrierGit(directory, ["--literal-pathspecs", "diff-tree", "--no-commit-id", "-r", "--raw", "--no-abbrev", "--no-renames", "-z", before, after, "--", path])
+  if (delta === "") return undefined
+  const [header, changedPath, end, ...extra] = delta.split("\0")
+  if (header === undefined || changedPath !== path || end !== "" || extra.length > 0) throw refused()
+  return header
+}
+
+effect function ordinaryDelta(directory: string, path: string, member: NativeCarrierMember) {
+  const [parent] = member.parents
+  if (member.parents.length !== 1 || parent === undefined) throw refused()
+  return try pathDelta(directory, path, parent, member.sha)
+}
+
+effect function ingressOf(directory: string, chain: ReadonlyArray<string>, members: ReadonlyMap<string, NativeCarrierMember>, headSha: string, sha: string) {
+  const descendants = new Set(try commitIds(directory, ["rev-list", "--ancestry-path=" + sha, headSha, "^" + sha]))
+  descendants.add(sha)
+  const index = chain.findIndex((commit) => descendants.has(commit))
+  const ingress = members.get(chain[index] ?? "")
+  const parentSha = ingress?.parents[0]
+  if (ingress === undefined || parentSha === undefined || descendants.has(parentSha) ||
+    (ingress.sha !== sha && (ingress.parents.length !== 2 || !descendants.has(ingress.parents[1] ?? "")))) throw refused()
+  return { sha: ingress.sha, parentSha, index }
+}
+
+export effect function verifyCarrierAlias(directory: string, request: CarrierAliasRequest) {
+  const { path, original, carrier, acceptedSha, commitShas } = request
+  const [canonicalSha, repeatedSha] = commitShas
+  if (!literalPath(path) || canonicalSha === repeatedSha || !commitShas.every((sha) => oid.test(sha))) throw refused()
+  const partition = try reconstructCarrierPartition(directory, original, carrier, acceptedSha)
+  const members = new Map(carrier.commits.map((commit) => [commit.sha, commit] as const))
+  const canonical = members.get(canonicalSha)
+  const repeated = members.get(repeatedSha)
+  const actor = canonical?.author
+  if (canonical === undefined || repeated === undefined || actor?.type !== "User" ||
+    repeated.author?.nodeId !== actor.nodeId || repeated.author.type !== actor.type ||
+    !isCreditEligibleCommitAuthor({ id: actor.nodeId, kind: actor.type }) ||
+    original.commits.some(({ sha }) => sha === canonicalSha) || !partition.newlyAcceptedCommitShas.includes(repeatedSha)) throw refused()
+
+  const canonicalDelta = try ordinaryDelta(directory, path, canonical)
+  const repeatedDelta = try ordinaryDelta(directory, path, repeated)
+  const match = canonicalDelta === undefined ? null : textDelta.exec(canonicalDelta)
+  const beforeBlob = match?.[1]
+  const afterBlob = match?.[2]
+  if (canonicalDelta === undefined || canonicalDelta !== repeatedDelta || beforeBlob === undefined || afterBlob === undefined ||
+    beforeBlob === afterBlob) throw refused()
+  for (const sha of [beforeBlob, afterBlob]) {
+    const bytes = try readCarrierGitBytes(directory, ["cat-file", "blob", sha], 512 * 1024)
+    if (gitObjectId("blob", bytes) !== sha || bytes.includes(0)) throw refused()
+  }
+  const matching = new Set<string>()
+  const changes = try commitIds(directory, ["--literal-pathspecs", "log", "--full-history", "--no-merges", "--format=%H", carrier.headSha, "^" + carrier.baseSha, "--", path])
+  if (changes.length > maximumPathChanges) throw refused()
+  for (const sha of changes) {
+    const candidate = members.get(sha)
+    if (candidate === undefined) throw refused()
+    if ((try ordinaryDelta(directory, path, candidate)) === canonicalDelta) matching.add(sha)
+  }
+  if (matching.size !== 2 || !matching.has(canonicalSha) || !matching.has(repeatedSha)) throw refused()
+
+  const chain = try commitIds(directory, ["rev-list", "--first-parent", "--reverse", carrier.headSha, "^" + carrier.baseSha])
+  const first = try ingressOf(directory, chain, members, carrier.headSha, canonicalSha)
+  const later = try ingressOf(directory, chain, members, carrier.headSha, repeatedSha)
+  if (canonical.parents[0] === undefined || first.index >= later.index || later.index - first.index > maximumPathChanges ||
+    !(try carrierAliasIngress(directory, path, { sha: canonicalSha, parentSha: canonical.parents[0] }, first, later))) throw refused()
+  let previous = first.sha
+  for (const sha of chain.slice(first.index + 1, later.index)) {
+    if (members.get(sha)?.parents[0] !== previous || (try pathDelta(directory, path, previous, sha)) !== undefined) throw refused()
+    previous = sha
+  }
+  if (previous !== later.parentSha) throw refused()
+  return issueCarrierAlias({
+    baseSha: carrier.baseSha, acceptedSha, path, canonicalSha, repeatedSha, actorNodeId: actor.nodeId,
+    canonicalIngressSha: first.sha, repeatedIngressSha: later.sha,
+    pathDeltaSha256: sha256Of(canonicalDelta + "\0" + path + "\0"),
+  })
+}

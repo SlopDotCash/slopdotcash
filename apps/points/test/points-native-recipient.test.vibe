@@ -2,8 +2,9 @@
 import { assert, it } from "@effect/vitest"
 import { GitHub } from "@repo/platform/github"
 import type { CorrectionManifest } from "../src/corrections/apply/manifest.vibe"
-import { type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
+import { type NativeCarrierGroupRequest, type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
 import type { PacketRecipientCorrection, SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+import type { Revision } from "../src/kernels/records/canonical.ts"
 
 const repository = "SlopDotCash/slopdotcash"
 const nodeId = "R_slop"
@@ -44,7 +45,16 @@ function githubOf(moved: boolean, reads: string[], direct = false) {
     json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
     graphql: (_query, variables, schema) => effect {
       const ids = variables.ids
-      if (!Array.isArray(ids)) return try die("Missing exact source IDs")
+      if (!Array.isArray(ids)) {
+        return try orDie(Schema.decodeUnknownEffect(schema)({
+          repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
+            totalCount: 2, nodes: [
+              { ...original, headRefOid: original.headSha, mergeCommit: { oid: acceptedSha } },
+              { ...carrier, headRefOid: carrier.headSha, mergeCommit: { oid: direct ? "9".repeat(40) : acceptedSha } },
+            ], pageInfo: { hasNextPage: false, endCursor: null },
+          } },
+        }))
+      }
       const nodes = ids.map((id) => {
         const row = id === original.id ? original : carrier
         reads.push(row.id)
@@ -121,6 +131,234 @@ it.effect('Direct ordinary corrections and separately assessed work units retain
     try Effect.try(() => {
       assert.equal(actual.size, 0)
       assert.deepEqual(reads, [original.id])
+    })
+  }
+})
+
+const sibling = { id: "PR_other", number: 13, headSha: "e".repeat(40), mergedAt: original.mergedAt }
+const foreign = { id: "PR_outside", number: 14, headSha: "f".repeat(40), mergedAt: "2026-09-26T00:00:00.000Z" }
+const early = { id: "PR_early", number: 1, headSha: "1".repeat(40), mergedAt: "2026-08-20T00:00:00.000Z" }
+const retired = { id: "PR_retired", number: 2, headSha: "2".repeat(40), mergedAt: early.mergedAt }
+const tied = { id: "PR_tied", number: 15, headSha: "3".repeat(40), mergedAt: original.mergedAt }
+const late = { id: "PR_late", number: 16, headSha: "4".repeat(40), mergedAt: "2026-10-25T22:06:39.000Z" }
+const earlierAcceptedSha = "8".repeat(40)
+const archivedLate = { id: "PR_archived", number: 17, mergedAt: "2026-10-30T03:01:43.000Z", headSha: "a".repeat(40) }
+const archiveRoot = `/repos/${repository}`
+const archiveApi = `https://api.github.com${archiveRoot}`
+const archiveUrl = `https://github.com/${repository}/pull/${archivedLate.number}`
+const archiveEvent = {
+  event: "merged", id: 99, node_id: "ME_archive", created_at: "2026-10-30T03:01:42Z", commit_id: "6".repeat(40),
+  commit_url: `${archiveApi}/commits/${"6".repeat(40)}`, url: `${archiveApi}/issues/events/99`,
+}
+
+
+function share(source: typeof early, keyDigit: string, revisionDigit: string, amount: number, previous: string | null = null): Revision {
+  return {
+    id: revisionDigit.repeat(64), previous, recordedAt: "2026-11-20T00:00:00.000Z", sourceDigest: "a".repeat(64), sourceRule: "fixture",
+    award: { key: keyDigit.repeat(64), actor, projectId: "slopdotcash", category: "merged-pull-request", amount, occurredAt: source.mergedAt,
+      sourceId: source.id, sourceUrl: "https://github.com/" + repository + "/pull/" + source.number, workUnitId: "earlier", provisional: true },
+  }
+}
+
+const earlyOriginal = share(early, "2", "1", 30)
+const earlyZero = share(early, "2", "2", 0, earlyOriginal.id)
+const earlyPositive = share(early, "1", "3", 30)
+const retiredOriginal = share(retired, "3", "4", 30)
+const baseline = { baselineDigest: "d".repeat(64), revisions: [earlyOriginal, earlyPositive, retiredOriginal, share(tied, "4", "5", 30),
+  share(late, "5", "6", 30), share(original, "6", "7", 30), earlyZero, share(retired, "3", "8", 0, retiredOriginal.id)] }
+
+const directCorrection = {
+  ...correction,
+  sourceId: carrier.id,
+  workUnitId: "carrier-unit",
+  nativeCarrierAliases: [{ path: "src/app.ts", canonicalSha: "3".repeat(40), repeatedSha: "4".repeat(40) }],
+} satisfies PacketRecipientCorrection
+const groupCorrections: CorrectionManifest = {
+  ...corrections,
+  candidates: [...corrections.candidates, {
+    id: "held-carrier", kind: "pull-request", projectId: "slopdotcash", sourceId: carrier.id, sourceUrl: "https://github.com/" + repository + "/pull/12",
+    occurredAt: carrier.mergedAt, workUnitId: directCorrection.workUnitId, sourceIds: [carrier.id], expectedPredecessors: [], proof: { status: "held" },
+  }],
+}
+const groupPacket = {
+  ...packet,
+  sourceAudit: { ...sourceAudit, sources: [original, carrier, sibling] },
+  corrections: groupCorrections,
+  baselineDigest: baseline.baselineDigest,
+  baselineRevisionCount: baseline.revisions.length,
+  recipientCorrections: [correction, directCorrection],
+}
+const carrierProof = { ...proof, claimIds: ["7".repeat(64)] }
+
+function groupGithub(reads: string[], outside = false, archiveChange?: "identity" | "terminal") {
+  const sources = [original, carrier, sibling, ...(outside ? [foreign] : [])]
+  const otherMerges = [late, tied, retired, early]
+  const event = archiveChange === "terminal" ? { ...archiveEvent, commit_id: acceptedSha, commit_url: `${archiveApi}/commits/${acceptedSha}` } : archiveEvent
+  const unsupported = () => die("Unexpected GitHub method")
+  return Layer.succeed(GitHub, {
+    bytes: unsupported, send: unsupported, status: unsupported,
+    pages: (path, schema) => effect {
+      if (path !== `${archiveRoot}/issues/${archivedLate.number}/timeline`) return try die("Unexpected archive timeline")
+      reads.push("archive timeline")
+      return try orDie(Schema.decodeUnknownEffect(Schema.Array(schema))([{ event: "closed" }, event]))
+    },
+    json: (path, schema) => effect {
+      if (path !== `${archiveRoot}/issues/events/${archiveEvent.id}`) return try die("Unexpected archive event")
+      reads.push("archive event")
+      return try orDie(Schema.decodeUnknownEffect(schema)({ ...event, issue: {
+        node_id: archiveChange === "identity" ? "PR_different" : archivedLate.id, number: archivedLate.number, state: "closed",
+        url: `${archiveApi}/issues/${archivedLate.number}`, html_url: archiveUrl, repository_url: archiveApi,
+        pull_request: { html_url: archiveUrl, url: `${archiveApi}/pulls/${archivedLate.number}`, merged_at: archivedLate.mergedAt },
+      } }))
+    },
+    graphql: (_query, variables, schema) => effect {
+      const ids = variables.ids
+      if (Array.isArray(ids)) {
+        const nodes = ids.flatMap((id) => {
+          const row = sources.find((source) => source.id === id)
+          if (row === undefined) return []
+          reads.push(row.id)
+          return [{
+            id: row.id, number: row.number, url: "https://github.com/" + repository + "/pull/" + row.number,
+            state: "MERGED", mergedAt: row.mergedAt, headRefOid: row.headSha,
+            repository: { id: nodeId, databaseId: 123456, nameWithOwner: repository, isPrivate: false },
+            mergeCommit: { oid: acceptedSha, parents: { totalCount: 2, nodes: [{ oid: baseSha }, { oid: carrier.headSha }] } },
+          }]
+        })
+        return try orDie(Schema.decodeUnknownEffect(schema)({ nodes }))
+      }
+      reads.push("merged repository")
+      return try orDie(Schema.decodeUnknownEffect(schema)({
+        repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
+          totalCount: sources.length + otherMerges.length,
+          nodes: [...sources.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: acceptedSha } })),
+            ...otherMerges.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: earlierAcceptedSha } }))],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        } },
+      }))
+    },
+  })
+}
+
+it.effect('A sibling-only correction refuses pairwise proof for a merge with another sibling (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+  provide groupGithub([]) {
+    const checked = (_request: NativeCarrierRequest) => effect { return proof }
+    const extra = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [correction] }, integrationBranch, checked) catch (error) =>
+      error._tag === "ReviewedRefused" ? error.message : error._tag
+    const omitted = verifyNativeCarrierRecipients(packet, integrationBranch, checked) catch (error) =>
+      error._tag === "ReviewedRefused" ? error.message : error._tag
+    try Effect.try(() => {
+      assert.equal(extra, "Native carrier with multiple siblings requires a linked native source proof")
+      assert.equal(omitted, "Same-terminal source is outside the exact reviewed census")
+    })
+  }
+})
+
+it.effect('A linked carrier verifies its complete official membership including unchanged sibling awards (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const reads: string[] = []
+  const requests: NativeCarrierGroupRequest[] = []
+  const verify = (request: NativeCarrierGroupRequest) => effect {
+    requests.push(request)
+    return new Map([[original.id, proof], [carrier.id, carrierProof]])
+  }
+  provide groupGithub(reads) {
+    const actual = try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, baseline)
+    try Effect.try(() => {
+      assert.deepEqual(reads, [original.id, carrier.id, "merged repository", sibling.id])
+      assert.deepEqual(requests[0]?.sameTerminalSources, [original, carrier, sibling])
+      assert.deepEqual(requests[0]?.correctedSources, [original, carrier])
+      assert.deepEqual(requests[0]?.earlierPositive, {
+        baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length,
+        sources: [
+          { id: early.id, number: early.number, mergedAt: early.mergedAt, acceptedSha: earlierAcceptedSha, awards: [
+            { key: earlyPositive.award.key, revisionId: earlyPositive.id, amount: 30, occurredAt: early.mergedAt },
+            { key: earlyZero.award.key, revisionId: earlyZero.id, amount: 0, occurredAt: early.mergedAt },
+          ] },
+          { id: tied.id, number: tied.number, mergedAt: tied.mergedAt, acceptedSha: earlierAcceptedSha, awards: [{ key: "4".repeat(64), revisionId: "5".repeat(64), amount: 30, occurredAt: tied.mergedAt }] },
+        ],
+        laterCandidates: [{ id: late.id, number: late.number, mergedAt: late.mergedAt, acceptedSha: earlierAcceptedSha, awards: [{ key: "5".repeat(64), revisionId: "6".repeat(64), amount: 30, occurredAt: late.mergedAt }] }],
+      })
+      const sameTerminalSourceIds = [original.id, carrier.id, sibling.id]
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), { ...proof, sameTerminalSourceIds })
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(directCorrection)), { ...carrierProof, sameTerminalSourceIds })
+    })
+  }
+  provide groupGithub([], true) {
+    const unreviewedSource = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, baseline) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(unreviewedSource, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
+  }
+})
+
+it.effect('A direct carrier cannot select its own weights or assign the same native claim twice (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const duplicateClaims = (_request: NativeCarrierGroupRequest) => effect {
+    return new Map([[original.id, proof], [carrier.id, proof]])
+  }
+  provide groupGithub([]) {
+    const unmarked = { ...directCorrection, nativeCarrierAliases: undefined, nativeCarrierSourceId: undefined }
+    const bypass = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [unmarked] }, integrationBranch) catch (error) => error._tag
+    const duplicate = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, duplicateClaims, baseline) catch (error) => error._tag
+    const omitted = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [directCorrection] }, integrationBranch, undefined, duplicateClaims, baseline) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(bypass, "ReviewedRefused")
+      assert.equal(duplicate, "ReviewedRefused")
+      assert.equal(omitted, "ReviewedRefused")
+    })
+  }
+})
+
+
+it.effect('A linked carrier refuses a stale baseline and earlier positive shares without exact official source identity (spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
+  const verify = (_request: NativeCarrierGroupRequest) => die("Unbound earlier Points reached native verification")
+  const unavailable = { ...early, id: "PR_unavailable" }
+  const unavailableLate = { ...late, id: "PR_late_unavailable" }
+  const drift = { ...early, mergedAt: "2026-08-21T00:00:00.000Z" }
+  const bad = [undefined, { ...baseline, baselineDigest: "e".repeat(64) }, { ...baseline, revisions: [] },
+    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyPositive ? share(unavailable, "1", "3", 30) : row) },
+    { ...baseline, revisions: baseline.revisions.map((row) => row === earlyZero ? share(drift, "2", "2", 0, earlyOriginal.id) : row) },
+    { ...baseline, revisions: baseline.revisions.map((row) => row.award.sourceId === late.id ? share(unavailableLate, "5", "6", 30) : row) }]
+  provide groupGithub([]) {
+    for (const context of bad) {
+      const result = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+      try Effect.try(() => assert.equal(result, "ReviewedRefused"))
+    }
+  }
+})
+
+
+it.effect('A removed later approval must retain its official issue identity and merged commit (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+  const reads: string[] = []
+  const requests: NativeCarrierGroupRequest[] = []
+  const verify = (request: NativeCarrierGroupRequest) => effect {
+    requests.push(request)
+    return new Map([[original.id, proof], [carrier.id, carrierProof]])
+  }
+  const lateArchive = share(archivedLate, "5", "6", 30)
+  const context = { ...baseline, revisions: baseline.revisions.map((row) => row.award.sourceId === late.id ? lateArchive : row) }
+  provide groupGithub(reads) {
+    try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context)
+    try Effect.try(() => {
+      assert.deepEqual(reads.slice(-2), ["archive timeline", "archive event"])
+      assert.deepEqual(requests[0]?.earlierPositive.laterCandidates, [{
+        id: archivedLate.id, number: archivedLate.number, mergedAt: archivedLate.mergedAt, acceptedSha: archiveEvent.commit_id,
+        awards: [{ key: lateArchive.award.key, revisionId: lateArchive.id, amount: 30, occurredAt: archivedLate.mergedAt }],
+      }])
+    })
+  }
+  provide groupGithub([], false, "identity") {
+    const rival = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(rival, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
+  }
+  provide groupGithub([], false, "terminal") {
+    const omitted = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(omitted, "ReviewedRefused")
+      assert.equal(requests.length, 1)
     })
   }
 })

@@ -18,7 +18,7 @@ function refused() {
   return new CarrierLineProofUnavailable({ reason: "Native carrier scope changed or has incomplete ancestry" })
 }
 
-function historyOf(evidence: Evidence) {
+export function carrierHistoryOf(evidence: Evidence) {
   const attribution = new Map<string, CommitAttribution>()
   for (const row of evidence.commitAttribution) {
     if (attribution.has(row.sha)) return undefined
@@ -60,7 +60,7 @@ function pathObjects(baseSha: string, boundary: string, rows: string) {
     new Set(ids).size === ids.length ? ids : undefined
 }
 
-export effect function reconstructCarrierProof(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory, acceptanceSha: string) {
+export effect function reconstructCarrierPartition(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory, acceptanceSha: string) {
   const { baseSha, headSha } = carrier
   const all = new Set([original.baseSha, original.headSha, baseSha, headSha, acceptanceSha, ...original.commits.map(({ sha }) => sha), ...carrier.commits.map(({ sha }) => sha)])
   if (!oid.test(original.headSha) || all.size > proofObjectLimit || [...all].some((sha) => !oid.test(sha))) throw refused()
@@ -104,7 +104,12 @@ export effect function reconstructCarrierProof(directory: string, original: Nati
     trustedRange: { baseSha, headSha, parentRows },
   })
   if (partition === undefined) throw refused()
-  const lineProof = try verifyCarrierLines(directory, { baseSha, acceptedSha: acceptanceSha })
+  return partition
+}
+
+export effect function reconstructCarrierProof(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory, acceptanceSha: string) {
+  const partition = try reconstructCarrierPartition(directory, original, carrier, acceptanceSha)
+  const lineProof = try verifyCarrierLines(directory, { baseSha: carrier.baseSha, acceptedSha: acceptanceSha })
   return { partition, lineProof }
 }
 
@@ -167,8 +172,8 @@ export effect function collectNativeCarrierProof(from: Evidence, to: Evidence, r
     repository.full_name?.toLowerCase() !== from.repository.toLowerCase() || repository.full_name?.toLowerCase() !== to.repository.toLowerCase()) {
     throw refused()
   }
-  const originalHistory = historyOf(from)
-  const carrierHistory = historyOf(to)
+  const originalHistory = carrierHistoryOf(from)
+  const carrierHistory = carrierHistoryOf(to)
   if (originalHistory === undefined || carrierHistory === undefined) throw refused()
   const objects = [originalHistory.baseSha, originalHistory.headSha, carrierHistory.baseSha, carrierHistory.headSha, acceptanceSha]
   const reconstructed = try withPublicGitObjects(repository, objects, (directory) => effect {

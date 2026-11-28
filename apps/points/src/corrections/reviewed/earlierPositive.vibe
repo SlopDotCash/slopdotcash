@@ -1,0 +1,129 @@
+import { GitHub } from "@repo/platform/github"
+import type { Revision } from "../../kernels/records/canonical.ts"
+import type { RepositoryMerge } from "./mergedRepository.vibe"
+import { type AuditedSource, isIso, pullUrl, refusal, shaPattern } from "./packet.vibe"
+import { latestOf } from "./replay/latest.vibe"
+
+export interface NativeCarrierBaseline {
+  readonly baselineDigest: string
+  readonly revisions: ReadonlyArray<Revision>
+}
+
+export interface NativeCarrierEarlierAward {
+  readonly key: string
+  readonly revisionId: string
+  readonly amount: number
+  readonly occurredAt: string
+}
+
+export interface NativeCarrierEarlierSource extends Pick<AuditedSource, "id" | "number" | "mergedAt"> {
+  readonly acceptedSha: string
+  readonly awards: ReadonlyArray<NativeCarrierEarlierAward>
+}
+
+export interface NativeCarrierEarlierPositive {
+  readonly baselineDigest: string
+  readonly baselineRevisionCount: number
+  readonly sources: ReadonlyArray<NativeCarrierEarlierSource>
+  readonly laterCandidates: ReadonlyArray<NativeCarrierEarlierSource>
+}
+
+schema TimelineEvent {
+  readonly event?: string | null
+  readonly id?: number | null
+  readonly node_id?: string | null
+  readonly created_at?: string | null
+  readonly commit_id?: string | null
+  readonly commit_url?: string | null
+  readonly url?: string | null
+}
+schema ArchivedPull { readonly html_url: string; readonly url: string; readonly merged_at: string }
+schema ArchivedIssue {
+  readonly node_id: string
+  readonly number: number
+  readonly state: string
+  readonly url: string
+  readonly html_url: string
+  readonly repository_url: string
+  readonly pull_request: ArchivedPull
+}
+schema MergedEvent {
+  readonly event: string
+  readonly id: number
+  readonly node_id: string
+  readonly created_at: string
+  readonly commit_id: string
+  readonly commit_url: string
+  readonly url: string
+  readonly issue: ArchivedIssue
+}
+
+effect function archivedApproval(repository: string, sourceId: string, sourceUrl: string, officialNumbers: ReadonlySet<number>) {
+  const number = Number(sourceUrl.split("/").at(-1))
+  if (!Number.isSafeInteger(number) || number < 1 || officialNumbers.has(number) || sourceUrl !== pullUrl(repository, number)) {
+    throw refusal("Archived positive Points source has an ambiguous pull request identity")
+  }
+  const github = try GitHub
+  const repoPath = `/repos/${repository}`
+  const api = `https://api.github.com${repoPath}`
+  const timeline = try github.pages(`${repoPath}/issues/${number}/timeline`, TimelineEvent, { maxPages: 10, perPage: 100 })
+  const merged = timeline.filter(({ event }) => event === "merged")
+  const [entry] = merged
+  if (merged.length !== 1 || entry === undefined || typeof entry.id !== "number" || !Number.isSafeInteger(entry.id) || entry.id < 1 ||
+    typeof entry.node_id !== "string" || entry.node_id === "" || typeof entry.commit_id !== "string" || !shaPattern.test(entry.commit_id) ||
+    typeof entry.created_at !== "string" || !Number.isFinite(Date.parse(entry.created_at))) {
+    throw refusal("Archived positive Points source has no unique merged timeline event")
+  }
+  const eventPath = `${repoPath}/issues/events/${entry.id}`
+  const detail = try github.json(eventPath, MergedEvent)
+  const issue = detail.issue
+  const mergedAt = Date.parse(issue.pull_request.merged_at)
+  const commitUrl = `${api}/commits/${entry.commit_id}`
+  if (detail.event !== "merged" || detail.id !== entry.id || detail.node_id !== entry.node_id || detail.commit_id !== entry.commit_id ||
+    detail.created_at !== entry.created_at || detail.commit_url !== commitUrl || entry.commit_url !== commitUrl ||
+    detail.url !== `https://api.github.com${eventPath}` || entry.url !== detail.url ||
+    issue.node_id !== sourceId || issue.number !== number || issue.state !== "closed" || issue.url !== `${api}/issues/${number}` ||
+    issue.repository_url !== api || issue.html_url !== sourceUrl || issue.pull_request.html_url !== sourceUrl ||
+    issue.pull_request.url !== `${api}/pulls/${number}` || !Number.isFinite(mergedAt)) {
+    throw refusal("Archived positive Points merge differs from its official timeline and pull request identity")
+  }
+  return { id: sourceId, number, mergedAt: new Date(mergedAt).toISOString(), acceptedSha: entry.commit_id }
+}
+
+export effect function earlierPositiveOf(projectId: string, repository: string, baseline: NativeCarrierBaseline,
+  merged: ReadonlyArray<RepositoryMerge>, acceptedSha: string, terminalSources: ReadonlyArray<AuditedSource>) {
+  const through = terminalSources.reduce((latest, source) => source.mergedAt > latest ? source.mergedAt : latest, "")
+  const memberIds = new Set(terminalSources.map(({ id }) => id))
+  const official = new Map(merged.map((source) => [source.id, source] as const))
+  const officialNumbers = new Set(merged.map(({ number }) => number))
+  const bySource = new Map<string, Revision[]>()
+  for (const revision of latestOf(baseline.revisions).values()) {
+    const { projectId: project, category, sourceId } = revision.award
+    if (project !== projectId || category !== "merged-pull-request" || memberIds.has(sourceId)) continue
+    const shares = bySource.get(sourceId) ?? []
+    shares.push(revision)
+    bySource.set(sourceId, shares)
+  }
+  const bound: NativeCarrierEarlierSource[] = []
+  for (const [id, shares] of bySource) {
+    if (!shares.some(({ award }) => award.amount > 0)) continue
+    let source: Pick<RepositoryMerge, "id" | "number" | "mergedAt" | "acceptedSha"> | undefined = official.get(id)
+    if (source === undefined && shares.every(({ award }) => isIso(award.occurredAt) && award.occurredAt > through)) {
+      source = try archivedApproval(repository, id, shares[0]?.award.sourceUrl ?? "", officialNumbers)
+    }
+    if (source?.acceptedSha === acceptedSha) throw refusal("A positive Points source is missing from same-terminal membership")
+    if (source === undefined || source.acceptedSha === null || !shares.every(({ award }) =>
+      isIso(award.occurredAt) && award.occurredAt === source.mergedAt && award.sourceUrl === pullUrl(repository, source.number) &&
+      Number.isSafeInteger(award.amount) && award.amount >= 0)) {
+      throw refusal("Positive Points source differs from the official merged repository")
+    }
+    const awards = shares.map(({ id: revisionId, award: { key, amount, occurredAt } }) => ({ key, revisionId, amount, occurredAt }))
+      .sort((left, right) => left.key.localeCompare(right.key))
+    bound.push({ id: source.id, number: source.number, mergedAt: source.mergedAt, acceptedSha: source.acceptedSha, awards })
+  }
+  bound.sort((left, right) => left.mergedAt.localeCompare(right.mergedAt) || left.number - right.number)
+  return { baselineDigest: baseline.baselineDigest, baselineRevisionCount: baseline.revisions.length,
+    sources: bound.filter(({ mergedAt }) => mergedAt <= through),
+    laterCandidates: bound.filter(({ mergedAt }) => mergedAt > through),
+  } satisfies NativeCarrierEarlierPositive
+}

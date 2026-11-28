@@ -1,0 +1,61 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import { GitHub } from "@repo/platform/github"
+import { type AuditedSource, require, shaPattern } from "./packet.vibe"
+
+schema MergeId { readonly oid: string }
+schema MergeNode {
+  readonly id: string
+  readonly number: number
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly mergeCommit?: MergeId | null
+}
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema MergedConnection { readonly totalCount: number; readonly nodes: ReadonlyArray<MergeNode>; readonly pageInfo: PageInfo }
+schema CensusConnectionRepository { readonly id: string; readonly nameWithOwner: string; readonly isPrivate: boolean; readonly pullRequests: MergedConnection }
+schema CensusConnectionPage { readonly repository: CensusConnectionRepository }
+
+export interface RepositoryMerge extends AuditedSource {
+  readonly acceptedSha: string | null
+}
+
+const pageSize = 100
+const mergedConnectionQuery = "query HistoricalMergedRepository($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id nameWithOwner isPrivate pullRequests(states:MERGED,first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){totalCount nodes{id number headRefOid mergedAt mergeCommit{oid}} pageInfo{hasNextPage endCursor}}}}"
+
+export effect function mergedRepositorySources(repository: string, nodeId: string) {
+  const [owner = "", name = ""] = repository.split("/")
+  const github = try GitHub
+  const ids = new Set<string>()
+  const numbers = new Set<number>()
+  const cursors = new Set<string>()
+  const selected: RepositoryMerge[] = []
+  let total: number | undefined
+  let after: string | null = null
+  do {
+    const observed: CensusConnectionRepository = (try github.graphql(mergedConnectionQuery, { owner, name, after }, CensusConnectionPage)).repository
+    const page = observed.pullRequests
+    try require(observed.id === nodeId && observed.nameWithOwner.toLowerCase() === repository.toLowerCase() && !observed.isPrivate &&
+      Number.isSafeInteger(page.totalCount) && page.totalCount > 0 && (total === undefined || total === page.totalCount) &&
+      page.nodes.length > 0 && page.nodes.length <= pageSize && ids.size + page.nodes.length <= page.totalCount,
+      "Historical merged repository identity or count changed")
+    total = page.totalCount
+    for (const row of page.nodes) {
+      const millis = Date.parse(row.mergedAt)
+      try require(row.id !== "" && !ids.has(row.id) && Number.isSafeInteger(row.number) && row.number > 0 && !numbers.has(row.number) &&
+        shaPattern.test(row.headRefOid) && Number.isFinite(millis), "Historical merged repository returned an invalid or repeated source")
+      ids.add(row.id)
+      numbers.add(row.number)
+      const mergedAt = new Date(millis).toISOString()
+      const acceptedSha = row.mergeCommit?.oid ?? null
+      try require(acceptedSha === null || shaPattern.test(acceptedSha), "Historical merged repository has an invalid accepted commit")
+      selected.push({ id: row.id, number: row.number, headSha: row.headRefOid, mergedAt, acceptedSha })
+    }
+    const { hasNextPage, endCursor } = page.pageInfo
+    try require(!hasNextPage || (endCursor !== null && endCursor !== "" && !cursors.has(endCursor) && ids.size < total),
+      "Historical merged repository pagination failed")
+    if (endCursor !== null) cursors.add(endCursor)
+    after = hasNextPage ? endCursor : null
+  } while (after !== null)
+  try require(ids.size === total, "Historical merged repository census incomplete")
+  return selected
+}
