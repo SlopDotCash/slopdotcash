@@ -17,7 +17,7 @@ export {
 } from "../memo/memo.vibe"
 export { type ImplementationCollected, type ImplementationRequest, implementationFacts, publishedJournalReader } from "../implementation/facts.vibe"
 export { ImplementationMemoAudit, type ImplementationMemoStats, implementationCodeDigest, implementationMemoRulesDigest, implementationMemoRulesHash, implementationMemoRulesSources, openImplementationMemo, writeImplementationMemo } from "../implementation/memo.vibe"
-export { nativeProofReader } from "../implementation/native.vibe"
+export { nativeLineProofReader, nativeProofReader } from "../implementation/native.vibe"
 export { EvidenceUnavailable } from "../evidence/artifacts.vibe"
 export { type HistoryPage, type HistorySource, type JointPage, valueHistoryPage, workUnitHistory, workUnitHistoryPage } from "../feeds/value.vibe"
 export { AssemblyRefused, type Collection, type CollectionSource, type CollectOptions, type CollectRequest, CollectDeferred, CollectUsage, type OpenCollection, SnapshotAssembly, collectArguments, collectSnapshot, collectUsage } from "./pipeline.vibe"

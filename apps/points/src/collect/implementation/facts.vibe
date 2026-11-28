@@ -2,12 +2,12 @@
 import { millisOf } from "@repo/platform/clock"
 import type { PointsJournal } from "../../kernels/records/records.schema.ts"
 import { recoverPublished } from "../../recovery/published.vibe"
-import type { AcceptanceMarkers, ImplementationHistory } from "../../score/facts.vibe"
+import type { AcceptanceMarkers, AcceptedTextAttribution, ImplementationHistory } from "../../score/facts.vibe"
 import { type AcceptedImplementationPredecessor, previousPositiveImplementationSources } from "../../score/history.vibe"
 import type { MergedRepository } from "../merged/collection.vibe"
 import type { MergedOutcome } from "../merged/wire.vibe"
 import type { ImplementationMemo, ImplementationMemoStats } from "./memo.vibe"
-import { type AcceptedImplementationProofs, ImplementationEvidenceUnavailable, type ProofReader, type ProofRepository } from "./native.vibe"
+import { type AcceptedImplementationProofs, ImplementationEvidenceUnavailable, type LineProofReader, type ProofReader, type ProofRepository, emptyChangeDigest } from "./native.vibe"
 import { earlierImplementationPredecessor, implementationNodes, readPreviousImplementationSources } from "./previous.vibe"
 import { type AcceptedImplementationSource, type CurrentAcceptance, currentAcceptance, dedupedSources, implementationDigestCandidates, implementationSourcesByShape } from "./sources.vibe"
 
@@ -15,13 +15,14 @@ export type JournalReader = () => (PointsJournal | null)!ImplementationEvidenceU
 
 export interface ImplementationRequest {
   readonly proofs: ProofReader
+  readonly readLines?: LineProofReader
   readonly journal: JournalReader
   readonly memo: ImplementationMemo | undefined
   readonly onAuditMismatch?: () => void!!
   readonly onMemoRead?: (stats: ImplementationMemoStats) => void!!
 }
 
-export type ImplementationEvidence = Pick<ImplementationHistory, "acceptedImplementationDigests" | "previousImplementationDigests" | "previousAcceptedOrdinaryOwners" | "unresolvedImplementationSources">
+export type ImplementationEvidence = Pick<ImplementationHistory, "acceptedImplementationDigests" | "acceptedTextAttribution" | "previousImplementationDigests" | "previousAcceptedOrdinaryOwners" | "unresolvedImplementationSources">
 
 export interface ImplementationCollected {
   readonly history: ImplementationEvidence
@@ -214,8 +215,28 @@ export effect function implementationFacts(input: ImplementationInput) {
     else try Console.error(`[slop.cash] accepted implementation memo: native digests ${stats.digestsReused} reused, ${stats.digestsRead} read; earlier pull requests ${stats.previousReused} reused, ${stats.previousRead} read; ${stats.audited} audited, ${stats.auditMismatches} audit mismatches`)
   }
   const markers = new Map([...acceptances].map(([id, acceptance]) => [id, acceptance.markers] as const))
+  const acceptedTextAttribution = new Map<string, AcceptedTextAttribution | null>()
+  const readLines = request.readLines
+  if (input.historical !== true && readLines !== undefined) {
+    for (const repository of input.repositories) {
+      const name = { full_name: repository.target.id, node_id: repository.preflight.id, private: false }
+      for concurrent(4) (const outcome of repository.outcomes) {
+        if ((outcome.commits?.length ?? 0) < 2) continue
+        const source = acceptances.get(outcome.id)?.lineSource
+        const proof = source === undefined ? undefined : (try readLines(name, source))
+        if (source === undefined || proof === undefined || proof.head !== source.headSha ||
+          proof.digest === emptyChangeDigest || !/^[0-9a-f]{64}$/u.test(proof.digest) ||
+          proof.byCommit.size !== source.submittedOids.length || source.submittedOids.some((oid) => !proof.byCommit.has(oid))) {
+          acceptedTextAttribution.set(outcome.id, null)
+          continue
+        }
+        acceptedTextAttribution.set(outcome.id, { head: proof.head, byCommit: proof.byCommit })
+        acceptedImplementationDigests.set(outcome.id, proof.digest)
+      }
+    }
+  }
   return {
-    history: { acceptedImplementationDigests, previousImplementationDigests, previousAcceptedOrdinaryOwners, unresolvedImplementationSources },
+    history: { acceptedImplementationDigests, acceptedTextAttribution, previousImplementationDigests, previousAcceptedOrdinaryOwners, unresolvedImplementationSources },
     markers,
   } satisfies ImplementationCollected
 }

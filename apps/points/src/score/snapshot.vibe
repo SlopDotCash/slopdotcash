@@ -215,7 +215,17 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, ...(facts.valueActors === undefined ? {} : { valueActors: facts.valueActors }), attributionHolds: facts.attributionHolds, windowFrom, windowTo, implementation: implementationHistory(facts) }, actors)
   const ledger = ledgerOf(bans, facts.projects)
   const creditedIds = new Set<string>()
-  for (const event of merges.events) if (try ledger.credit(event)) creditedIds.add(event.id)
+  const implementationAllocations = new Map(merges.implementationAllocations)
+  for (const event of merges.events) {
+    if (try ledger.credit(event)) creditedIds.add(event.id)
+    else implementationAllocations.delete(event.source.id)
+  }
+  for (const pull of merged) {
+    const plan = implementationAllocations.get(pull.id)
+    if (plan === undefined) continue
+    const acceptedAt = try millisAt(pull.mergedAt, pull.id)
+    if (plan.weights.some(({ actorNodeId }) => (bans.get(actorNodeId) ?? Infinity) <= acceptedAt)) implementationAllocations.delete(pull.id)
+  }
   const jointUnitPublication = new Map<string, JointUnitPublication[]>()
   for (const unit of merges.jointUnitCredits) {
     const complete = unit.complete && unit.eventIds.every((id) => creditedIds.has(id))
@@ -234,6 +244,7 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
     reviewExclusions: [...reviewExclusions].sort(compareExclusions),
     omittedReviewCredits: [...omittedReviewCredits].sort((left: OmittedReviewCredit, right: OmittedReviewCredit) => compareExclusions(left, right)),
     jointUnitPublication,
+    implementationAllocations,
     held: merges.held,
     implementationHeld: merges.implementationHeld,
     standaloneReview: merges.standaloneReview,

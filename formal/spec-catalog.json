@@ -17753,7 +17753,7 @@
     },
     {
       "path": "spec/points/authorship.md",
-      "sha256": "f37d73d922c69b7a3d50042f356c543f8b2ccada5011375255e1fccb3ae91c53",
+      "sha256": "618e00ab946dd46fa6c5bb7b43289ba03ee13f065129bef8d6b41c0badec59d9",
       "module": "points__authorship",
       "stories": [
         {
@@ -17939,6 +17939,8 @@
           "line": 367,
           "definitions": [
             "CreditSelection",
+            "requiresNativeTextProof",
+            "lawVerifiedTextRequiredForAutomaticRolling",
             "freshCreditHeld",
             "scoredDigestsAfter",
             "lawLegacyScoringNeverHeld",
@@ -17949,7 +17951,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
-          "line": 410,
+          "line": 429,
           "definitions": [
             "ownsAcceptedOrdinaryCommit",
             "usesEarlierOwners",

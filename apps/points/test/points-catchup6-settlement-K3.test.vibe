@@ -7,15 +7,21 @@ import { gitObjectId, lossyText, textBytes } from "@repo/platform/git/bytes"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { validateSnapshot } from "../src/client/snapshot/validate.vibe"
 import { type JournalReader } from "../src/collect/implementation/facts.vibe"
 import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, implementationMemoRulesDigest, implementationMemoRulesHash, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
 import { implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn, implementationMemoRulesVersion } from "../src/collect/memo/memo.vibe"
 import { ImplementationEvidenceUnavailable, type ProofReader, readAcceptedImplementationProofs } from "../src/collect/implementation/native.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { storeOf } from "../src/journal/ledger.vibe"
+import { applySnapshot, awardFor } from "../src/journal/snapshot.vibe"
+import { pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { assembleSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
+import { userNodeId } from "./support/u10/actors.ts"
 import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
 
 const codeDigest = "a".repeat(64)
@@ -148,6 +154,71 @@ effect function collected(world: Seeded, proofs: ProofReader, memo: Implementati
   if (collection === undefined || collection.implementation === undefined) throw new Error("the assembly never received the implementation facts")
   return { collection, implementation: collection.implementation }
 }
+
+it.live('Native accepted lines determine both the first journal credit and a conserved recorded pool, including a line author whose first share rounds to zero (spec/points/journal.md, "A reallocation keeps the unit\'s whole value and changes only its recipients"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const githubWorld = world.fake.world
+  const listed = try Effect.try(() => githubWorld.repo(repository))
+  const base = listed.branches.get(listed.defaultBranch) ?? ""
+  const acceptedAt = new Date(start - 6 * day).toISOString()
+  const actors = [{ id: userNodeId(101), login: "ada" }, { id: userNodeId(102), login: "grace" }, { id: userNodeId(103), login: "linus" }]
+    .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  const [first, second, carrier] = actors
+  if (first === undefined || second === undefined || carrier === undefined) throw new Error("missing fixture actors")
+  const additions = { "src/recreated-accepted.ts": "x\n".repeat(20) }
+  const a = try Effect.try(() => githubWorld.addCommit(repository, { branch: "recreated", parents: [base], author: first.login, files: { "src/original.ts": "original\n" } }))
+  const b = try Effect.try(() => githubWorld.addCommit(repository, { branch: "recreated", parents: [a], author: second.login, files: { "src/followup.ts": "follow-up\n" } }))
+  const c = try Effect.try(() => githubWorld.addCommit(repository, { branch: "recreated", parents: [b], author: carrier.login, files: additions }))
+  const merge = try Effect.try(() => githubWorld.addCommit(repository, { branch: listed.defaultBranch, parents: [base], author: carrier.login, files: { ...additions, "src/original.ts": "original\n", "src/followup.ts": "follow-up\n" } }))
+  const number = try Effect.try(() => githubWorld.addPull({ repo: repository, author: carrier.login, title: "Recreate a multi-author accepted change", mergedAt: acceptedAt, commits: [a, b, c], headSha: c, headRef: "recreated", mergeCommit: merge, files: [{ path: "src/original.ts", additions: 1, deletions: 0, status: "added" }, { path: "src/followup.ts", additions: 1, deletions: 0, status: "added" }, { path: "src/recreated-accepted.ts", additions: 20, deletions: 0, status: "added" }] }))
+  const source = (try Effect.try(() => githubWorld.pull(repository, number))).nodeId
+  const noDigests: ProofReader = () => effect { return { digests: new Map(), unavailable: new Set() } }
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
+    try scoped(effect {
+      const { collection, implementation } = try collected(world, noDigests, undefined)
+      const proof = { head: c, byCommit: new Map([[a, { additions: 1, deletions: 0 }], [b, { additions: 1, deletions: 0 }], [c, { additions: 20, deletions: 0 }]]) }
+      effect function assemble(input: Collection, native: typeof proof | null) {
+        const snapshot = try assembleSnapshot(input, { mode: "rolling", repositories: rollingRepositories(input), history: { ...implementation.history, acceptedTextAttribution: new Map([[source, native]]) } })
+        return try validateSnapshot(snapshot, input.registry)
+      }
+      const snapshot = try assemble(collection, proof)
+      const coverageOf = (value: typeof snapshot) => value.valueAssessmentCoverage?.find((row) => row.pullRequestId === source)
+      const allocation = coverageOf(snapshot)?.implementationAllocation
+      const actorWeights = allocation?.weights.map(({ actorLogin, changedLines }) => [actorLogin, changedLines]).sort()
+      const targetEvents = snapshot.ledger.filter((event) => event.source.id === source && event.category === "merged-pull-request")
+      const targetEvent = targetEvents.find((event) => event.actor.id === carrier.id)
+      if (targetEvent === undefined) throw new Error("missing scored carrier")
+      const repositories = repositoriesOf(collection.registry, {})
+      const recordedAt = collection.generatedAt
+      const initial = try storeOf(recordedAt, [], [])
+      try applySnapshot(initial, repositories, snapshot, "1".repeat(64), recordedAt)
+      const old = (try awardFor({ ...targetEvent, points: 1, scoreThirds: 3 }, repositories, targetEvent.workUnitId ?? targetEvent.id)).award
+      const oldBody = { previous: null, recordedAt, sourceDigest: "2".repeat(64), sourceRule: "slop-score-v2" as const, award: old }
+      const oldId = try pointRevisionId(oldBody)
+      const prior = try storeOf(recordedAt, [], [{ ...oldBody, id: oldId }])
+      try applySnapshot(prior, repositories, snapshot, "3".repeat(64), recordedAt)
+      const amounts = (store: typeof initial) => [...store.latest.values()]
+        .filter(({ award }) => award.sourceId === source).map(({ award }) => [award.actor.login, award.amount]).sort()
+      const revisionsOf = (store: typeof initial) => store.revisions.filter(({ award }) => award.sourceId === source).map(({ id }) => id)
+      const beforeRepeating = [revisionsOf(initial), revisionsOf(prior)]
+      const later = new Date(Date.parse(recordedAt) + 60_000).toISOString()
+      try applySnapshot(initial, repositories, { ...snapshot, generatedAt: later }, "6".repeat(64), later)
+      try applySnapshot(prior, repositories, { ...snapshot, generatedAt: later }, "6".repeat(64), later)
+      try same([revisionsOf(initial), revisionsOf(prior)], beforeRepeating)
+      const missing = try assemble(collection, null)
+      const stale = try assemble(collection, { ...proof, head: merge })
+      const held = try storeOf(recordedAt, [], [{ ...oldBody, id: oldId }])
+      try applySnapshot(held, repositories, missing, "4".repeat(64), recordedAt)
+      try applySnapshot(held, repositories, stale, "5".repeat(64), recordedAt)
+      const banned = coverageOf(try assemble({ ...collection, bans: new Map([[second.id, acceptedAt]]) }, proof))
+      try same({ actorWeights, planned: allocation?.totalScoreThirds, events: targetEvents.map((event) => [event.actor.login, event.scoreThirds]).sort(), initial: amounts(initial), corrected: amounts(prior), carried: prior.revisions[0]?.id === oldId, missing: coverageOf(missing)?.status, stale: coverageOf(stale)?.status, held: revisionsOf(held), banned: banned?.implementationAllocation }, {
+        actorWeights: [[first.login, "1"], [second.login, "1"], [carrier.login, "20"]].sort(), planned: 1,
+        events: [[first.login, 0.1], [carrier.login, 0.9]].sort(), initial: [[first.login, 1], [carrier.login, 9]].sort(),
+        corrected: [[first.login, 2], [second.login, 1], [carrier.login, 27]].sort(), carried: true, missing: "incomplete", stale: "incomplete", held: [oldId], banned: undefined,
+      })
+    })
+  }
+})
 
 it.live('An identical earlier single-commit acceptance holds the later one, and a missing native object leaves it unresolved (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
   const world = try Effect.try(() => seeded())

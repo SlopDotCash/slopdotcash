@@ -1,9 +1,11 @@
 // spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
 import { ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
-import { Git, gitBytes, publicGitArguments, runGit } from "@repo/platform/git"
+import { Git, MERGE_GIT_VERSION, gitBytes, publicGitArguments, runGit } from "@repo/platform/git"
 import { lossyText } from "@repo/platform/git/bytes"
-import type { AcceptedImplementationSource } from "./sources.vibe"
+import type { AcceptedTextAttribution } from "../../score/facts.vibe"
+import { type AcceptedLineRange, acceptedLineCommitLimit, readAcceptedLineRange } from "./acceptedLines.vibe"
+import type { AcceptedImplementationSource, AcceptedLineSource } from "./sources.vibe"
 
 export error ImplementationEvidenceUnavailable { message: string }
 
@@ -19,6 +21,12 @@ export interface ProofRepository {
 }
 
 export type ProofReader = (repository: ProofRepository, sources: ReadonlyArray<AcceptedImplementationSource>) => AcceptedImplementationProofs!ImplementationEvidenceUnavailable
+
+export interface AcceptedLineProof extends AcceptedTextAttribution {
+  readonly digest: string
+}
+
+export type LineProofReader = (repository: ProofRepository, source: AcceptedLineSource) => (AcceptedLineProof | undefined)!ImplementationEvidenceUnavailable
 
 interface CommitHeader {
   readonly tree: string
@@ -115,8 +123,9 @@ export effect function readAcceptedImplementationProofs(directory: string, sourc
   return { digests, unavailable } satisfies AcceptedImplementationProofs
 }
 
-effect function fetchTips(directory: string, url: string, tips: ReadonlyArray<string>) {
-  const args = publicGitArguments(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--depth=2", "--filter=blob:none", url, ...tips])
+effect function fetchTips(directory: string, url: string, tips: ReadonlyArray<string>, blobs = false) {
+  const filter = blobs ? [] : ["--filter=blob:none"]
+  const args = publicGitArguments(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--depth=2", ...filter, url, ...tips])
   const output = runGit({ args, env: publicEnvironment(directory), limit: diagnosticLimit, seconds: gitSeconds, stderrLimit: diagnosticLimit }, nativeUnavailable) catch effect () => {
     return undefined
   }
@@ -153,6 +162,63 @@ export effect function loadAcceptedImplementationProofs(repository: ProofReposit
     try fetchSources(directory, `https://github.com/${repository.full_name}.git`, eligible)
     return try readAcceptedImplementationProofs(directory, sources)
   })
+}
+
+effect function lineRange(directory: string, source: AcceptedLineSource) {
+  const accepted = try readCommit(directory, source.mergeSha)
+  if (source.mergeSha === source.headSha || accepted.tree !== source.mergeTreeSha || accepted.parents.length !== source.mergeParentShas.length ||
+    !accepted.parents.every((parent, index) => parent === source.mergeParentShas[index])) return undefined
+  const [first] = accepted.parents
+  if (first === undefined || (try readCommit(directory, first)).tree !== source.firstParentTreeSha) return undefined
+  const pending = new Set(source.submittedOids)
+  const submitted: Array<AcceptedLineRange["submitted"][number]> = []
+  let next = source.headSha
+  while (pending.delete(next)) {
+    const current = try readCommit(directory, next)
+    const [parent] = current.parents
+    if (current.parents.length !== 1 || parent === undefined) return undefined
+    submitted.push({ commit: next, tree: current.tree })
+    next = parent
+  }
+  if (pending.size > 0 || submitted.length !== source.submittedOids.length) return undefined
+  return { baseTree: (try readCommit(directory, next)).tree, acceptedBaseTree: source.firstParentTreeSha,
+    acceptedTree: accepted.tree, submitted: submitted.reverse() } satisfies AcceptedLineRange
+}
+
+effect function loadAcceptedLineProof(repository: ProofRepository, source: AcceptedLineSource) {
+  if (!publicName(repository)) throw new ImplementationEvidenceUnavailable({ message: publicRepositoryRequired })
+  const submitted = new Set(source.submittedOids)
+  if (eligibleSources([source]).length !== 1 || source.submittedOids.length < 2 || source.submittedOids.length > acceptedLineCommitLimit ||
+    submitted.size !== source.submittedOids.length || !submitted.has(source.headSha) || source.submittedOids.some((commit) => !oid.test(commit))) return undefined
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-accepted-text-" })
+    if (lossyText(try nativeGit(directory, ["--version"], headerLimit)).trim() !== MERGE_GIT_VERSION) return undefined
+    try nativeGit(directory, ["init", "--bare", "--template=", "--quiet"], headerLimit)
+    const url = `https://github.com/${repository.full_name}.git`
+    effect function fetchObjects(objects: ReadonlyArray<string>, blobs: boolean) {
+      const present = [...new Set(objects)]
+      for (let offset = 0; offset < present.length; offset += fetchBatchSize) {
+        if ((try fetchTips(directory, url, present.slice(offset, offset + fetchBatchSize), blobs)) !== undefined) return false
+      }
+      return true
+    }
+    if (!(try fetchObjects([source.mergeSha, ...source.mergeParentShas, ...source.submittedOids], false))) return undefined
+    const range = try lineRange(directory, source)
+    if (range === undefined) return undefined
+    const proof = try readAcceptedLineRange(directory, range, (blobs) => fetchObjects(blobs, true))
+    return proof === undefined ? undefined : { head: source.headSha, ...proof }
+  })
+}
+
+export effect function nativeLineProofReader() {
+  const services = try Effect.context<Git | ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem>()
+  const reader: LineProofReader = (repository, source) => effect {
+    provide services {
+      return timeout(loadAcceptedLineProof(repository, source), Duration.seconds(gitSeconds)) catch () => undefined
+    }
+  }
+  return reader
 }
 
 function messageOf(error: { readonly _tag: string }) {

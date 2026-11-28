@@ -1,5 +1,6 @@
 // spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import type { ImplementationAllocation } from "../client/snapshot/schema.vibe"
 import type { RetainedCopy } from "../../gen/points__authorship.ts"
 import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
 import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
@@ -227,10 +228,16 @@ export interface Activity {
 
 export type ScoringMode = "rolling" | "historical"
 
+export interface AcceptedTextAttribution {
+  readonly head: string
+  readonly byCommit: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>
+}
+
 export interface ImplementationHistory {
   readonly mode: ScoringMode
   readonly valueInput: boolean
   readonly acceptedImplementationDigests: ReadonlyMap<string, string>
+  readonly acceptedTextAttribution?: ReadonlyMap<string, AcceptedTextAttribution | null>
   readonly previousImplementationDigests: ReadonlySet<string>
   readonly previousAcceptedOrdinaryOwners: ReadonlyMap<string, string>
   readonly unresolvedImplementationSources: ReadonlySet<string>
@@ -406,6 +413,7 @@ export interface Scoring {
   readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
   readonly omittedReviewCredits: ReadonlyArray<OmittedReviewCredit>
   readonly jointUnitPublication: ReadonlyMap<string, ReadonlyArray<JointUnitPublication>>
+  readonly implementationAllocations: ReadonlyMap<string, ImplementationAllocation>
   readonly held: ReadonlyArray<HeldSource>
   readonly implementationHeld: ReadonlySet<string>
   readonly standaloneReview: ReadonlySet<string>
@@ -482,6 +490,7 @@ export function implementationHistory(facts: ScoringFacts): ImplementationHistor
     mode: facts.mode ?? "rolling",
     valueInput: facts.valueInput ?? false,
     acceptedImplementationDigests: facts.acceptedImplementationDigests ?? new Map(),
+    ...(facts.acceptedTextAttribution === undefined ? {} : { acceptedTextAttribution: facts.acceptedTextAttribution }),
     previousImplementationDigests: facts.previousImplementationDigests ?? new Set(),
     previousAcceptedOrdinaryOwners: facts.previousAcceptedOrdinaryOwners ?? new Map(),
     unresolvedImplementationSources: facts.unresolvedImplementationSources ?? new Set(),

@@ -192,6 +192,36 @@ layer(webCrypto, { excludeTestServices: true })((it) => {
     try Effect.try(() => assert.deepStrictEqual({ credited: unresolved.credited, implementationHeld: unresolved.implementationHeld }, { credited: ["PR_1:merged alice"], implementationHeld: ["PR_2"] }))
   })
 
+  it.effect('Use the surviving accepted line weights for a recreated PR, keep its score, and preserve earlier ownership and historical scores (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
+    const recreated = pull(8, 6, mia, [commit("c1", alice, 35), commit("c2", mia, 33)])
+    const proof = { head: recreated.headRefOid, byCommit: new Map([
+      ["c1", { additions: 21, deletions: 8 }], ["c2", { additions: 19, deletions: 0 }],
+    ]) }
+    effect function distribution(history: Partial<ImplementationHistory>) {
+      provide books {
+        const pulls = [recreated]
+        const merged = try mergedCredit({ pulls, closed: [], contexts: [], decisions: [], attributionHolds: new Set(), windowFrom, windowTo, implementation: { ...rolling, ...history } }, actorIndex(actorsOf(pulls)))
+        const points = Object.fromEntries(merged.events.map((event) => [event.actor.login, Math.round((event.scoreThirds ?? 0) * 10)] as const))
+        return { points, held: [...merged.implementationHeld] }
+      }
+    }
+    const acceptedTextAttribution = new Map([[recreated.id, proof]])
+    const raw = try distribution({})
+    const accepted = try distribution({ acceptedTextAttribution })
+    const unavailable = try distribution({ acceptedTextAttribution: new Map([[recreated.id, null]]) })
+    const mismatched = try distribution({ acceptedTextAttribution: new Map([[recreated.id, { ...proof, head: "another-head" }]]) })
+    const historical = try distribution({ acceptedTextAttribution, mode: "historical" })
+    const earlier = try distribution({ acceptedTextAttribution, previousAcceptedOrdinaryOwners: new Map([[`${repository.toLowerCase()}\u0000c1`, "PR_earlier"]]) })
+    try Effect.try(() => {
+      assert.deepStrictEqual(raw, { points: { alice: 5, mia: 5 }, held: [] })
+      assert.deepStrictEqual(accepted, { points: { alice: 6, mia: 4 }, held: [] })
+      assert.deepStrictEqual(unavailable, { points: {}, held: [recreated.id] })
+      assert.deepStrictEqual(mismatched, unavailable)
+      assert.deepStrictEqual(historical, raw)
+      assert.deepStrictEqual(earlier, { points: { mia: 10 }, held: [] })
+    })
+  })
+
   it.effect('Earlier accepted work owns its commits in rolling scoring, the review census stays whole, and a standalone assessment of that work is held for joint review (spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
     const squashed = pull(5, 3, alice, [commit("a5", alice, 10)], { acceptedOrdinaryCommitOid: "s5" })
     const copy = pull(6, 5, bob, [commit("s5", alice, 10), commit("b6", bob, 5)])
