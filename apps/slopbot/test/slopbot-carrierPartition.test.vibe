@@ -1,0 +1,101 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { assert, it } from "@effect/vitest"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { type NativeCarrierMember, type NativeCarrierPartitionInput, type NativeCommitBytes, parseNativeCommitObject, verifyNativeCarrierPartition } from "../src/value/workUnits/carrierPartition.vibe"
+
+const tree = "a".repeat(40)
+const author = { nodeId: "U_original", type: "User" }
+const maintainer = { nodeId: "U_maintainer", type: "User" }
+const identityHeaders = "author Origin <origin@example.test> 0 +0000\ncommitter Origin <origin@example.test> 0 +0000"
+
+function identity(raw: Uint8Array) {
+  return { sha: gitObjectId("commit", raw), raw } satisfies NativeCommitBytes
+}
+
+function commit(name: string, parents: ReadonlyArray<NativeCommitBytes>) {
+  return identity(textBytes([`tree ${tree}`, ...parents.map(({ sha }) => `parent ${sha}`), identityHeaders, "", name].join("\n") + "\n"))
+}
+
+function member(item: NativeCommitBytes, parents: ReadonlyArray<NativeCommitBytes>, actor = author) {
+  return { sha: item.sha, parents: parents.map(({ sha }) => sha), author: actor, attributionDigest: "e".repeat(64) } satisfies NativeCarrierMember
+}
+
+function parentRows(members: ReadonlyArray<NativeCarrierMember>) {
+  return members.map(({ sha, parents }) => [sha, ...parents].join(" ")).join("\n") + "\n"
+}
+
+function stackedCarrier() {
+  const older = commit("previous ordinary edit", [])
+  const earlier = commit("previous branch update", [older])
+  const base = commit("carrier base marker", [earlier])
+  const novel = commit("original retained work", [earlier])
+  const originalHead = commit("original branch merge", [novel, older])
+  const head = commit("separate carrier follow-up", [base, originalHead])
+  const terminal = commit("native accepted terminal", [base, head])
+  const carrierCommits = [member(head, [base, originalHead], maintainer), member(originalHead, [novel, older]), member(novel, [earlier])]
+  const input = {
+    original: { headSha: originalHead.sha, commitCount: 3, commits: [member(older, []), member(novel, [earlier]), member(originalHead, [novel, older])] },
+    carrier: { baseSha: base.sha, headSha: head.sha, commitCount: 3, commits: carrierCommits },
+    acceptanceSha: terminal.sha,
+    objects: [head, older, earlier, base, novel, originalHead, terminal],
+    trustedRange: { baseSha: base.sha, headSha: head.sha, parentRows: parentRows(carrierCommits) },
+  } satisfies NativeCarrierPartitionInput
+  return { input, older, earlier, base, novel, originalHead, head, terminal }
+}
+
+it.effect('Proves the restored original partition from exact Git bytes and the observed carrier range (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+  const { input, older, base, novel, originalHead, terminal } = stackedCarrier()
+  const reversed = { ...input, objects: [...input.objects].reverse(), trustedRange: { ...input.trustedRange, parentRows: parentRows([...input.carrier.commits].reverse()) } }
+  const accepted = verifyNativeCarrierPartition(input)
+  try orDie(Effect.try(() => {
+    assert.deepStrictEqual(accepted, {
+      baseSha: base.sha,
+      acceptedSha: terminal.sha,
+      priorBaseCommitShas: [older.sha],
+      newlyAcceptedCommitShas: [novel.sha, originalHead.sha].sort(),
+    })
+    assert.deepStrictEqual(verifyNativeCarrierPartition(reversed), accepted)
+    assert.lengthOf(input.original.commits, 3)
+  }))
+})
+
+it.effect('Holds partial, forged or conflicting histories before producing credit (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+  const { input, older, earlier, base, novel, originalHead, head, terminal } = stackedCarrier()
+  const swapped = commit("reversed native terminal", [head, base])
+  const inventedRange = [...input.carrier.commits, member(older, [])]
+  const invalid: ReadonlyArray<NativeCarrierPartitionInput> = [
+    { ...input, objects: input.objects.filter((item) => item.sha !== earlier.sha) },
+    { ...input, objects: input.objects.filter((item) => item.sha !== base.sha) },
+    { ...input, objects: input.objects.filter((item) => item.sha !== terminal.sha) },
+    { ...input, objects: [...input.objects, terminal] },
+    { ...input, objects: [...input.objects.filter((item) => item.sha !== terminal.sha), { sha: terminal.sha, raw: novel.raw }] },
+    { ...input, acceptanceSha: swapped.sha, objects: [...input.objects, swapped] },
+    { ...input, trustedRange: { ...input.trustedRange, baseSha: earlier.sha } },
+    { ...input, trustedRange: { ...input.trustedRange, headSha: originalHead.sha } },
+    { ...input, trustedRange: { ...input.trustedRange, parentRows: input.trustedRange.parentRows.trimEnd() } },
+    { ...input, trustedRange: { ...input.trustedRange, parentRows: input.trustedRange.parentRows.replace(`${originalHead.sha} ${novel.sha} ${older.sha}`, `${originalHead.sha} ${older.sha} ${novel.sha}`) } },
+    { ...input, carrier: { ...input.carrier, commitCount: inventedRange.length, commits: inventedRange }, trustedRange: { ...input.trustedRange, parentRows: parentRows(inventedRange) } },
+    { ...input, original: { ...input.original, commitCount: 2, commits: input.original.commits.filter((item) => item.sha !== originalHead.sha) } },
+    { ...input, original: { ...input.original, commits: input.original.commits.filter((item) => item.sha !== older.sha) } },
+    { ...input, original: { ...input.original, commitCount: 4, commits: [...input.original.commits, member(head, [base, originalHead], maintainer)] } },
+    { ...input, original: { ...input.original, commits: input.original.commits.map((item) => item.sha === novel.sha ? { ...item, author: maintainer } : item) } },
+    { ...input, original: { ...input.original, commits: input.original.commits.map((item) => item.sha === novel.sha ? { ...item, attributionDigest: "f".repeat(64) } : item) } },
+  ]
+  const results = invalid.map(verifyNativeCarrierPartition)
+  try orDie(Effect.try(() => assert.deepStrictEqual(results, invalid.map(() => undefined))))
+})
+
+it.effect('Checks the Git object header and keeps the ordered native parents (spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read")', () => effect {
+  const { older, earlier } = stackedCarrier()
+  const signed = identity(textBytes(`tree ${tree}\nparent ${earlier.sha}\nparent ${older.sha}\n${identityHeaders}\ngpgsig -----BEGIN PGP SIGNATURE-----\n parent continued text\n -----END PGP SIGNATURE-----\n\nmessage\n`))
+  const malformed = [
+    identity(textBytes(`tree ${tree}\nparent ${older.sha}\nparent ${older.sha}\n${identityHeaders}\n\nmessage\n`)),
+    identity(textBytes(`tree ${tree}\n${identityHeaders}\nparent ${older.sha}\n\nmessage\n`)),
+    identity(textBytes(`tree ${tree}\n${identityHeaders}\n`)),
+  ]
+  try orDie(Effect.try(() => {
+    assert.deepStrictEqual(parseNativeCommitObject(signed.sha, signed.raw), { sha: signed.sha, treeSha: tree, parents: [earlier.sha, older.sha] })
+    assert.isUndefined(parseNativeCommitObject(older.sha, signed.raw))
+    assert.deepStrictEqual(malformed.map(({ sha, raw }) => parseNativeCommitObject(sha, raw)), malformed.map(() => undefined))
+  }))
+})
