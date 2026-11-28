@@ -2,6 +2,8 @@
 import { gitBytes, publicGitArguments } from "@repo/platform/git"
 import { utf8Text } from "@repo/platform/git/bytes"
 import { hunkHeader, noNewlineMarker } from "../proofs/patchReplay.ts"
+import type { VerifiedCarrierAlias } from "./carrierAlias.vibe"
+import { issuedCarrierAlias } from "./carrierAliasAttestation.vibe"
 
 export error CarrierLineProofUnavailable { reason: string }
 
@@ -207,7 +209,7 @@ export effect function carrierAliasIngress(directory: string, path: string, cano
   })
 }
 
-effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>) {
+effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>, alias: VerifiedCarrierAlias | undefined) {
   const { baseSha, acceptedSha } = request
   const accepted = try editsOf(directory, baseSha, acceptedSha, path)
   const baseBlame = try blameOf(directory, baseSha, path, accepted.deletions)
@@ -237,8 +239,9 @@ effect function carrierPathLines(directory: string, request: CarrierLineRequest,
   for (const [position, edit] of accepted.additions) {
     const identity = acceptedBlame.get(position)
     if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
-    if (identity.path === path && byCommit.get(identity.sha)?.additions.get(identity.number) === edit) count(identity.sha, "additions")
-    else unresolvedAdditions += 1
+    if (identity.path === path && byCommit.get(identity.sha)?.additions.get(identity.number) === edit) {
+      count(identity.sha === alias?.repeatedSha ? alias.canonicalSha : identity.sha, "additions")
+    } else unresolvedAdditions += 1
   }
   let unresolvedDeletions = 0
   for (const [position, edit] of accepted.deletions) {
@@ -246,7 +249,13 @@ effect function carrierPathLines(directory: string, request: CarrierLineRequest,
     if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
     const options = removalCandidates.get(sourceLine(identity)) ?? []
     const [candidate] = options
-    if (options.length === 1 && candidate !== undefined && candidate.text === edit) count(candidate.sha, "deletions")
+    const original = options.length === 1 && candidate !== undefined && candidate.text === edit && candidate.sha !== alias?.repeatedSha
+      ? candidate.sha : undefined
+    const canonical = alias !== undefined && options.length === 2 &&
+      options.some(({ sha, text }) => sha === alias.canonicalSha && text === edit) &&
+      options.some(({ sha, text }) => sha === alias.repeatedSha && text === edit) ? alias.canonicalSha : undefined
+    const owner = original ?? canonical
+    if (owner !== undefined) count(owner, "deletions")
     else unresolvedDeletions += 1
   }
   return {
@@ -289,7 +298,7 @@ effect function changedPaths(directory: string, before: string, after: string) {
 
 // Run only in the pinned, verified Git workspace. This derives the candidate
 // scope from native history, so a supplied list cannot suppress a competing edit.
-export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest) {
+export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest, aliases: ReadonlyArray<VerifiedCarrierAlias> = []) {
   const { baseSha, acceptedSha } = request
   if (!oid.test(baseSha) || !oid.test(acceptedSha) || baseSha === acceptedSha) {
     throw new CarrierLineProofUnavailable({ reason: "Native carrier text proof has an invalid identity" })
@@ -316,10 +325,22 @@ export effect function verifyCarrierLines(directory: string, request: CarrierLin
       candidates.set(path, rowsForPath)
     }
   }
+  const byPath = new Map<string, VerifiedCarrierAlias>()
+  for (const alias of aliases) {
+    if (!issuedCarrierAlias(alias) || alias.baseSha !== baseSha || alias.acceptedSha !== acceptedSha) {
+      throw new CarrierLineProofUnavailable({ reason: "Carrier alias is outside the verified native range" })
+    }
+    const members = candidates.get(alias.path)
+    if (byPath.has(alias.path) || alias.canonicalSha === alias.repeatedSha ||
+      members === undefined || !members.some(({ sha }) => sha === alias.canonicalSha) || !members.some(({ sha }) => sha === alias.repeatedSha)) {
+      throw new CarrierLineProofUnavailable({ reason: "Verified carrier alias disagrees with the accepted path and native scope" })
+    }
+    byPath.set(alias.path, alias)
+  }
   const paths: CarrierPathLines[] = []
   for (const { path, text } of changes) {
     if (!text) throw new CarrierLineProofUnavailable({ reason: unavailable })
-    paths.push(try carrierPathLines(directory, request, path, candidates.get(path) ?? []))
+    paths.push(try carrierPathLines(directory, request, path, candidates.get(path) ?? [], byPath.get(path)))
   }
   return { baseSha, acceptedSha, paths } satisfies CarrierLineProof
 }

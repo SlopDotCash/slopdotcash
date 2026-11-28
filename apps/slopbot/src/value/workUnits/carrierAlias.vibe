@@ -1,6 +1,7 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
 import { gitObjectId, sha256Of } from "@repo/platform/git/bytes"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { issueCarrierAlias } from "./carrierAliasAttestation.vibe"
 import { CarrierLineProofUnavailable, carrierAliasIngress, literalPath, readCarrierGit, readCarrierGitBytes } from "./carrierLines.vibe"
 import type { NativeCarrierHistory, NativeCarrierMember } from "./carrierPartition.vibe"
 import { reconstructCarrierPartition } from "./carrierProof.vibe"
@@ -14,6 +15,7 @@ export interface CarrierAliasRequest {
 }
 
 export interface VerifiedCarrierAlias {
+  readonly baseSha: string
   readonly acceptedSha: string
   readonly path: string
   readonly canonicalSha: string
@@ -110,9 +112,9 @@ export effect function verifyCarrierAlias(directory: string, request: CarrierAli
     previous = sha
   }
   if (previous !== later.parentSha) throw refused()
-  return {
-    acceptedSha, path, canonicalSha, repeatedSha, actorNodeId: actor.nodeId,
+  return issueCarrierAlias({
+    baseSha: carrier.baseSha, acceptedSha, path, canonicalSha, repeatedSha, actorNodeId: actor.nodeId,
     canonicalIngressSha: first.sha, repeatedIngressSha: later.sha,
     pathDeltaSha256: sha256Of(canonicalDelta + "\0" + path + "\0"),
-  } satisfies VerifiedCarrierAlias
+  })
 }

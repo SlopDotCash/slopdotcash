@@ -112,6 +112,11 @@ it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbo
       commitShas: [canonical, repeated] as const,
     }
     const proof = try verifyCarrierAlias(root, request)
+    const lineRequest = { baseSha: base, acceptedSha: request.acceptedSha }
+    const strict = try verifyCarrierLines(root, lineRequest)
+    const verified = try verifyCarrierLines(root, lineRequest, [proof])
+    const duplicatePath = verifyCarrierLines(root, lineRequest, [proof, proof]) catch (error) => error._tag
+    const detachedProof = verifyCarrierLines(root, lineRequest, [{ ...proof }]) catch (error) => error._tag
     const changedActor = {
       ...request.carrier,
       commits: request.carrier.commits.map((row) => row.sha === canonical ? { ...row, author: { nodeId: "MDQ6VXNlcjUyOTkwMzE=", type: "User" } } : row),
@@ -141,6 +146,16 @@ it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbo
         [proof.path, proof.canonicalSha, proof.repeatedSha, proof.actorNodeId, proof.canonicalIngressSha, proof.repeatedIngressSha],
         ["source.txt", canonical, repeated, "MDQ6VXNlcjM4MjUwNTA=", firstIngress, laterIngress],
       )
+      assert.equal(strict.paths[0]?.unresolvedDeletions, 1)
+      assert.deepEqual(verified.paths[0], {
+        path: "source.txt", additions: 2, deletions: 1, unresolvedAdditions: 0, unresolvedDeletions: 0,
+        claims: [
+          { sha: canonical, additions: 1, deletions: 1 },
+          { sha: followUp, additions: 1, deletions: 0 },
+        ].sort((left, right) => left.sha.localeCompare(right.sha)),
+      })
+      assert.equal(duplicatePath, "CarrierLineProofUnavailable")
+      assert.equal(detachedProof, "CarrierLineProofUnavailable")
       assert.deepEqual([actorRefusal, patchRefusal, topologyRefusal, reapplication, ambiguity], Array(5).fill("CarrierLineProofUnavailable"))
     })
   }

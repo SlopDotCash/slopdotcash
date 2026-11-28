@@ -1,0 +1,14 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import type { VerifiedCarrierAlias } from "./carrierAlias.vibe"
+
+const issuedAliases = new WeakSet<VerifiedCarrierAlias>()
+
+export function issueCarrierAlias(alias: VerifiedCarrierAlias) {
+  const proof = Object.freeze(alias)
+  issuedAliases.add(proof)
+  return proof
+}
+
+export function issuedCarrierAlias(alias: VerifiedCarrierAlias) {
+  return issuedAliases.has(alias)
+}
