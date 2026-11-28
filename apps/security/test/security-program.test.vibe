@@ -404,7 +404,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }
   })
 
-  it.effect('Only separately approved exact redacted content is disclosed after an independent patch review (spec/security/remediation.md, "Only separately approved exact redacted content is disclosed, with embargo history"; spec/security/remediation.md, "The exact patch is reviewed independently before it resolves, and mitigation is verified separately"; spec/security/remediation.md, "Remediation acts under the case\'s current roles")', () => effect {
+  it.effect(`Only separately approved exact redacted content is disclosed after an independent patch review (spec/security/remediation.md, "Only separately approved exact redacted content is disclosed, with embargo history"; spec/security/remediation.md, "The exact patch is reviewed independently before it resolves, and mitigation is verified separately"; spec/security/remediation.md, "Remediation acts under the case's current roles")`, () => effect {
     const program = try Program
     provide shellOf(program) {
       try exactDisclosure(program)

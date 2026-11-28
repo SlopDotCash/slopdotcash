@@ -99,7 +99,7 @@ effect function gasRows(world: World) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('A lost broadcast answer keeps the journaled bytes, the nonce floor spans tokens, and a same-nonce group settles once (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change")', () => effect {
+  it.effect(`A lost broadcast answer keeps the journaled bytes, the nonce floor spans tokens, and a same-nonce group settles once (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change")`, () => effect {
     const world = try opened(1)
     try live(world)
     try step(world, { type: "acquireLease", runId: 1, trigger: "Recovery" })
@@ -225,7 +225,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       later: ["accepted", "Solana fee activity prevents RPC rotation", [true], { holder: 0, expiresAt: 0 }],
     })
   })
-  it.effect('A recorded send without a reservation is imported once at its own megawei worst case and the journal loads, an open legacy approval-only row blocks only its token and holds its nonce, and an approval to another spender is never signed (spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => effect {
+  it.effect(`A recorded send without a reservation is imported once at its own megawei worst case and the journal loads, an open legacy approval-only row blocks only its token and holds its nonce, and an approval to another spender is never signed (spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it")`, () => effect {
     const world = try opened(7)
     try live(world)
     try step(world, { type: "addToken", asset: "ProjectToken" })

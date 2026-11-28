@@ -63,7 +63,7 @@ effect function body(objects: LocalGitObjects, path: string) {
   return text === null ? null : try Effect.try(() => JSON.parse(text) as unknown)
 }
 
-it.live('Read immutable Git objects without spending the GitHub allowance (spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub\'s")', () => effect {
+it.live(`Read immutable Git objects without spending the GitHub allowance (spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's")`, () => effect {
   const clock = settableClock(start)
   const world = try Effect.try(() => seeded(clock.now))
   const fake = world.fake

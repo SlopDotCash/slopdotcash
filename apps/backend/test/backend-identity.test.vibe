@@ -194,7 +194,7 @@ function assertionOf(answer: unknown) {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
+  it.effect(`Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")`, () => effect {
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.1" }
     const web = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
     const waiting = try poll("/v1/oauth/poll", web, "slop-points-web", browser)
@@ -258,7 +258,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('A failed or expired sign-in ends its flow, and every start and poll counts in its client\'s window (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
+  it.effect(`A failed or expired sign-in ends its flow, and every start and poll counts in its client's window (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")`, () => effect {
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.3" }
     const diagnosedBefore = (try diagnostics(0)).length
     const denied = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
@@ -411,7 +411,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows, expired site sessions among them (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
+  it.effect(`A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows, expired site sessions among them (spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")`, () => effect {
     const local = try begin("/v1/local/start", { audience: "slop-points-web", returnOrigin: "http://127.0.0.1:4466" })
     const badOrigin = try call(`${identity}/v1/local/start`, { json: { audience: "slop-points-web", returnOrigin: "https://slop.cash" } })
     const wrongRoute = try poll("/v1/oauth/poll", local, "slop-points-web")
