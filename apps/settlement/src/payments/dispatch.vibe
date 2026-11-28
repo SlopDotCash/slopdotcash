@@ -119,9 +119,9 @@ interface Leased {
   readonly lease: string
 }
 
-effect function projected(leased: Leased, rows: ObligationRows, requests: ReadonlyArray<DispatchRequest>) {
+effect function projected(leased: Leased, rows: ObligationRows, requests: ReadonlyArray<DispatchRequest>, read: "reserved" | "captured-reply" = "reserved") {
   const row = rows.obligation
-  if (row === undefined || row.state !== "reserved") return undefined
+  if (row === undefined || (read === "reserved" && row.state !== "reserved")) return undefined
   const projection: Projection = { ...try projectionFor(leased.deployment, leased.asset, row.github_user_id, leased.lease), requests }
   return try project(projection, rows)
 }
@@ -201,7 +201,7 @@ effect function ambiguous(leased: Leased, sent: DispatchRequest) {
 
 effect function succeeded(leased: Leased, sent: DispatchRequest, transaction: string) {
   return try update(obligationAggregate(leased.obligationId), (rows) => effect {
-    const current = try projected(leased, rows, [sent])
+    const current = try projected(leased, rows, [sent], "captured-reply")
     if (current === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
     const next = try delivered(current.settlement, { tag: "NoteSuccess", token: ownToken, tx: transaction })
     if (next === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
