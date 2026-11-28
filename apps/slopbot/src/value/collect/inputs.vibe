@@ -3,7 +3,7 @@ import { ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
 import { Git } from "@repo/platform/git"
 import type { MergeRecipe } from "@repo/platform/git/evidence"
-import { GitHub } from "@repo/platform/github"
+import { GitHub, GitHubUnavailable } from "@repo/platform/github"
 import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, auditedAt, collectionMemoStatsLines, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
 import { type AttributionHold, type CensusOutcome, type HeldWorkUnit, type HistoricalClosedContext, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
@@ -746,9 +746,9 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
   const graph = try Graphql
   const recorder = () => run.recorder
   return try Effect.provide(provideService(provideService(effect {
-    const found = try attributions(run, input.attribution, acceptedCommitOwners(census))
+    const found = try valueRead("retained attribution", attributions(run, input.attribution, acceptedCommitOwners(census)))
     const valueDecisions: SourceDecision[] = []
-    try scoped(effect {
+    try valueRead("assessment decisions", scoped(effect {
       if (readsAhead(concurrency, input.value.length)) try reading.start(try warmTargets(run, input.value))
       try Effect.ensuring(effect {
         for (const [index, outcome] of input.value.entries()) {
@@ -757,7 +757,7 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
           if (decision !== undefined) valueDecisions.push({ sourceId: outcome.id, decision })
         }
       }, reading.stop())
-    })
+    }))
     return {
       valueDecisions,
       jointValueDecisions: [...run.jointDecisions].map(([sourceId, decision]) => ({ sourceId, decision })),
@@ -767,6 +767,33 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
       heldWorkUnits: run.held,
     } satisfies ValueInputsRead
   }, GitHub, recordingGitHub(github, recorder)), Graphql, recordingGraphql(graph, recorder)), retention)
+}
+
+type ValueReadStage = "retained attribution" | "assessment decisions"
+
+function endpointFamily(path: string) {
+  const repository = /^\/(?:repos\/[^/?#]+\/[^/?#]+|repositories\/[0-9]+)(?:\/([^/?#]+))?(?=[/?#]|$)/u.exec(path)
+  if (repository === null) return /^\/(?:user|users)(?:[/?#]|$)/u.test(path) ? "actor" : "other"
+  switch (repository[1]) {
+    case undefined: return "repository"
+    case "pulls": return "pull requests"
+    case "issues": return "issue discussions"
+    case "commits": return "commits"
+    case "compare": return "commit comparison"
+    case "git": return "git objects"
+    case "contents": return "repository contents"
+    case "branches": return "repository branches"
+    default: return "other"
+  }
+}
+
+effect function valueRead<A, E, R>(stage: ValueReadStage, read: A!E!R) {
+  return read catch effect (error) => {
+    if (!(error instanceof GitHubUnavailable)) throw error
+    const { path, status } = error
+    const http = status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599 ? `, HTTP ${status}` : ""
+    throw new ValueEvidenceRefused({ message: `GitHubUnavailable during ${stage} (endpoint: ${endpointFamily(path)}${http})` })
+  }
 }
 
 function messageOf(error: { readonly _tag: string }) {
