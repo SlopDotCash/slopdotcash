@@ -720,4 +720,36 @@ layer(World, { timeout: "240 seconds" })((it) => {
       withdrawnHeld: { n: 1 },
     })
   })
+  it.effect('Covers of standing deposits that already have an outcome are not read again, so they take no place in a run from a cover whose deposit still waits (spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
+    const { fees } = try FeeWorld
+    const tRun = Date.parse("2027-02-10T00:00:00.000Z")
+    const outcomes = ["refunded", "kept", "refund_due"] as const
+    const decidedPulls: number[] = []
+    for (let index = 0; index < standingCoverBatch; index++) decidedPulls.push(try opened(`Still open after its deposit was decided ${index}`, Date.parse("2026-12-02T00:00:00.000Z")))
+    const waiting = try opened("Past its window, deposit asked back", Date.parse("2026-12-02T00:00:00.000Z"))
+    const coverInsert = `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'ada', 'widgets', '2026-12-02T00:00:00.000Z', '2026-12-02T00:00:00.000Z', '2026-12-02T00:00:00.000Z', ?, 1, NULL, ?, ?)`
+    try Effect.promise(() => fees.db.batch([
+      ...outcomes.map((outcome, index) => fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, withdraw_requested_at, outcome, outcome_reason, outcome_at, strike_repository_id, strike_pull_number)
+         VALUES (?, ?, 1, ?, '755000000000000000000', '75.4717', '2026-12-01T00:00:00.000Z', '2026-12-01T00:00:00.000Z', 'robinhood-standing', ?, ?, ?, ?, '2026-12-26T00:00:00.000Z', ?, ?)`,
+      ).bind(`sd_decided_${index}`, 9301 + index, `0x${String(9301 + index).padStart(64, "0")}`, 9301 + index, outcome === "kept" ? null : "2026-12-03T00:00:00.000Z", outcome, outcome === "kept" ? "strike" : "withdrawn", outcome === "kept" ? repositoryId + 4 : null, outcome === "kept" ? 1 : null)),
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, withdraw_requested_at)
+         VALUES ('sd_still_waits', 9304, 1, ?, '755000000000000000000', '75.4717', '2026-12-01T00:00:00.000Z', '2026-12-01T00:00:00.000Z', 'robinhood-standing', 9304, '2026-12-03T00:00:00.000Z')`,
+      ).bind(`0x${"9304".padStart(64, "0")}`),
+      ...decidedPulls.map((number, index) => fees.db.prepare(coverInsert).bind(repositoryId, number, `sd_decided_${index % outcomes.length}`, 9301 + index % outcomes.length, projectId, installationId, outcomes[index % outcomes.length] === "kept" ? "watch" : "clear", "2027-02-09T00:00:00.000Z", "2026-10-01T00:00:00.000Z")),
+      fees.db.prepare(coverInsert).bind(repositoryId, waiting, "sd_still_waits", 9304, projectId, installationId, "watch", "2027-02-09T00:00:00.000Z", "2026-10-02T00:00:00.000Z"),
+    ]))
+    const result = try at(tRun, checkStandingDeposits())
+    const cover = (try Effect.promise(() => fees.db.prepare("SELECT state FROM standing_deposit_covers WHERE deposit_id = 'sd_still_waits'").all())).results[0]
+    const deposit = (try Effect.promise(() => fees.db.prepare("SELECT outcome, outcome_reason FROM standing_deposits WHERE id = 'sd_still_waits'").all())).results[0]
+    const leftAlone = (try Effect.promise(() => fees.db.prepare("SELECT COUNT(*) AS n FROM standing_deposit_covers WHERE deposit_id GLOB 'sd_decided_*' AND next_check_at = '2027-02-09T00:00:00.000Z' AND updated_at = '2026-10-01T00:00:00.000Z'").all())).results[0]
+    try same({ decided: result.decided, cover, deposit, leftAlone }, {
+      decided: 1,
+      cover: { state: "clear" },
+      deposit: { outcome: "refund_due", outcome_reason: "withdrawn" },
+      leftAlone: { n: standingCoverBatch },
+    })
+  })
 })

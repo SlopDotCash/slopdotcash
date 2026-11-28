@@ -176,10 +176,11 @@ effect function readCoverPull(cover: typeof WatchedCoverRow.Type) {
 }
 
 effect function readCovers(nowMillis: number, at: string) {
-  const due = try rows(WatchedCoverRow, sql`SELECT repository_id, pull_number, deposit_id, installation_id, owner, repo, window_start, state, strike_seen_at
-    FROM standing_deposit_covers
-    WHERE state IN ('watch', 'pending', 'clear') AND next_check_at IS NOT NULL AND next_check_at <= ${at}
-    ORDER BY updated_at, next_check_at LIMIT ${standingCoverBatch}`)
+  const due = try rows(WatchedCoverRow, sql`SELECT c.repository_id, c.pull_number, c.deposit_id, c.installation_id, c.owner, c.repo, c.window_start, c.state, c.strike_seen_at
+    FROM standing_deposit_covers c
+    JOIN standing_deposits d ON d.id = c.deposit_id
+    WHERE d.outcome IS NULL AND c.state IN ('watch', 'pending', 'clear') AND c.next_check_at IS NOT NULL AND c.next_check_at <= ${at}
+    ORDER BY c.updated_at, c.next_check_at LIMIT ${standingCoverBatch}`)
   let read = 0
   for (const cover of due) {
     const pull = try readCoverPull(cover)
