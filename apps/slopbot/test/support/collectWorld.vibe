@@ -3,7 +3,7 @@ import { Response as WebResponse } from "miniflare"
 import type { Fetcher } from "@repo/platform/bindings"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type Handler, type Outbound, internet } from "@repo/platform/testing/internet"
-import { type Seeded, acceptedReviewHistoryJson, fetcherOf, registryAnswer, registryOrigin, repositoryRegistry, seeded, start } from "@repo/points/testing"
+import { type Seeded, acceptedReviewHistoryJson, day, fetcherOf, registryAnswer, registryOrigin, repository, repositoryRegistry, seeded, start } from "@repo/points/testing"
 import { historyOrigin, penaltiesPath, penaltiesVersion, penaltyHistoryVersion, valueHistoryPath, workUnitHistoryPath } from "@repo/ports/slopbot"
 import { enterDirectory } from "./workingDirectory.ts"
 
@@ -16,6 +16,7 @@ export interface Feed {
 
 export interface CollectWorld {
   readonly github: Seeded
+  readonly solo: number
   readonly feed: Feed
   readonly handler: Handler
   readonly requests: ReadonlyArray<Outbound>
@@ -134,6 +135,12 @@ effect function registrySnapshot(github: Seeded) {
 export effect function collectWorld() {
   const fs = try FileSystem.FileSystem
   const github = try Effect.try(() => seeded())
+  const solo = try Effect.try(() => {
+    const listed = github.fake.world.repo(repository)
+    const base = listed.branches.get(listed.defaultBranch) ?? ""
+    const commit = github.fake.world.addCommit(repository, { branch: "solo", parents: [base], author: "grace", files: { "src/solo.ts": "solo\n" } })
+    return github.fake.world.addPull({ repo: repository, author: "grace", title: "Single change", mergedAt: new Date(start - 2 * day).toISOString(), commits: [commit], headSha: commit, headRef: "solo", files: [{ path: "src/solo.ts", additions: 1, deletions: 0, status: "added" }] })
+  })
   const feed = feedOf()
   const net = internet({ github: bridged(fetcherOf(github)), hosts: { [siteHost]: site(github), [feedHost]: slopbotFeeds(feed) } })
   const outputDirectory = try fs.makeTempDirectory()
@@ -156,6 +163,7 @@ export effect function collectWorld() {
   }
   return {
     github,
+    solo,
     feed,
     handler: net.handler,
     requests: net.requests,
