@@ -85,11 +85,13 @@ describe("Close and reopen an account without losing history", () => {
     const [before] = await membersOf(users.lin.id);
     expect(before).toMatchObject({ public: 1, closed_at: null });
 
+    await site.allow("^401 GET /api/v1/notifications/email$");
     const closed = await site.fetch("POST", "/api/v1/points/account/close", { login: users.lin.login });
     expect(closed).toMatchObject({ status: 200, body: { closed: true } });
     expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 0, closed_at: expect.any(String) as unknown }]);
     expect(await sessionsOf(before?.actor_id)).toEqual([{ sessions: 0 }]);
     expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 401 });
+    expect(await site.fetch("GET", "/api/v1/notifications/email")).toMatchObject({ status: 401 });
 
     await site.refocus();
     await shown(named("link", "Log in")).toMatchObject({ visible: true });
