@@ -66,7 +66,7 @@ function liabilityOracle(entries: ReadonlyArray<NativeLiabilityEntry>, day: stri
 const earning = Arbitrary.map(Arbitrary.all([pick(["direct", "claim", "conversion"]), pick(["fee-wallet", "someone-else"]), wei, pick(["2026-11-14T10:00:00.000Z", "2026-11-15T09:00:00.000Z", "2026-11-16T08:00:00.000Z"])]), ([kind, recipient, value, at]): NativeFeeEarning =>
   kind === "direct" ? { kind, recipient, amount: value, at } : kind === "claim" ? { kind, amount: value, at } : { kind, amount: value })
 
-it.effect('Native gas counts settled cost today and the largest open ceiling per nonce, and only received fees fund it (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are")', () => effect {
+it.effect(`Native gas counts settled cost today and the largest open ceiling per nonce, and only received fees fund it (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are")`, () => effect {
   try holds(Arbitrary.array(liabilityEntry, { maxLength: 40 }), (entries) => nativeDailyLiability(6, entries, "2026-11-16") === liabilityOracle(entries, "2026-11-16"))
   try holds(Arbitrary.array(earning, { maxLength: 40 }), (entries) => {
     const credited = entries.filter((entry) => entry.kind === "claim" || (entry.kind === "direct" && entry.recipient === "fee-wallet"))
@@ -101,7 +101,7 @@ function creditOracle(before: ReadonlyArray<RouteTokenBalance>, after: ReadonlyA
   return debit !== (nativeInput ? 0n : amountIn) || credit < minimumOut ? refused(3) : { error: 0, amount: credit }
 }
 
-it.effect('A route credit is the exact delta of the reviewed destination after the exact source debit, and no other holding of the wallet loses value (spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are")', () => effect {
+it.effect('A route credit is the exact delta of the reviewed destination after the exact source debit, and no other holding of the wallet loses value (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
   try holds(Arbitrary.all([holdings, holdings, amount(3n), amount(3n), Arbitrary.schema(Schema.Boolean)]), ([before, after, amountIn, minimumOut, nativeInput]) => {
     const result = routeTokenCredit(before, after, 0, 1, 0, 0, 1, 0, 1, nativeInput, amountIn, minimumOut)
     const want = creditOracle(before, after, nativeInput, amountIn, minimumOut)

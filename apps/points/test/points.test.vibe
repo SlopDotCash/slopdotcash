@@ -4381,7 +4381,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
-    it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
+    it.effect(`one prior pull request covers its exact submitted commit and a different squash output (spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source")`, () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
         const expected = try Effect.try(() => f.bind())
@@ -4389,7 +4389,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
-    it.effect("path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path", () => effect {
+    it.effect(`path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path (spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source")`, () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture(true))
         const expected = try Effect.try(() => f.bind())
@@ -4405,7 +4405,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
-    it.effect("a mixed submitted and squash proof refuses every changed binding", () => effect {
+    it.effect(`a mixed submitted and squash proof refuses every changed binding (spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source")`, () => effect {
       provide webCrypto {
         for (const change of changes) {
           const f = try changed(change)
@@ -4415,7 +4415,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
-    it.effect("the reviewed packet is read only under its exact digest", () => effect {
+    it.effect(`the reviewed packet is read only under its exact digest (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it")`, () => effect {
       provide webCrypto {
         const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
         try Effect.try(() => f.bind())
@@ -4430,7 +4430,7 @@ import { seededGithub, slopbotFake } from fakes
       }
     })
 
-    it.effect("an untrusted publication is refused before any private input is read", () => effect {
+    it.effect(`an untrusted publication is refused before any private input is read (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it")`, () => effect {
       provide Layer.mergeAll(NodeServices.layer, webCrypto, outbound, Layer.provide(systemGit, NodeServices.layer)) {
         const digest = sha256Of(actor.id)
         const failure = try Effect.flip(reviewed(["registry.json", "--reviewed-sha256", digest]))

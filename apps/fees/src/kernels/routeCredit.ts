@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
+// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
 
 export interface RouteTokenBalance {
   accountIndex: number;
