@@ -11,11 +11,12 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { Journal, Revision } from "../src/kernels/records/canonical.ts"
 import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
-import type { SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+import { type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
 import { type HistoricalAssessmentCatalog, type HistoricalAssessmentJournalHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition, readHistoricalAssessmentCatalog, readHistoricalAssessmentJournalHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
 import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/audit/reconcile.vibe"
-import { capturedCut, historicalReplayRequiresCollection, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
+import { type AuditPhase, auditedScope, capturedCut, historicalReplayRequiresCollection, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
 import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings, historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
+import { phased } from "../src/corrections/reviewed/replay/services.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { jsonReply } from "./support/catchup3-e2/replies.ts"
 
@@ -31,7 +32,9 @@ const occurredAt = "2026-10-05T00:00:00.000Z"
 const closedPull = "PR_legacy_closed"
 const closedMarker = "a".repeat(40)
 const baselineDigest = "b".repeat(64)
-const manifest = JSON.stringify({ id: "fixture", status: "active", authority: { repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] })
+const project = { id: "fixture", status: "active", authority: { repositoryId: "42", repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] }
+const manifest = JSON.stringify(project)
+const unregisteredProject = { ...project, id: "unregistered-audit-fixture" }
 const scope: HistoricalAssessmentScope = { projectId: "fixture", repositoryNodeId: "R_audit", revision: 5, manifestSha256: sha256Of(manifest), expectedPointsDigest: baselineDigest }
 const audit: SourceAudit = {
   repository: "fixture/repo",
@@ -158,6 +161,40 @@ function answered(request: HttpClientRequest.HttpClientRequest, status: number, 
   return HttpClientResponse.fromWeb(request, jsonReply(body, { status, headers: { "content-type": "application/json" } }))
 }
 
+function auditApi(censusStatus: number) {
+  const network = HttpClient.make((request) => {
+    if (request.url === "https://slop.cash/api/v1/projects") {
+      return succeed(answered(request, 200, { schemaVersion: "1", projects: [unregisteredProject], restrictions: [] }))
+    }
+    if (request.url === "https://slop.cash/api/v1/project-revisions") {
+      return succeed(answered(request, 200, { schemaVersion: "1", revisions: [{ projectId: unregisteredProject.id, revision: scope.revision, manifestSha256: digestText(unregisteredProject), manifest: unregisteredProject }] }))
+    }
+    if (request.url === "https://api.github.com/repos/fixture/repo") {
+      return succeed(answered(request, 200, { id: 42, node_id: "R_audit", private: false, full_name: "fixture/repo" }))
+    }
+    if (request.url === "https://api.github.com/graphql" && censusStatus === 200) {
+      return succeed(answered(request, 200, { data: { search: {
+        issueCount: 1, pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{ id: "PR_known", number: 7, headRefOid: headSha, mergedAt: occurredAt, repository: { id: "R_audit" } }],
+      } } }))
+    }
+    return succeed(answered(request, censusStatus, { message: "PRIVATE SOURCE DIAGNOSTIC" }))
+  })
+  return Layer.provideMerge(github({ token: Redacted.make("t"), userAgent: "slopbot" }), Layer.succeed(HttpClient.HttpClient, network))
+}
+
+effect function auditRefusal(censusStatus: number, source: string, baseline: string) {
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
+    HISTORICAL_ASSESSMENT_PROJECT: unregisteredProject.id,
+    HISTORICAL_SOURCE_AUDIT_SHA256: source,
+    HISTORICAL_POINTS_BASELINE_SHA256: baseline,
+  }))
+  provide auditApi(censusStatus), environment {
+    const failure = try Effect.flip(phased("main source verification" as AuditPhase, (setPhase) => auditedScope(setPhase, false)))
+    return failure.message
+  }
+}
+
 function closedContextApi(seen: string[], observed: unknown, rest: unknown) {
   const network = HttpClient.make((request) => {
     seen.push(`${request.method} ${request.url}`)
@@ -272,6 +309,21 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
     const held = { status: "incomplete", blockers: ["missing-from-merged-audit"], empty: 0, sealed: "AuditIncomplete" }
     try same([...guarded, awarded].map(outcome), [...guarded, awarded].map(() => held))
     try same(awarded.seen, [])
+  })
+
+  it.effect('An assessment audit reports the refused check without exposing private inputs (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {
+    const world = try World
+    provide d1(world.db) {
+      const refused = (phase: string) => `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner`
+      const rejectedRead = try auditRefusal(403, sourceDigest, baselineDigest)
+      const mismatchedCensus = try auditRefusal(200, sourceDigest, baselineDigest)
+      const unavailableCheckpoint = try auditRefusal(200, digestText(audit), baselineDigest)
+      try same([rejectedRead, mismatchedCensus, unavailableCheckpoint], [
+        refused("historical census verification"),
+        refused("historical census digest comparison"),
+        refused("assessment catalog scope read"),
+      ])
+    }
   })
 
   it.effect('An assessment audit outside the trusted main dispatch reads nothing (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {
