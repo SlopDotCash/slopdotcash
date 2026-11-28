@@ -11,7 +11,7 @@ export const attributionAuditOneIn = auditOneIn
 export const attributionChangedCodeAuditOneIn = changedCodeAuditOneIn
 export const attributionRulesVersion = 1
 export const ATTRIBUTION_RULES_VERSION = attributionRulesVersion
-export const attributionRulesDigest = "835923728682f6b214ee99ebff18a34cba828cb31e3b6b02cb250c59bb524763"
+export const attributionRulesDigest = "e87e47748f2756ede6ff88eb4cc336137016eaad2729a653d623f1d056dc668c"
 export const attributionRulesSources: ReadonlyArray<RulesSource> = [
   { path: "apps/slopbot/src/value/collect/attributionMemo.vibe" },
   { path: "apps/slopbot/src/value/collect/discussion.vibe" },
