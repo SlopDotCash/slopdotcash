@@ -268,25 +268,6 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
     })
   })
 
-  it.effect('Atomic import refuses a zero-delta reviewed accepted-lines decision after an October pool is protected (spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
-    const base = try baseJournal()
-    const [prior] = base.revisions
-    if (prior === undefined) throw new Error("Missing funded-history fixture")
-    try seeded(base)
-    const before = try publicText()
-    const recordedAt = "2026-11-12T00:00:00.000Z"
-    const digest = "b".repeat(64)
-    const body: RevisionBody = { previous: prior.id, recordedAt, sourceDigest: digest, sourceRule: "slop-score-v2", award: prior.award,
-      decision: { sourceId: `owner_october_${digest}`, effectiveAt: recordedAt, reason: octoberReviewedAcceptedLinesReason, delta: 0 } }
-    const row = { id: try pointRevisionId(body), ...body }
-    const reviewed = `${journalText({ ...base, generatedAt: recordedAt, revisions: [...base.revisions, row] })}\n`
-    try (try Area).sql(transferSql(alpha))
-    const result = try recorded(reviewed)
-    try same({ result, public: try publicText(), revisionCount: try revisionCount() }, {
-      result: { outcome: "refused", message: notVerified }, public: before, revisionCount: base.revisions.length,
-    })
-  })
-
   it.effect('Funded-history preservation: a correction prepared after its month is settled changes no recorded revision and appends nothing, and a banned recipient holds it (spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months")', () => effect {
     const base = try baseJournal()
     try seeded(base)
@@ -306,6 +287,27 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
       settled: { dispositions: [{ candidateId: "correction_gamma", status: "retained" }], phases: ["Protected"], unchanged: true },
       revisions: before,
       public: current,
+    })
+  })
+})
+
+layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('Atomic import refuses a zero-delta reviewed accepted-lines decision after an October pool is protected (spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+    const base = try baseJournal()
+    const [prior] = base.revisions
+    if (prior === undefined) throw new Error("Missing funded-history fixture")
+    try seeded(base)
+    const before = try publicText()
+    const recordedAt = "2026-11-12T00:00:00.000Z"
+    const digest = "b".repeat(64)
+    const body: RevisionBody = { previous: prior.id, recordedAt, sourceDigest: digest, sourceRule: "slop-score-v2", award: prior.award,
+      decision: { sourceId: `owner_october_${digest}`, effectiveAt: recordedAt, reason: octoberReviewedAcceptedLinesReason, delta: 0 } }
+    const row = { id: try pointRevisionId(body), ...body }
+    const reviewed = `${journalText({ ...base, generatedAt: recordedAt, revisions: [...base.revisions, row] })}\n`
+    try (try Area).sql(transferSql(alpha))
+    const result = try recorded(reviewed)
+    try same({ result, public: try publicText(), revisionCount: try revisionCount() }, {
+      result: { outcome: "refused", message: notVerified }, public: before, revisionCount: base.revisions.length,
     })
   })
 })
