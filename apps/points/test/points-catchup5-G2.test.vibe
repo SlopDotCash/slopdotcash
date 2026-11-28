@@ -1,4 +1,4 @@
-// spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+// spec/points/collectorToken.md, "Only a live collection outside a pull request mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import type { Fetcher } from "@repo/platform/bindings"
@@ -113,7 +113,7 @@ const rawUrl = `${raw}/ada/widgets/main/README.md`
 const fetched = (credential: string) => ({ to: `GET ${repoUrl}`, credential })
 const minted = { to: `POST ${api}/app/installations/42/access_tokens`, credential: "app" }
 
-it.live('A long collection renews the App token at first use and from fifty minutes, keeps it after a failed mint and leaves other requests alone (spec/points/collectorToken.md, "Story: Collect with a read-only App token that outlives its one-hour grant"; spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry")', () => effect {
+it.live('A long collection renews the App token at first use and from fifty minutes, keeps it after a failed mint and leaves other requests alone (spec/points/collectorToken.md, "Story: Collect with a read-only App token that outlives its one-hour grant"; spec/points/collectorToken.md, "Only a live collection outside a pull request mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry")', () => effect {
   const renewing = try collection((fake) => appSettings(fake, "refs/heads/main"), ({ fake, read }) => effect {
     const first = try read(0, repoUrl, "Bearer original")
     const beforeRenewal = try read(49, repoUrl, "Bearer original")
@@ -150,7 +150,7 @@ it.live('A long collection renews the App token at first use and from fifty minu
   const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/develop"))
   try same({ withoutSettings, staging }, {
     withoutSettings: [[fetched("original")], [fetched("original")]],
-    staging: [[fetched("original")], [fetched("original")]],
+    staging: [[minted, fetched("fresh 1")], [minted, fetched("fresh 2")]],
   })
   const invalid = collection((fake) => ({ ...appSettings(fake, "refs/heads/main"), COLLECTOR_APP_INSTALLATION_ID: "0x2a" }), () => effect {
     return "built"

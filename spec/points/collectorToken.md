@@ -15,13 +15,16 @@ and quota waits stay with [ingestion](./ingestion.md) and the
 
 ## Story: Collect with a read-only App token that outlives its one-hour grant
 
-### Only a main collection of live data mints the App token, and any failure falls back to the workflow token
+### Only a live collection outside a pull request mints the App token, and any failure falls back to the workflow token
 
-The App token is minted on `main`, outside a pull request, when the run
+The App token is minted outside a pull request, on any branch, when the run
 collects live data (`use_published_data` off) and the App's client ID is
 configured. It is scoped to this repository with read access to contents,
-issues and pull requests alone, and reads only public data. Staging
-collections on `development` never spend its quota. Without the App, or when
+issues and pull requests alone, and reads only public data. A pull request
+never mints it, so a review run spends none of its quota. Minting is not
+limited to `main`: a token expires an hour after it is issued whatever branch
+the collection runs on, so gating renewal to `main` left every non-main live
+collection with a credential it could not refresh. Without the App, or when
 minting fails, the collection uses `GITHUB_TOKEN` as before. The renewal
 settings (client ID, key and installation ID) reach the collector only when
 the App token was minted.
@@ -42,7 +45,7 @@ pure val initial: CollectorRun = { phase: Deciding, credential: Undecided, mainL
   tokenExpiry: 0, knownExpiry: 0, nextAttempt: 0, renewals: 0, failedMints: 0, requests: 0,
   unauthorized: false }
 pure def mintsAppToken(onMain: bool, pullRequest: bool, usePublishedData: bool, clientConfigured: bool): bool =
-  onMain and not(pullRequest) and not(usePublishedData) and clientConfigured
+  not(pullRequest) and not(usePublishedData) and clientConfigured
 pure def canChooseCredential(r: CollectorRun, onMain: bool, pullRequest: bool, usePublishedData: bool,
   clientConfigured: bool, minted: bool): bool = r.phase == Deciding
 pure def chooseCredential(r: CollectorRun, onMain: bool, pullRequest: bool, usePublishedData: bool,
@@ -57,8 +60,8 @@ pure def sameGrant(a: CollectorGrant, b: CollectorGrant): bool =
 pure def lawGrantIsReadOnly(g: CollectorGrant): bool =
   sameGrant(g, collectorGrant) implies (g.contents != WriteAccess and g.issues != WriteAccess
     and g.pullRequests != WriteAccess and g.thisRepositoryOnly)
-pure def alwaysAppTokenOnlyOnMainLiveCollection(r: CollectorRun): bool =
-  (r.credential == AppToken implies r.mainLive and r.renewal) and (r.renewal implies r.credential == AppToken)
+pure def alwaysAppTokenRenewsWhereverItIsMinted(r: CollectorRun): bool =
+  (r.credential == AppToken) iff r.renewal
 pure def sometimesFallbackCollected(r: CollectorRun): bool =
   r.phase == CollectedAll and r.credential == WorkflowToken and r.mainLive
 ```

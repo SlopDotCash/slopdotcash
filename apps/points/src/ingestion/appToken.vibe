@@ -1,4 +1,4 @@
-// spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"
+// spec/points/collectorToken.md, "Only a live collection outside a pull request mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"
 import { boundedBytes } from "@repo/platform/browser"
 import { ConfigInvalid } from "@repo/platform/config"
 import { base64url, rs256Sign, utf8 } from "@repo/platform/crypto"
