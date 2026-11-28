@@ -19267,7 +19267,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "f7afaf67b3c3cb635010bcadf3d43f8b1cff50c49df51a78f38ef077c73b75df",
+      "sha256": "d452475e19e35532128c6893a5263c37ceab808a534b1d0ac257eab43c8503b6",
       "module": "points__journal",
       "stories": [
         {
