@@ -765,7 +765,7 @@ jobs:
         with:
           job: release-code
           solana: "true"
-      - run: pnpm all typecheck test
+      - run: pnpm all typecheck test --concurrency=3
       - run: pnpm formal:check
       - name: Write the source-bound receipt
         env:
