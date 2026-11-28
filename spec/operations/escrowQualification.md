@@ -7,12 +7,25 @@ vault and immutable identity. The shell must authenticate the owner, inspect
 the plan and transaction payload, and verify current network and finalized
 receipts. The model contains public evidence identities and native-fee limits.
 
-The limited sequence and its approved exceptions come from the pinned PRD.
+The lane model below covers the standard one-time qualification sequence.
 The durable exact-attempt boundary follows the retained acceptance workflow in
 `scripts/escrow-acceptance/evm.ts` and
 `formal/models/contracts/evm_upgrade_qualification.qnt`. That contract-upgrade
 model also exercises the full deployment topology and slot preservation on
 testnet. Those are distinct implementation checks.
+
+The 14 November 2026 operator decision accepts the first finalized October
+payout on Solana and Robinhood Chain as qualification evidence for those
+recorded activations. The production switch binds this observation to the
+exact legacy release and both receipts. The payouts follow ordinary
+accounting and recognition.
+[PRD section 11](../../docs/slop-product-requirements.md#limited-network-qualification) ·
+[Activation PR #2712](https://github.com/SlopDotCash/slopdotcash/pull/2712) ·
+[Production switch](../settlement/attesterActivation.md)
+
+The 16 November 2026 receipts are
+[Feed on Solana](https://explorer.solana.com/tx/5XRgBiXJqmhcf3w1TuRq4vg5jSvFzMsFfc54M4pWxyiAQVv1WSyCid7kdWFpTK1kgYddNLAFn4CLinNZRxRdyWdC)
+and [The Network on Robinhood Chain](https://robinhoodchain.blockscout.com/tx/0x481c164b0e100ef1354195a295c9eaa0cadbab1ce5646c5e916a7186e97a340d).
 
 ## Story: Qualify escrow one network at a time with an explicitly approved scope
 
