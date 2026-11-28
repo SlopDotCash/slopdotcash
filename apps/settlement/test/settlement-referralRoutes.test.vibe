@@ -286,7 +286,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     })
   })
 
-  it.effect('A database failure answers the explicit error, never an empty index (spec/settlement/referralFiles.md, "Every answer is publicly cacheable for five minutes and a read failure is an explicit error, never an empty index"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale")', () => effect {
+  it.effect(`A database failure answers the explicit error, never an empty index (spec/settlement/referralFiles.md, "Every answer is publicly cacheable for five minutes and a read failure is an explicit error, never an empty index"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale")`, () => effect {
     const { failing } = try Sites
     const index = try ask(failing, "/api/v1/referrals/accruals")
     const period = try ask(failing, "/api/v1/referrals/accruals/2026-12")
@@ -305,7 +305,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     })
   })
 
-  it.effect('The claims read answers only the signed-in account\'s cached view, and a refresh never stores a view the read refuses (spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")', () => effect {
+  it.effect(`The claims read answers only the signed-in account's cached view, and a refresh never stores a view the read refuses (spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")`, () => effect {
     const { claims } = try Sites
     const nowMillis = try Clock.currentTimeMillis
     const now = try isoAt(nowMillis)

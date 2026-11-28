@@ -109,7 +109,7 @@ effect function reviewed(world: Seeded, directory: string) {
   } satisfies HistoricalRequest
 }
 
-it.live('A historical collection reads only the pinned repository after its merged census matches the reviewed scope (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+it.live(`A historical collection reads only the pinned repository after its merged census matches the reviewed scope (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")`, () => effect {
   const world = try Effect.try(() => seeded())
   provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
@@ -159,7 +159,7 @@ it.live('A historical collection reads only the pinned repository after its merg
   }
 })
 
-it.live('A moved Points checkpoint or scoring window refuses before any collection (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
+it.live(`A moved Points checkpoint or scoring window refuses before any collection (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")`, () => effect {
   const world = try Effect.try(() => seeded())
   provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {

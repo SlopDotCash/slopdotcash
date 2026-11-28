@@ -261,7 +261,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('An independent moderator decides an account appeal and a re-ban closes it (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project\'s open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified")', () => effect {
+  it.effect(`An independent moderator decides an account appeal and a re-ban closes it (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project's open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified")`, () => effect {
     const area = try Area
     const a = try member(moderatorA)
     const b = try member(moderatorB)
