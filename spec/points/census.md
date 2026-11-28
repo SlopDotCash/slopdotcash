@@ -70,6 +70,17 @@ changed `totalCount` restarts collection once; a second change leaves the
 census incomplete. The terminal page is required even when the count already
 matches.
 
+For the exact Slop historical replay, GitHub Search can omit a merged
+pull request that still belongs to the repository. The canonical census
+also traverses the public repository's complete merged-PR connection.
+Every Search entry must have the same ID, number, head and merge time in
+that connection. For a connection-only entry in the date window, detail
+hydration reads the exact node in the same repository and rechecks its
+number, head and merge time. A missing or changed identity, drifting
+total, repeated number or incomplete cursor chain stops the report
+before scoring. The independent census and detail checks do not change
+the trusted replay's registry or financial protection checks.
+
 ```quint
 pure def canRecordPage(c: Census, page: Page): bool =
   c.phase == Collecting and not(c.terminalSeen) and page.cursor == c.expectedCursor and

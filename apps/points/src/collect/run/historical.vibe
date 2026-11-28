@@ -1,4 +1,5 @@
 // spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { usesSlopRepositoryCensus } from "../../corrections/reviewed/packet.vibe"
 import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { HistoricalClosedContext } from "@repo/ports/points"
@@ -118,6 +119,7 @@ export effect function collectHistorical(request: HistoricalRequest) {
     valuePolicyFromMs,
     evaluatedReviewKeys: new Set(),
     recollection: firstAttempt,
+    ...(usesSlopRepositoryCensus(pin.repository, pin.repositoryNodeId) ? { reviewedMergedSources: mergedScope.sources } : {}),
   }, (repository, reservedCost) => openCollection(repository, reservedCost, bounds, ids, views), commitLineLoader(undefined, request.memo?.commitLines))
   try assertMergedCensus(mergedScope.sources, collected.outcomes)
   try confirmReviewCensus(collected)

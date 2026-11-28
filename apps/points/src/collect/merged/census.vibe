@@ -1,10 +1,11 @@
 // spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/workUnits.md, "Story: Value one logical work unit once"
-import { Graphql, ensureStartingBudget, graphqlPageSize } from "../../ingestion/graphql.vibe"
+import { Graphql, ensureStartingBudget, executeNodeBatch, graphqlPageSize, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
 import { type SearchStats, collectSearch, searchRange } from "../../ingestion/search.vibe"
 import { collectReviewCensus, type ReviewCensus } from "../../census/reviews.vibe"
+import type { AuditedSource } from "../../corrections/reviewed/packet.vibe"
 import { type CommitLineLoader, completeOutcomeCommits } from "./commits.vibe"
 import { selectDetailed } from "./detailSelection.ts"
-import { ActorNode, MergedRecordInvalid, type MergedOutcome, type NodeReference, type OutcomeCommitIdentity, OutcomeCommitConnection, type ReferenceKind, actorOf, commitSha, decoded, outcomeCommitsOf, preflightQuery, searchReferencesQuery } from "./wire.vibe"
+import { ActorNode, MergedRecordInvalid, type MergedOutcome, type NodeReference, type OutcomeCommitIdentity, OutcomeCommitConnection, type ReferenceKind, actorOf, arrayAt, chunks, commitSha, decoded, outcomeCommitsOf, preflightQuery, reviewedMergedNodesQuery, searchReferencesQuery } from "./wire.vibe"
 
 export type SearchQualifier = "closed" | "merged"
 export type KindQualifier = "is:issue is:closed" | "is:pr is:merged" | "is:pr is:closed is:unmerged"
@@ -156,6 +157,41 @@ export effect function collectSearchReferences<E, R>(census: SearchCensus<E, R>)
     id: (reference: NodeReference) => reference.id,
     stats: census.stats,
   }, census.fromMs, census.toMs, (leaf) => completedReferences(leaf, census))
+}
+
+schema ReviewedNodeRepository { readonly repository: { readonly id: string } }
+
+function matchesReviewedSource(outcome: MergedOutcome | null, expected: AuditedSource | undefined) {
+  return outcome !== null && expected !== undefined && outcome.id === expected.id && outcome.number === expected.number &&
+    outcome.headRefOid === expected.headSha && Date.parse(outcome.mergedAt) === Date.parse(expected.mergedAt)
+}
+
+export effect function completeReviewedMergedReferences<E, R>(searched: ReadonlyArray<NodeReference>, expected: ReadonlyArray<AuditedSource>, census: SearchCensus<E, R>) {
+  const byId = new Map(expected.map((row) => [row.id, row] as const))
+  if (expected.length === 0 || byId.size !== expected.length ||
+    new Set(expected.map((row) => row.number)).size !== expected.length ||
+    new Set(searched.map((row) => row.id)).size !== searched.length ||
+    searched.some((row) => !matchesReviewedSource(row.outcome, byId.get(row.id)))) {
+    throw new MergedRecordInvalid({ message: "Merged search disagrees with the reviewed repository census" })
+  }
+  const seen = new Set(searched.map((row) => row.id))
+  const missing = expected.filter((row) => !seen.has(row.id))
+  const added: NodeReference[] = []
+  for (const group of chunks(missing, reviewDetailBatchSize)) {
+    const response = try executeNodeBatch(reviewedMergedNodesQuery, group.map(({ id }) => id))
+    const nodes = try arrayAt(response.nodes, "reviewed merge nodes")
+    if (group.length !== nodes.length) throw new MergedRecordInvalid({ message: "Reviewed merge nodes are incomplete" })
+    for (const [index, node] of nodes.entries()) {
+      const path = `reviewed merge nodes[${index}]`
+      const source = try decoded(ReviewedNodeRepository, node, path)
+      const reference = try searchReference(node, path, "PullRequest", true)
+      if (census.repositoryNodeId === null || source.repository.id !== census.repositoryNodeId || !matchesReviewedSource(reference.outcome, group[index])) {
+        throw new MergedRecordInvalid({ message: "A supplemental merge no longer matches the reviewed repository census" })
+      }
+      added.push(reference)
+    }
+  }
+  return [...searched, ...(try completedReferences(added, census))]
 }
 
 export effect function countSearchResults(target: SearchTarget, fromMs: number, toMs: number, qualifier: SearchQualifier, kindQualifier: KindQualifier, expectedKind: ReferenceKind, stats: SearchStats) {

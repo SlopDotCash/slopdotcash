@@ -237,6 +237,27 @@ export const searchReferencesQuery = `
   ${actorFragment}
 `
 
+export const reviewedMergedNodesQuery = `
+  query LeaderboardReviewedMergedNodes($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id state number title url body createdAt updatedAt mergedAt
+        author { ...LeaderboardActor }
+        additions deletions baseRefName baseRefOid headRefOid
+        repository { id }
+        commits(first: 100) {
+          totalCount
+          pageInfo { hasNextPage endCursor }
+          ${outcomeCommitNodes}
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
 export const moreOutcomeCommitsQuery = `
   query LeaderboardOutcomeCommits($id: ID!, $after: String!) {
     node(id: $id) {
