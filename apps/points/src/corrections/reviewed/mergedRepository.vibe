@@ -22,7 +22,6 @@ export interface RepositoryMerge extends AuditedSource {
 const pageSize = 100
 const mergedConnectionQuery = "query HistoricalMergedRepository($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id nameWithOwner isPrivate pullRequests(states:MERGED,first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){totalCount nodes{id number headRefOid mergedAt mergeCommit{oid}} pageInfo{hasNextPage endCursor}}}}"
 
-// The direct repository connection includes restored merges that GitHub Search can omit.
 export effect function mergedRepositorySources(repository: string, nodeId: string) {
   const [owner = "", name = ""] = repository.split("/")
   const github = try GitHub

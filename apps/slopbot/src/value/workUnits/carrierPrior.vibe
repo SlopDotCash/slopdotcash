@@ -7,7 +7,7 @@ import { type NativeCommitObject, parseNativeCommitObject } from "./carrierParti
 
 const objectId = /^[0-9a-f]{40}$/u
 const commitHeader = /^([0-9a-f]{40}) commit ([1-9]\d*)$/u
-const patchHeader = /^\x1e([0-9a-f]{40})$/u
+const patchRecordSeparator = "\x1e"
 const batchSize = 48
 const maximumBatchBytes = 8 * 1024 * 1024
 const maximumCommitBytes = 256 * 1024
@@ -66,9 +66,9 @@ effect function priorPatch(directory: string, earlier: ReadonlyArray<NativeCommi
     let file: string[] | undefined
     if (!output.endsWith("\n")) throw refused()
     for (const line of output.slice(0, -1).split("\n")) {
-      const marker = patchHeader.exec(line)?.[1]
-      if (marker !== undefined) {
-        if (marker !== batch[patches.size]?.sha) throw refused()
+      if (line.startsWith(patchRecordSeparator)) {
+        const marker = line.slice(patchRecordSeparator.length)
+        if (!objectId.test(marker) || marker !== batch[patches.size]?.sha) throw refused()
         current = new Map()
         patches.set(marker, current)
         file = undefined
