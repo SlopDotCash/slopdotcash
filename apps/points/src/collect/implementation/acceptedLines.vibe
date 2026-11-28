@@ -1,0 +1,243 @@
+// spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"
+import { gitBytes, publicGitArguments } from "@repo/platform/git"
+import { gitObjectId, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { type LineEdge, type LineHunk, type TextLineWeights, acceptedTextLineWeights, lineHunks } from "./lineage.vibe"
+import type { ImplementationEvidenceUnavailable } from "./native.vibe"
+
+export interface AcceptedLineRange {
+  readonly baseTree: string
+  readonly acceptedBaseTree: string
+  readonly acceptedTree: string
+  readonly submitted: ReadonlyArray<{ readonly commit: string; readonly tree: string }>
+}
+
+type FetchBlobs<R> = (oids: ReadonlyArray<string>) => boolean!ImplementationEvidenceUnavailable!R
+
+interface PathChange {
+  readonly before: string
+  readonly after: string
+  readonly beforeMode: string
+  readonly afterMode: string
+}
+
+interface TreeChange {
+  readonly before: string
+  readonly after: string
+  readonly paths: ReadonlyMap<string, PathChange>
+  readonly renames: ReadonlyMap<string, string>
+}
+
+const oid = /^[0-9a-f]{40}$/u
+const rawChange = /^:(000000|100644|100755) (000000|100644|100755) ([0-9a-f]{40}) ([0-9a-f]{40}) ([ADM])$/u
+const absent = "0".repeat(40)
+const emptyText = gitObjectId("blob", new Uint8Array())
+export const acceptedLineCommitLimit = 64
+const maxPaths = 128
+const maxBlobs = 512
+const maxPathDiffs = 512
+const blobLimit = 2 * 1024 * 1024
+const totalBlobLimit = 32 * 1024 * 1024
+const diffLimit = 8 * 1024 * 1024
+const nativeUnavailable = "Native accepted line evidence is unavailable"
+const diffOptions = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--diff-algorithm=myers", "--indent-heuristic"]
+const zero: TextLineWeights = { additions: 0, deletions: 0 }
+
+effect function gitRead(directory: string, args: ReadonlyArray<string>, limit: number) {
+  return try gitBytes({
+    args: publicGitArguments(directory, ["--literal-pathspecs", ...args]),
+    env: { HOME: directory, XDG_CONFIG_HOME: directory, GIT_ATTR_NOSYSTEM: "1", GIT_NO_LAZY_FETCH: "1" },
+    limit,
+    seconds: 120,
+  }, nativeUnavailable)
+}
+
+effect function rawDiff(directory: string, before: string, after: string) {
+  return try gitRead(directory, ["diff", ...diffOptions, "--raw", "--no-abbrev", "-z", before, after, "--"], diffLimit)
+}
+
+function present(hash: string, mode: string) {
+  return hash !== absent && mode !== "000000"
+}
+
+function rawPaths(raw: Uint8Array): ReadonlyMap<string, PathChange> | undefined {
+  const text = utf8Text(raw)
+  if (text === undefined) return undefined
+  const fields = text.split("\0")
+  if (fields.pop() !== "" || fields.length % 2 !== 0 || fields.length / 2 > maxPaths) return undefined
+  const paths = new Map<string, PathChange>()
+  for (let index = 0; index < fields.length; index += 2) {
+    const path = fields[index + 1] ?? ""
+    const matched = rawChange.exec(fields[index] ?? "")
+    if (matched === null || path === "" || paths.has(path)) return undefined
+    const [, beforeMode = "", afterMode = "", before = "", after = "", status] = matched
+    const beforePresent = present(before, beforeMode)
+    const afterPresent = present(after, afterMode)
+    if ((status === "A" && (before !== absent || beforeMode !== "000000" || !afterPresent)) ||
+      (status === "D" && (after !== absent || afterMode !== "000000" || !beforePresent)) ||
+      (status === "M" && (!beforePresent || !afterPresent))) return undefined
+    paths.set(path, { before, after, beforeMode, afterMode })
+  }
+  return paths
+}
+
+function zeroRenames(paths: ReadonlyMap<string, PathChange>): ReadonlyMap<string, string> | undefined {
+  const added = [...paths].filter(([, change]) => change.before === absent)
+  const deleted = [...paths].filter(([, change]) => change.after === absent)
+  const renamed = new Map<string, string>()
+  const destinations = new Set<string>()
+  if (added.length === 0 || deleted.length === 0) return renamed
+  for (const [oldPath, old] of deleted) {
+    const matching = added.filter(([, next]) => next.after === old.before && next.afterMode === old.beforeMode)
+    const newPath = matching.length === 1 ? matching[0]?.[0] : undefined
+    if (newPath === undefined) continue
+    if (destinations.has(newPath)) return undefined
+    renamed.set(oldPath, newPath)
+    destinations.add(newPath)
+  }
+  if (added.some(([path]) => !destinations.has(path)) && deleted.some(([path]) => !renamed.has(path))) return undefined
+  return renamed
+}
+
+function renamedPaths(renamed: ReadonlyMap<string, string>) {
+  return new Set([...renamed.keys(), ...renamed.values()])
+}
+
+function eachRenameObserved(accepted: TreeChange, changes: ReadonlyArray<TreeChange>) {
+  for (const [before, after] of accepted.renames) {
+    const original = accepted.paths.get(before)
+    if (original === undefined || !changes.some((edge) => {
+      const removed = edge.paths.get(before)
+      return edge.renames.get(before) === after && removed?.before === original.before && removed.beforeMode === original.beforeMode
+    })) return false
+  }
+  return true
+}
+
+effect function edgeChanges(directory: string, range: AcceptedLineRange, countedPaths: ReadonlySet<string>) {
+  const edges: TreeChange[] = []
+  let before = range.baseTree
+  for (const { tree: after } of range.submitted) {
+    const paths = rawPaths(try rawDiff(directory, before, after))
+    if (paths === undefined) return undefined
+    const renamed = zeroRenames(paths)
+    if (renamed === undefined || [...renamedPaths(renamed)].some((path) => countedPaths.has(path))) return undefined
+    edges.push({ before, after, paths, renames: renamed })
+    before = after
+  }
+  return edges
+}
+
+function neededBlobs(paths: ReadonlySet<string>, transitions: ReadonlyArray<TreeChange>) {
+  const hashes = new Set<string>()
+  let count = 0
+  for (const { paths: changed } of transitions) {
+    for (const path of paths) {
+      const change = changed.get(path)
+      if (change === undefined || change.before === change.after) continue
+      if (++count > maxPathDiffs) return undefined
+      if (change.before !== absent) hashes.add(change.before)
+      if (change.after !== absent) hashes.add(change.after)
+    }
+  }
+  return [...hashes]
+}
+
+effect function verifiedTextBlobs<R>(directory: string, hashes: ReadonlyArray<string>, fetchBlobs: FetchBlobs<R>) {
+  if (hashes.length > maxBlobs) return false
+  if (hashes.length === 0) return true
+  if (!(try fetchBlobs(hashes))) return false
+  let total = 0
+  for (const hash of hashes) {
+    const bytes = try gitRead(directory, ["cat-file", "blob", hash], blobLimit)
+    total += bytes.length
+    if (total > totalBlobLimit || bytes.includes(0) || utf8Text(bytes) === undefined || gitObjectId("blob", bytes) !== hash) return false
+  }
+  return true
+}
+
+function unchangedText(change: PathChange | undefined) {
+  return change === undefined || change.before === change.after ||
+    (change.before === absent && change.after === emptyText) || (change.before === emptyText && change.after === absent)
+}
+
+effect function pathHunks(directory: string, edge: TreeChange, path: string) {
+  if (unchangedText(edge.paths.get(path))) return [] satisfies ReadonlyArray<LineHunk>
+  const patch = utf8Text(try gitRead(directory, [
+    "diff", ...diffOptions, "--patch", "--unified=0", "--inter-hunk-context=0",
+    edge.before, edge.after, "--", path,
+  ], diffLimit))
+  return patch === undefined || patch === "" ? undefined : lineHunks(patch)
+}
+
+effect function netCounts(directory: string, edge: TreeChange, path: string) {
+  if (unchangedText(edge.paths.get(path))) return zero
+  const raw = utf8Text(try gitRead(directory, ["diff", ...diffOptions, "--numstat", "-z", edge.before, edge.after, "--", path], diffLimit))
+  const matched = /^([0-9]+)\t([0-9]+)\t([^\0]+)\0$/u.exec(raw ?? "")
+  if (matched?.[3] !== path) return undefined
+  const additions = Number(matched[1])
+  const deletions = Number(matched[2])
+  return Number.isSafeInteger(additions) && Number.isSafeInteger(deletions) ? { additions, deletions } : undefined
+}
+
+function sum(left: TextLineWeights, right: TextLineWeights): TextLineWeights {
+  return { additions: left.additions + right.additions, deletions: left.deletions + right.deletions }
+}
+
+effect function pathWeights(directory: string, path: string, accepted: TreeChange, changes: ReadonlyArray<TreeChange>, range: AcceptedLineRange) {
+  const net = try pathHunks(directory, accepted, path)
+  if (net === undefined) return undefined
+  const sequence: LineEdge[] = []
+  for (const [index, edge] of changes.entries()) {
+    const entry = range.submitted[index]
+    const hunks = try pathHunks(directory, edge, path)
+    if (entry === undefined || hunks === undefined) return undefined
+    sequence.push({ commit: entry.commit, hunks })
+  }
+  const lines = acceptedTextLineWeights(sequence, net)
+  if (lines === undefined) return undefined
+  const length = [...lines.values()].reduce(sum, zero)
+  const expected = net.reduce((counts, hunk) => sum(counts, { additions: hunk.afterCount, deletions: hunk.beforeCount }), zero)
+  const counts = try netCounts(directory, accepted, path)
+  return counts !== undefined && length.additions === expected.additions && length.deletions === expected.deletions &&
+    length.additions === counts.additions && length.deletions === counts.deletions ? lines : undefined
+}
+
+effect function verifiedLineRange<R>(directory: string, range: AcceptedLineRange, fetchBlobs: FetchBlobs<R>) {
+  const submitted = range.submitted.at(-1)
+  if (submitted === undefined || range.submitted.length > acceptedLineCommitLimit ||
+    ![range.baseTree, range.acceptedBaseTree, range.acceptedTree, ...range.submitted.flatMap(({ commit, tree }) => [commit, tree])].every((value) => oid.test(value)) ||
+    new Set(range.submitted.map(({ commit }) => commit)).size !== range.submitted.length) return undefined
+  const actual = try rawDiff(directory, range.acceptedBaseTree, range.acceptedTree)
+  const proposed = try rawDiff(directory, range.baseTree, submitted.tree)
+  if (actual.length !== proposed.length || !actual.every((byte, index) => byte === proposed[index])) return undefined
+  const paths = rawPaths(actual)
+  if (paths === undefined) return undefined
+  const renamed = zeroRenames(paths)
+  if (renamed === undefined) return undefined
+  const moved = renamedPaths(renamed)
+  const counted = new Set([...paths.keys()].filter((path) => !moved.has(path)))
+  const accepted: TreeChange = { before: range.acceptedBaseTree, after: range.acceptedTree, paths, renames: renamed }
+  const changes = try edgeChanges(directory, range, counted)
+  if (changes === undefined || !eachRenameObserved(accepted, changes)) return undefined
+  const hashes = neededBlobs(counted, [...changes, accepted])
+  if (hashes === undefined || !(try verifiedTextBlobs(directory, hashes, fetchBlobs))) return undefined
+  const weights = new Map<string, TextLineWeights>(range.submitted.map(({ commit }) => [commit, zero] as const))
+  for (const path of counted) {
+    const found = try pathWeights(directory, path, accepted, changes, range)
+    if (found === undefined) return undefined
+    for (const [commit, counts] of found) {
+      const before = weights.get(commit)
+      if (before === undefined) return undefined
+      weights.set(commit, sum(before, counts))
+    }
+  }
+  const byCommit: ReadonlyMap<string, TextLineWeights> = weights
+  return { byCommit, digest: sha256Of(actual) }
+}
+
+export effect function readAcceptedLineRange<R>(directory: string, range: AcceptedLineRange, fetchBlobs: FetchBlobs<R>) {
+  return verifiedLineRange(directory, range, fetchBlobs) catch effect (error) => {
+    if (error._tag === "ImplementationEvidenceUnavailable") throw error
+    return undefined
+  }
+}

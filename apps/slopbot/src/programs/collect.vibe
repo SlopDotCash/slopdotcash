@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, discussionCheckpoint, fetchRegistry, graphqlClient, implementationCodeDigest, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, nativeProofReader, openImplementationMemo, openMemoFromEnv, publishedJournalReader, registrySnapshotManifests, snapshotAssembly, writeImplementationMemo, writeMemo } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, discussionCheckpoint, fetchRegistry, graphqlClient, implementationCodeDigest, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, nativeLineProofReader, nativeProofReader, openImplementationMemo, openMemoFromEnv, publishedJournalReader, registrySnapshotManifests, snapshotAssembly, writeImplementationMemo, writeMemo } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
 import { jointEvidence } from "../value/collect/jointEvidence.vibe"
 import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
@@ -76,6 +76,7 @@ effect function written(args: ReadonlyArray<string>) {
     try scoped(effect {
       const local = try localGitObjectsFromEnv()
       const proofs = try nativeProofReader()
+      const readLines = try nativeLineProofReader()
       const journal = try publishedJournalReader()
       const discussions = checkpoint === undefined ? undefined : try discussionCache({
         directory: checkpoint.directory,
@@ -104,7 +105,7 @@ effect function written(args: ReadonlyArray<string>) {
               cutoffMs,
               registryOrigin: origin,
               evidenceToken: token,
-              implementation: { proofs, journal, memo: implementationMemo },
+              implementation: { proofs, readLines, journal, memo: implementationMemo },
               ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }),
               ...(opened === undefined ? {} : { memo: opened.session }),
             })

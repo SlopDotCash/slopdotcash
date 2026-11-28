@@ -40,6 +40,7 @@ export effect function valueCoverage(inputs: AssemblyInputs, scoring: ScoredSnap
       : decision?.status ?? "missing"
     const latest = decision?.latestDigest ?? null
     const verified = status === "missing" && source.merged !== undefined ? verifiedActors(source, owners, scoring.ledger) : undefined
+    const implementationAllocation = (status === "missing" || status === "legacy-policy") && latest === null ? scoring.implementationAllocations.get(source.id) : undefined
     return {
       pullRequestId: source.id,
       repository: source.repository,
@@ -48,6 +49,7 @@ export effect function valueCoverage(inputs: AssemblyInputs, scoring: ScoredSnap
       recordDigest: (attributionHeld || implementationHeld) && !unavailable ? null : latest,
       ...(scoring.standaloneReview.has(source.id) && latest !== null ? { reviewAssessmentDigest: latest } : {}),
       ...(verified === undefined ? {} : { verifiedImplementationActorNodeIds: verified }),
+      ...(implementationAllocation === undefined ? {} : { implementationAllocation }),
     } satisfies ValueCoverage
   })
 }

@@ -1,6 +1,7 @@
 // spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score"; spec/points/journal.md, "A recorded award follows the latest complete snapshot's score"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
+import { implementationShares } from "../client/snapshot/shares.vibe"
 import { POINTS_PER_THIRD, pointsOfThirdsText } from "../client/units/scoreUnits.ts"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
@@ -133,13 +134,40 @@ function changedLines(allocation: ImplementationAllocation | undefined) {
   return lines
 }
 
-function lineEvidence(coverage: ReadonlyMap<string, ValueCoverage>, members: ReadonlyArray<Credited>) {
+function matchingLines(allocation: ImplementationAllocation | undefined, members: ReadonlyArray<Credited>) {
+  const lines = changedLines(allocation)
+  if (allocation === undefined || lines === undefined || !Number.isSafeInteger(allocation.totalScoreThirds) || allocation.totalScoreThirds < 1) return undefined
+  const logins = new Map(allocation.weights.map(({ actorNodeId, actorLogin }) => [actorNodeId, actorLogin] as const))
+  if (members.some(({ award }) => logins.get(award.actor.id) !== award.actor.login)) return undefined
+  const amounts = new Map(members.map(({ award }) => [award.actor.id, award.amount / POINTS_PER_THIRD] as const))
+  if (amounts.size !== members.length) return undefined
+  const weights = [...lines].map(([actorNodeId, count]) => ({ actorNodeId, lines: count }))
+  const shares = implementationShares(allocation.totalScoreThirds, weights)
+  return shares !== undefined && weights.every(({ actorNodeId }, index) => shares[index] === (amounts.get(actorNodeId) ?? 0)) ? lines : undefined
+}
+
+function groupLines(coverage: ReadonlyMap<string, ValueCoverage>, members: ReadonlyArray<Credited>) {
   const actors = new Set(members.map(({ award }) => award.actor.id))
   for (const { award } of members) {
     const lines = changedLines(coverage.get(award.sourceId)?.implementationAllocation)
     if (lines !== undefined && lines.size === actors.size && [...actors].every((actor) => lines.has(actor))) return lines
   }
   return undefined
+}
+
+effect function allocationTemplates(allocation: ImplementationAllocation, first: Credited, current: ReadonlyArray<Credited>, prior: ReadonlyArray<Row>) {
+  const currentByActor = new Map(current.map(({ award }) => [award.actor.id, award] as const))
+  const priorByActor = new Map(prior.map(({ award }) => [award.actor.id, award] as const))
+  const templates = new Map<string, Award>()
+  for (const weight of allocation.weights) {
+    const currentAward = currentByActor.get(weight.actorNodeId) ?? {
+      ...first.award,
+      key: try pointKey({ projectId: first.award.projectId, actorId: weight.actorNodeId, category: "merged-pull-request", sourceId: first.award.sourceId }),
+      actor: { id: weight.actorNodeId, login: weight.actorLogin },
+    }
+    templates.set(weight.actorNodeId, { ...(priorByActor.get(weight.actorNodeId) ?? currentAward), actor: currentAward.actor })
+  }
+  return templates
 }
 
 function octoberHeld(store: Store) {
@@ -412,26 +440,16 @@ effect function zeroSupersededCredit(store: Store, buffer: Row[], found: Readonl
 
 effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string, coverage: ValueCoverage, projectId: string, prior: ReadonlyArray<Row>, current: ReadonlyArray<Credited>, unavailable: ReadonlySet<string>) {
   const allocation = coverage.implementationAllocation
-  const lines = changedLines(allocation)
+  const lines = matchingLines(allocation, current)
   const [first] = current
-  if (allocation === undefined || lines === undefined || first === undefined || unavailable.has(coverage.pullRequestId) || current.some(({ award }) => !lines.has(award.actor.id))) return []
+  if (allocation === undefined || lines === undefined || first === undefined || unavailable.has(coverage.pullRequestId)) return []
   for (const award of [...prior.map((row) => row.award), ...current.map((item) => item.award)]) {
     if (award.key !== (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }))) return []
   }
   if (prior.some((row) => row.recordedAt > snapshot.generatedAt || row.award.occurredAt !== first.award.occurredAt ||
     row.award.occurredAt < snapshot.window.from || row.award.occurredAt >= snapshot.window.to)) return []
   const unit = ownUnit(projectId, coverage.pullRequestId)
-  const currentByActor = new Map(current.map(({ award }) => [award.actor.id, award] as const))
-  const priorByActor = new Map(prior.map(({ award }) => [award.actor.id, award] as const))
-  const templates = new Map<string, Award>()
-  for (const weight of allocation.weights) {
-    const currentAward = currentByActor.get(weight.actorNodeId) ?? {
-      ...first.award,
-      key: try pointKey({ projectId, actorId: weight.actorNodeId, category: "merged-pull-request", sourceId: coverage.pullRequestId }),
-      actor: { id: weight.actorNodeId, login: weight.actorLogin },
-    }
-    templates.set(weight.actorNodeId, { ...(priorByActor.get(weight.actorNodeId) ?? currentAward), actor: currentAward.actor })
-  }
+  const templates = try allocationTemplates(allocation, first, current, prior)
   const opened = try command(store, { awards: [...templates.values()], units: [unit], sources: [coverage.pullRequestId] })
   const recorded = opened.names.units.get(unit)
   if (recorded === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key)) || prior.some((row) => opened.names.opaque.has(row.award.key))) {
@@ -450,8 +468,19 @@ effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapsh
     .filter((row) => row.decision?.sourceId.startsWith("value:") === true)
     .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt))[0]?.decision?.sourceId
   const provenance = { recordedAt, sourceDigest: digest, effectiveAt: snapshot.generatedAt, decisionSourceId: decisionSourceOf([valueSourceId, coverage.pullRequestId]) }
+  const existing = new Map(prior.filter(({ award }) => award.amount > 0).map(({ award }) => [award.actor.id, award] as const))
   const rows: Row[] = []
-  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+  for (const revision of try appended(opened)) {
+    const positive = revision.shares.filter((share) => share.points > 0)
+    const unchanged = positive.length === existing.size && positive.every((share) => {
+      const actor = opened.names.actorIds.get(share.actor) ?? ""
+      const recorded = existing.get(actor)
+      const template = templates.get(actor)
+      return recorded !== undefined && template !== undefined && sameAward(recorded, { ...template, amount: share.points, occurredAt: recorded.occurredAt })
+    })
+    if (unchanged) continue
+    rows.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+  }
   return rows
 }
 
@@ -464,7 +493,12 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     return []
   }
   const project = first.award.projectId
-  const opened = try command(store, { awards: members.map(({ award }) => award), units: [unit], sources: members.map(({ award }) => award.sourceId) })
+  const ordinary = unit === ownUnit(project, first.award.sourceId)
+  const allocation = !store.units.has(unit) && ordinary ? coverage.get(first.award.sourceId)?.implementationAllocation : undefined
+  const lines = ordinary ? matchingLines(allocation, members) : groupLines(coverage, members)
+  const templates = allocation === undefined || lines === undefined ? templatesOf(store, unit, members) : try allocationTemplates(allocation, first, members, [])
+  const sources = [...new Set(members.map(({ award }) => award.sourceId))]
+  const opened = try command(store, { awards: [...templates.values()], units: [unit], sources })
   if (members.some(({ award }) => opened.names.opaque.has(award.key)) || [...store.units.get(unit)?.keys ?? []].some((key) => opened.names.opaque.has(key))) {
     hold(store, { subject: unit, reason: "the recorded history of this work unit is outside the journal model", digest })
     return []
@@ -511,19 +545,18 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     hold(store, { subject: unit, reason: "a first unit credit carries the value of its size band", digest })
     return []
   }
-  const lines = lineEvidence(coverage, members)
-  if (lines === undefined && members.length > 1) {
+  if (lines === undefined && (allocation !== undefined || members.length > 1)) {
     hold(store, { subject: unit, reason: "a shared unit credit needs complete changed-line evidence", digest })
     return []
   }
   const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
-  const recipients = members
-    .map(({ award }) => ({ actor: actors.get(award.actor.id) ?? 0, lines: lines?.get(award.actor.id) ?? 0 }))
+  const recipients = [...templates.keys()]
+    .map((actor) => ({ actor: actors.get(actor) ?? 0, lines: lines?.get(actor) ?? 0 }))
     .sort((left, right) => left.actor - right.actor)
   const occurredAt = try instant(first.award.occurredAt)
   const formed = state.units.nextId
   const events: Event[] = [
-    { type: "formUnit", g: { project, sources: members.map(({ award }) => opened.names.sources.get(award.sourceId) ?? 0), commits: [], band, hashesVerified: true, digest, promotion: { tag: "NotPromotion" } } },
+    { type: "formUnit", g: { project, sources: sources.map((source) => opened.names.sources.get(source) ?? 0), commits: [], band, hashesVerified: true, digest, promotion: { tag: "NotPromotion" } } },
     { type: "acceptUnit", unit: formed, at: occurredAt },
     { type: "creditUnit", c: {
       project, unit: formed, recipients, completeLines: lines !== undefined, occurredAt,
@@ -543,7 +576,7 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     decisionSourceId: decisionSourceOf([first.event.scoreDecisionSourceId, first.award.sourceId]),
   }
   const rows: Row[] = []
-  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templatesOf(store, unit, members), provenance)))
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templates, provenance)))
   for (const row of rows) if (store.unitOfKey.get(row.award.key) === undefined) store.unitOfKey.set(row.award.key, unit)
   return rows
 }

@@ -1,0 +1,246 @@
+// spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
+export interface LineHunk {
+  readonly beforeStart: number
+  readonly beforeCount: number
+  readonly afterStart: number
+  readonly afterCount: number
+}
+
+export interface LineEdge {
+  readonly commit: string
+  readonly hunks: ReadonlyArray<LineHunk>
+}
+
+export interface TextLineWeights {
+  readonly additions: number
+  readonly deletions: number
+}
+
+interface Extent {
+  readonly before: number
+  readonly after: number
+}
+
+const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/u
+const fileMetadata = /^(?:index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?|(?:old mode|new mode|new file mode|deleted file mode) 100(?:644|755))$/u
+
+function coordinate(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function extent(hunks: ReadonlyArray<LineHunk>): Extent | undefined {
+  let before = 0
+  let after = 0
+  let previous = false
+  for (const { beforeStart, beforeCount, afterStart, afterCount } of hunks) {
+    if (![beforeStart, beforeCount, afterStart, afterCount].every(coordinate) || (beforeCount === 0 && afterCount === 0)) return undefined
+    const gap = beforeStart - before
+    if (gap < 0 || (previous && gap === 0) || gap !== afterStart - after) return undefined
+    before = beforeStart + beforeCount
+    after = afterStart + afterCount
+    if (!coordinate(before) || !coordinate(after)) return undefined
+    previous = true
+  }
+  return { before, after }
+}
+
+function range(row: string): LineHunk | undefined {
+  const match = header.exec(row)
+  if (match === null) return undefined
+  const beforeCount = Number(match[2] ?? "1")
+  const afterCount = Number(match[4] ?? "1")
+  const beforeLine = Number(match[1])
+  const afterLine = Number(match[3])
+  if (!coordinate(beforeLine) || !coordinate(afterLine)) return undefined
+  const beforeStart = beforeLine - (beforeCount > 0 ? 1 : 0)
+  const afterStart = afterLine - (afterCount > 0 ? 1 : 0)
+  if (![beforeStart, beforeCount, afterStart, afterCount, beforeStart + beforeCount, afterStart + afterCount].every(coordinate)) return undefined
+  return { beforeStart, beforeCount, afterStart, afterCount }
+}
+
+export function lineHunks(patch: string): ReadonlyArray<LineHunk> | undefined {
+  if (patch === "") return []
+  if (patch.includes("\0")) return undefined
+  const rows = patch.split("\n")
+  if (rows.at(-1) === "") rows.pop()
+  let index = 0
+  if (rows[0]?.startsWith("diff --git ")) {
+    index++
+    while (index < rows.length && fileMetadata.test(rows[index] ?? "")) index++
+    if (!rows[index]?.startsWith("--- ") || !rows[index + 1]?.startsWith("+++ ")) return undefined
+    index += 2
+  }
+
+  const ranges: LineHunk[] = []
+  const edits: LineHunk[] = []
+  while (index < rows.length) {
+    const hunk = range(rows[index++] ?? "")
+    if (hunk === undefined) return undefined
+    ranges.push(hunk)
+    let before = hunk.beforeStart
+    let after = hunk.afterStart
+    const beforeEnd = before + hunk.beforeCount
+    const afterEnd = after + hunk.afterCount
+    let block: Extent | undefined
+    let marked = false
+    let changed = false
+    function flush() {
+      if (block === undefined) return
+      edits.push({ beforeStart: block.before, beforeCount: before - block.before, afterStart: block.after, afterCount: after - block.after })
+      block = undefined
+    }
+    while (index < rows.length && !rows[index]?.startsWith("@@")) {
+      const row = rows[index++] ?? ""
+      if (row === "\\ No newline at end of file") {
+        if (!marked) return undefined
+        marked = false
+        continue
+      }
+      const sign = row[0]
+      if (sign !== " " && sign !== "-" && sign !== "+") return undefined
+      if (sign === " ") flush()
+      else {
+        block ??= { before, after }
+        changed = true
+      }
+      if (sign !== "+") before++
+      if (sign !== "-") after++
+      if (before > beforeEnd || after > afterEnd) return undefined
+      marked = true
+    }
+    flush()
+    if (!changed || before !== beforeEnd || after !== afterEnd) return undefined
+  }
+  return ranges.length > 0 && extent(ranges) !== undefined && extent(edits) !== undefined ? edits : undefined
+}
+
+type Run =
+  | { readonly kind: "base"; readonly start: number; readonly count: number }
+  | { readonly kind: "added"; readonly commit: string; readonly count: number }
+
+interface Removal {
+  readonly commit: string
+  readonly start: number
+  readonly count: number
+}
+
+interface Cursor {
+  index: number
+  offset: number
+}
+
+function visit<R extends { readonly count: number }>(
+  runs: ReadonlyArray<R>,
+  cursor: Cursor,
+  count: number,
+  use: (run: R, offset: number, length: number) => boolean,
+) {
+  let remaining = count
+  while (remaining > 0) {
+    const run = runs[cursor.index]
+    if (run === undefined) return false
+    const length = Math.min(remaining, run.count - cursor.offset)
+    if (!use(run, cursor.offset, length)) return false
+    remaining -= length
+    cursor.offset += length
+    if (cursor.offset === run.count) {
+      cursor.index++
+      cursor.offset = 0
+    }
+  }
+  return true
+}
+
+function baseExtent(edges: ReadonlyArray<LineEdge>, accepted: Extent) {
+  const seen = new Set<string>()
+  let length = accepted.before
+  let delta = 0
+  for (const { commit, hunks } of edges) {
+    if (typeof commit !== "string" || commit.trim() === "" || seen.has(commit)) return undefined
+    seen.add(commit)
+    const edge = extent(hunks)
+    if (edge === undefined) return undefined
+    length = Math.max(length, edge.before - delta)
+    delta += edge.after - edge.before
+    if (!coordinate(length) || !Number.isSafeInteger(delta)) return undefined
+  }
+  return delta === accepted.after - accepted.before && coordinate(length + delta) ? length : undefined
+}
+
+function applyEdge(runs: ReadonlyArray<Run>, length: number, edge: LineEdge, removed: Removal[]) {
+  const next: Run[] = []
+  const cursor = { index: 0, offset: 0 }
+  let before = 0
+  let after = 0
+  function retain(run: Run, offset: number, count: number): boolean {
+    next.push(run.kind === "base" ? { kind: "base", start: run.start + offset, count } : { ...run, count })
+    return true
+  }
+  for (const hunk of edge.hunks) {
+    if (!visit(runs, cursor, hunk.beforeStart - before, retain)) return undefined
+    if (!visit(runs, cursor, hunk.beforeCount, (run, offset, count) => {
+      if (run.kind === "base") removed.push({ commit: edge.commit, start: run.start + offset, count })
+      return true
+    })) return undefined
+    if (hunk.afterCount > 0) next.push({ kind: "added", commit: edge.commit, count: hunk.afterCount })
+    before = hunk.beforeStart + hunk.beforeCount
+    after = hunk.afterStart + hunk.afterCount
+  }
+  const nextLength = after + (length - before)
+  if (!coordinate(nextLength) || !visit(runs, cursor, length - before, retain)) return undefined
+  return { runs: next, length: nextLength }
+}
+
+export function acceptedTextLineWeights(edges: ReadonlyArray<LineEdge>, accepted: ReadonlyArray<LineHunk>): ReadonlyMap<string, TextLineWeights> | undefined {
+  const ends = extent(accepted)
+  if (ends === undefined) return undefined
+  const baseLength = baseExtent(edges, ends)
+  if (baseLength === undefined) return undefined
+  const removed: Removal[] = []
+  let runs: ReadonlyArray<Run> = baseLength === 0 ? [] : [{ kind: "base", start: 0, count: baseLength }]
+  let length = baseLength
+  for (const edge of edges) {
+    if (edge.hunks.length === 0) continue
+    const next = applyEdge(runs, length, edge, removed)
+    if (next === undefined) return undefined
+    runs = next.runs
+    length = next.length
+  }
+
+  removed.sort((left, right) => left.start - right.start)
+  const finalCursor = { index: 0, offset: 0 }
+  const removalCursor = { index: 0, offset: 0 }
+  const weights = new Map<string, TextLineWeights>()
+  let after = 0
+  function credit(commit: string, additions: number, deletions: number) {
+    const previous = weights.get(commit)
+    weights.set(commit, { additions: (previous?.additions ?? 0) + additions, deletions: (previous?.deletions ?? 0) + deletions })
+  }
+  function acceptRemoval(start: number, count: number) {
+    let expected = start
+    let first = removed[removalCursor.index]
+    while (first !== undefined && first.start + first.count <= start) {
+      removalCursor.index++
+      first = removed[removalCursor.index]
+    }
+    if (first === undefined || first.start > start) return false
+    removalCursor.offset = start - first.start
+    return visit(removed, removalCursor, count, (removal, offset, length) => {
+      if (removal.start + offset !== expected) return false
+      expected += length
+      credit(removal.commit, 0, length)
+      return true
+    })
+  }
+  for (const hunk of accepted) {
+    if (hunk.beforeCount > 0 && !acceptRemoval(hunk.beforeStart, hunk.beforeCount)) return undefined
+    if (!visit(runs, finalCursor, hunk.afterStart - after, () => true)) return undefined
+    if (!visit(runs, finalCursor, hunk.afterCount, (run, _offset, count) => {
+      if (run.kind !== "added") return false
+      credit(run.commit, count, 0)
+      return true
+    })) return undefined
+    after = hunk.afterStart + hunk.afterCount
+  }
+  return weights
+}

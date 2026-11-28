@@ -378,8 +378,22 @@ unresolved implementation source; or its accepted-implementation digest
 (repository and native delta digest) was already scored in this or an
 earlier window. For a changed two-parent merge without a joint decision,
 a difference between the bound pull request totals and the line counts of
-its accepted first-parent change makes the implementation source unresolved.
-Every credited source records its digest, so a later exact repeat is held. Legacy scoring without value decisions is unchanged
+its accepted first-parent change makes the implementation source unresolved
+until complete native line attribution is available. A fresh collected
+multi-commit source also needs that attribution when the provider totals
+agree. Its linked commit authors share the unchanged value according to the
+text additions and deletions that survive in the accepted first-parent
+change. The pinned Git Myers diff with its indent heuristic supplies the
+line positions across every edge. Canceled intermediate edits contribute no
+weight. A complete proof
+binds the accepted path transitions and every line owner to the exact
+submitted commit membership. Incomplete proofs hold automatic credit until
+review, with earlier recorded awards preserved.
+Each eligible rolling source with a verified digest participates in duplicate
+checking within the current window. An earlier window contributes a digest
+when its recorded award has verified predecessor evidence. Earlier
+multi-commit awards without that evidence require separate review. Legacy
+scoring without value decisions is unchanged
 (development `src/lib/leaderboard.ts` implementation hold,
 `implementation_credit_gate` `selectCommitCensus`, `selectZeroLineWork`,
 `selectPreviousSubmission`). A source held as unavailable reports
@@ -389,6 +403,11 @@ Every credited source records its digest, so a later exact repeat is held. Legac
 type CreditSelection = { v2: bool, valueInput: bool, underValuePolicy: bool, rolling: bool, ratified: bool,
   valueRecord: bool, jointAssessed: bool, commits: List[CO::CensusCommit], emptyMarker: bool, unresolved: bool,
   digestScored: bool, earlierOverlap: bool }
+pure def requiresNativeTextProof(selection: CreditSelection, requested: bool): bool =
+  requested and selection.v2 and selection.valueInput and selection.rolling and
+    not(selection.ratified) and not(selection.valueRecord) and not(selection.jointAssessed)
+pure def lawVerifiedTextRequiredForAutomaticRolling(selection: CreditSelection): bool =
+  requiresNativeTextProof(selection, true) implies freshCreditHeld({ ...selection, unresolved: true })
 pure def freshCreditHeld(selection: CreditSelection): bool =
   selection.v2 and selection.valueInput and not(selection.ratified) and not(selection.valueRecord) and
   ((selection.rolling and selection.underValuePolicy and selection.commits.length() == 0) or selection.emptyMarker or

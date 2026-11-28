@@ -1,15 +1,18 @@
 // spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/authorship.md, "A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair"
-import { type CommitAttribution, type CopyBinding, type CreditSelection, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, copyCredit, contributes, eligibleKind, freshCreditHeld, initial as attributionInitial, ownsAcceptedOrdinaryCommit, recipientFor, recipientLines, scoredDigestsAfter, standaloneOverlapHeld, usesEarlierOwners } from "../../gen/points__authorship.effect.vibe"
+import { type CommitAttribution, type CopyBinding, type CreditSelection, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, copyCredit, contributes, eligibleKind, freshCreditHeld, initial as attributionInitial, ownsAcceptedOrdinaryCommit, recipientFor, recipientLines, requiresNativeTextProof, scoredDigestsAfter, standaloneOverlapHeld, usesEarlierOwners } from "../../gen/points__authorship.effect.vibe"
 import type { CensusCommit } from "../../gen/points__corrections.effect.vibe"
 import { type PointShare, type Recipient, allocatePoints, canWriteAllocation, eligibleAllocation, lineTotal } from "../../gen/points__allocation.effect.vibe"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import { type JointMembership, canWithholdJoint, holdsJointDecision, withheldMember } from "../../gen/points__scoringPolicy.effect.vibe"
 import { type Units, accept as acceptUnit, canAccept as canAcceptUnit, canForm, form, initial as unitsInitial } from "../../gen/points__workUnits.effect.vibe"
+import type { ImplementationAllocation } from "../client/snapshot/schema.vibe"
+import { implementationShares } from "../client/snapshot/shares.vibe"
+import { POINTS_PER_THIRD } from "../client/units/scoreUnits.ts"
 import { scoreV2EffectiveAt, valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
-import { commitActorKind } from "../kernels/scoring/lines.ts"
+import { commitActorKind, isCreditEligibleCommitAuthor } from "../kernels/scoring/lines.ts"
 import { valueTierBand } from "../kernels/scoring/tiers.ts"
 import { Commits, Sources } from "./book.vibe"
-import { type Actor, type ActorIndex, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type ImplementationHistory, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import { type AcceptedTextAttribution, type Actor, type ActorIndex, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type ImplementationHistory, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import { scoredSource, valueAssessed } from "./policy.vibe"
 
 export interface JointReview {
@@ -33,6 +36,7 @@ export interface Merges {
   readonly assessed: ReadonlySet<string>
   readonly joint: ReadonlyMap<string, JointReview>
   readonly jointUnitCredits: ReadonlyArray<JointUnitCredit>
+  readonly implementationAllocations: ReadonlyMap<string, ImplementationAllocation>
   readonly implementationHeld: ReadonlySet<string>
   readonly standaloneReview: ReadonlySet<string>
 }
@@ -136,6 +140,23 @@ function censusOf(pull: MergedPull, owners: ReadonlyMap<string, string>): Census
       files: 0,
     }
   })
+}
+
+function withAcceptedText(pull: MergedPull, proof: AcceptedTextAttribution | null | undefined) {
+  if (proof === undefined || proof === null || pull.commits === null || proof.head !== pull.headRefOid || proof.byCommit.size !== pull.commits.length) return undefined
+  const commits: Commit[] = []
+  const seen = new Set<string>()
+  for (const commit of pull.commits) {
+    const changes = proof.byCommit.get(commit.oid)
+    const linked = commit.author !== null && eligibleKind(commitActorKind(commit.author))
+    const retained = commit.retained !== null && eligibleKind(commitActorKind(commit.retained.actor))
+    if (commit.parentCount !== 1 || seen.has(commit.oid) || changes === undefined || !Number.isSafeInteger(changes.additions) || changes.additions < 0 ||
+      !Number.isSafeInteger(changes.deletions) || changes.deletions < 0 ||
+      (changes.additions + changes.deletions > 0 && !linked && !retained)) return undefined
+    seen.add(commit.oid)
+    commits.push({ ...commit, ...changes })
+  }
+  return { ...pull, commits } satisfies MergedPull
 }
 
 function resolutionLines(files: ReadonlyArray<ChangedFile>) {
@@ -289,6 +310,21 @@ function allocated(total: number, found: Found): Allocation {
   if (!eligibleAllocation(total, recipients, found.complete, false)) return { kind: "held", reason: "incomplete-lines" }
   if (!canWriteAllocation(total, recipients, found.complete, false)) return { kind: "held", reason: "unbalanced-allocation" }
   return { kind: "credited", shares: allocatePoints(total, recipients), zeroLines: lineTotal(recipients) === 0 }
+}
+
+function acceptedAllocation(total: number, found: Found, shares: ReadonlyArray<PointShare>, actors: ActorIndex): ImplementationAllocation | undefined {
+  if (typeof found === "string" || !found.complete) return undefined
+  const totalScoreThirds = total / POINTS_PER_THIRD
+  if (!Number.isSafeInteger(totalScoreThirds)) return undefined
+  const weights: ImplementationAllocation["weights"][number][] = []
+  for (const { actor: identity, lines } of found.recipients) {
+    const actor = actors.actor(identity)
+    if (actor === undefined || actor.kind !== "User" || !isCreditEligibleCommitAuthor(actor) || !Number.isSafeInteger(lines) || lines < 0) return undefined
+    weights.push({ actorNodeId: actor.id, actorLogin: actor.login, changedLines: String(lines) })
+  }
+  const allocatedThirds = implementationShares(totalScoreThirds, weights.map(({ actorNodeId, changedLines }) => ({ actorNodeId, lines: Number(changedLines) })))
+  if (allocatedThirds === undefined || allocatedThirds.length !== shares.length || shares.some((share, index) => allocatedThirds[index] !== share.points / POINTS_PER_THIRD)) return undefined
+  return { rule: "changed-lines-v1", totalScoreThirds, weights: weights.sort((left, right) => compareCodeUnits(left.actorNodeId, right.actorNodeId)) }
 }
 
 function actorIds(found: Found, actors: ActorIndex): ReadonlySet<string> | null {
@@ -575,6 +611,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
   const assessed = new Set<string>()
   const creditActors = new Map<string, ReadonlySet<string>>()
   const implementationHeld = new Set<string>()
+  const implementationAllocations = new Map<string, ImplementationAllocation>()
   const standaloneReview = new Set<string>()
   const digests = history.acceptedImplementationDigests
   let scoredDigests = [...history.previousImplementationDigests]
@@ -609,8 +646,13 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       }),
     }
     const implementationOwners = usesEarlierOwners(gate) ? fallbackOwners : owners
-    const selection: CreditSelection = { ...gate, commits: censusOf(pull, implementationOwners) }
-    const observations = implementationOwners === owners ? observedCommits.get(pull.id) ?? [] : try observed("earlier", pull, implementationOwners, actors)
+    const proof = history.acceptedTextAttribution?.get(pull.id)
+    const requireText = requiresNativeTextProof(gate, proof !== undefined)
+    const acceptedText = requireText ? withAcceptedText(pull, proof) : undefined
+    const unresolved = requireText ? acceptedText === undefined || history.unresolvedImplementationSources.has(pull.id) : gate.unresolved
+    const selection: CreditSelection = { ...gate, unresolved, commits: censusOf(acceptedText ?? pull, implementationOwners) }
+    const observations = acceptedText !== undefined ? try observed("accepted", acceptedText, implementationOwners, actors)
+      : implementationOwners === owners ? observedCommits.get(pull.id) ?? [] : try observed("earlier", pull, implementationOwners, actors)
     const found = recipientsOf(observations, eligibleAuthor(pull.author, actors))
     if (found === "synchronization-only") {
       hold([pull.id], found)
@@ -641,6 +683,14 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       continue
     }
     if (allocation.kind === "none") continue
+    if (acceptedText !== undefined) {
+      const proofAllocation = acceptedAllocation(scored.points, recipients, allocation.shares, actors)
+      if (proofAllocation === undefined) {
+        implementationHeld.add(pull.id)
+        continue
+      }
+      implementationAllocations.set(pull.id, proofAllocation)
+    }
     const author = humanAuthor(pull)
     const applied = scored.phase === "Ratified" ? ratification : null
     const valued = applied === null && valueAssessed(scored) ? assessment : null
@@ -695,5 +745,5 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     jointUnitCredits.push(...outcome.unitCredits)
     for (const key of outcome.assessed) assessed.add(key)
   }
-  return { events, held, creditActors, assessed, joint, jointUnitCredits, implementationHeld, standaloneReview } satisfies Merges
+  return { events, held, creditActors, assessed, joint, jointUnitCredits, implementationAllocations, implementationHeld, standaloneReview } satisfies Merges
 }

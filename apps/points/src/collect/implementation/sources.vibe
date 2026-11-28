@@ -11,11 +11,16 @@ export interface AcceptedImplementationSource {
   readonly firstParentTreeSha: string
 }
 
+export interface AcceptedLineSource extends AcceptedImplementationSource {
+  readonly submittedOids: ReadonlyArray<string>
+}
+
 export type Acceptance = AcceptedImplementationSource | "ineligible" | null
 
 export interface CurrentAcceptance {
   readonly outcome: MergedOutcome
   readonly markers: AcceptanceMarkers
+  readonly lineSource?: AcceptedLineSource
   readonly implementationSource: { readonly source: AcceptedImplementationSource; readonly changedFiles: number } | undefined
 }
 
@@ -124,7 +129,12 @@ export effect function currentAcceptance(value: unknown, outcome: MergedOutcome,
     node.additions === outcome.additions && node.deletions === outcome.deletions && safeCount(merge.additions) && safeCount(merge.deletions) &&
     (merge.additions !== outcome.additions || merge.deletions !== outcome.deletions)
   const markers: AcceptanceMarkers = countsDiffer ? { ...ordinary, acceptedLineCountsDiffer: true } : ordinary
-  const current: CurrentAcceptance = { ...none, markers }
+  const submitted = outcome.commits
+  const lineSource = changed && totalCount > 1 && node.headRefOid === outcome.headRefOid &&
+    submitted !== null && submitted.length === totalCount && submitted.every((member) => member.parentCount === 1)
+    ? { ...acceptance, submittedOids: submitted.map((member) => member.oid) }
+    : undefined
+  const current: CurrentAcceptance = { ...none, markers, ...(lineSource === undefined ? {} : { lineSource }) }
   const page = absent(commits.pageInfo) ? undefined : try recordAt(commits.pageInfo, `${path}.commits.pageInfo`)
   const nodes = Array.isArray(commits.nodes) ? commits.nodes : []
   const edge = nodes.length === 1 && !absent(nodes[0]) ? try recordAt(nodes[0], `${path}.commits.nodes[0]`) : undefined
