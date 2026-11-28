@@ -31,9 +31,11 @@ effect function recorded(stored: unknown) {
   return Schema.decodeUnknownEffect(ApprovalRecord)(stored) catch effect () => { throw refused("Release approval journal entry is malformed") }
 }
 
-effect function finalizedReserve(deployment: Deployment, period: Period) {
+effect function finalizedReserve(deployment: Deployment, period: Period, evidenceHeight: number) {
   const rpc = try EvmRpc
   const block = (try rpc.head("finalized")).number
+  const height = Number(block)
+  if (!Number.isSafeInteger(height) || height !== evidenceHeight) throw refused("The release evidence is not checked at the latest finalized height")
   const rootCall = try Effect.try({ try: () => monthlyRootCall(period), catch: () => refused("Invalid release period") })
   const reserveCall = try Effect.try({ try: () => monthlyReserveCall(period), catch: () => refused("Invalid release period") })
   const month = decodeMonthlyReserve({ root: try rpc.call({ to: deployment.vault, data: rootCall, block }), reserve: try rpc.call({ to: deployment.vault, data: reserveCall, block }) })
@@ -59,7 +61,7 @@ effect function approved(request: ApprovalRequest) {
   const observed = try onChain(deployment, effect {
     try preflight(deployment)
     const authority = try authorityInForce(deployment)
-    return { authority, month: try finalizedReserve(deployment, period) }
+    return { authority, month: try finalizedReserve(deployment, period, state.evidenceHeight) }
   })
   const { authority } = observed
   if (authority !== request.identityAuthority) throw refused("Release signer is not the current identity authority")

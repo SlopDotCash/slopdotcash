@@ -2,11 +2,11 @@
 import { D1, type Statement, sql } from "@repo/platform/d1"
 import { protectedScope } from "@repo/points/live"
 import { holdsAll, guardQueries } from "../closeout/run.vibe"
-import { type compileOctoberElizaProposal } from "./plan.ts"
+import { type compileOctoberProposal } from "./plan.ts"
 
 export error OctoberProposalRefused { message: string }
 
-type Proposal = ReturnType<typeof compileOctoberElizaProposal>["proposal"]
+type Proposal = ReturnType<typeof compileOctoberProposal>["proposal"]
 
 function exists(statement: Statement) {
   return sql`EXISTS (${statement})`

@@ -217,3 +217,36 @@ Chain effects use the approved network and financial scope. Provider, browser,
 database, chain and deployment acceptance follow implementation. Existing
 approved waivers remain recorded as waivers. STATE-01 through STATE-05 remain
 open until the required source mappings and implementation evidence are complete.
+
+### EVM failed-recipient qualification
+
+The [extended escrow requirement](../spec/operations/extendedQualification.md)
+uses a separate vault for the failed-recipient scenario. The local keeper CLI
+regression uses an isolated Anvil chain and the repository's `TestDollar`.
+Public qualification requires a reviewed, funded ordinary vault on each of
+Base Sepolia, Ethereum Sepolia and Robinhood Chain Testnet, two distinctly
+bound recipients and an approved test asset whose issuer can block and thaw
+one destination. `TestDollar` is a local fixture with an unrestricted block
+method. The configured keeper must hold no vault role and use the approved
+native-fee budget. Record the exact source revision, network, vault, asset,
+binding versions and two finalized award IDs before invoking it.
+
+Use the reviewed settlement build and a single-project operator config with
+both awards in the scan limit. Preserve the journal across every invocation.
+
+```sh
+node apps/settlement/dist/programs/main.js keeper --config operator.json --journal scenario.sqlite --execute
+```
+
+Run while one bound destination rejects the asset. The keeper exits nonzero
+for that award's failure even when it submits the healthy payment. Read
+finalized vault counters and payment records after the healthy payment
+settles. Require its one canonical `Paid` event and the full principal and
+fee still reserved for the blocked award. Once the issuer thaws that
+destination, rerun with the same config and journal. Confirm one canonical
+payment for each exact award, destination, binding version, gross, net and
+fee. Reconcile the transaction IDs in the journal and verify one send for
+the retry and zero on subsequent replays. Retain finalized block and
+transaction references and the ledger readback. The local result and these
+operator inputs leave the hosted run, the other extended scenarios and
+Solana devnet qualification pending.
