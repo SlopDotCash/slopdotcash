@@ -1,0 +1,126 @@
+// spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+import { assert, it } from "@effect/vitest"
+import { GitHub } from "@repo/platform/github"
+import type { CorrectionManifest } from "../src/corrections/apply/manifest.vibe"
+import { type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
+import type { PacketRecipientCorrection, SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+
+const repository = "SlopDotCash/slopdotcash"
+const nodeId = "R_slop"
+const integrationBranch = "development"
+const original = { id: "PR_origin", number: 11, headSha: "a".repeat(40), mergedAt: "2026-10-25T22:06:38.000Z" }
+const carrier = { id: "PR_carrier", number: 12, headSha: "b".repeat(40), mergedAt: "2026-10-25T22:06:36.000Z" }
+const acceptedSha = "c".repeat(40)
+const baseSha = "d".repeat(40)
+const actor = { id: "U_verified", login: "verified" }
+const claimIds = ["e".repeat(64), "f".repeat(64)]
+const sourceSha256 = "1".repeat(64)
+
+const correction = {
+  sourceId: original.id, workUnitId: "unit", nativeCarrierSourceId: carrier.id, recipients: [{ actor, githubId: "1", weight: "80" }],
+  evidence: "", evidenceSha256: "", expectedAfter: [], claimIds, expectedPredecessors: [],
+} satisfies PacketRecipientCorrection
+
+const sourceAudit = {
+  repository, repositoryNodeId: nodeId, from: "2026-09-27T00:00:00.000Z", through: "2026-11-01T00:00:00.000Z",
+  sources: [original, carrier],
+} satisfies SourceAudit
+
+const corrections = {
+  schemaVersion: "1", rule: "historical-implementation-allocation-v1", generatedAt: "2026-11-20T00:00:00.000Z",
+  baseline: { revisionCount: 10, revisionIdsDigest: "2".repeat(64) },
+  candidates: [{
+    id: "held", kind: "pull-request", projectId: "slopdotcash", sourceId: original.id, sourceUrl: "https://github.com/" + repository + "/pull/11",
+    occurredAt: original.mergedAt, workUnitId: correction.workUnitId, sourceIds: [original.id], expectedPredecessors: [], proof: { status: "held" },
+  }],
+} satisfies CorrectionManifest
+
+const packet = { projectId: "slopdotcash", sourceAudit, corrections, recipientCorrections: [correction] }
+const proof = { sourceSha256, claimIds, recipients: [{ actor, weight: "80" }] }
+
+function githubOf(moved: boolean, reads: string[], direct = false) {
+  const unsupported = () => die("Unexpected GitHub method")
+  return Layer.succeed(GitHub, {
+    json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
+    graphql: (_query, variables, schema) => effect {
+      const ids = variables.ids
+      if (!Array.isArray(ids)) return try die("Missing exact source IDs")
+      const nodes = ids.map((id) => {
+        const row = id === original.id ? original : carrier
+        reads.push(row.id)
+        return {
+          id: row.id, number: row.number, url: "https://github.com/" + repository + "/pull/" + row.number,
+          state: "MERGED", mergedAt: row.mergedAt, headRefOid: moved && row.id === carrier.id ? "0".repeat(40) : row.headSha,
+          repository: { id: nodeId, databaseId: 123456, nameWithOwner: repository, isPrivate: false },
+          mergeCommit: { oid: acceptedSha, parents: { totalCount: 2, nodes: [{ oid: baseSha }, { oid: direct ? row.headSha : carrier.headSha }] } },
+        }
+      })
+      return try orDie(Schema.decodeUnknownEffect(schema)({ nodes }))
+    },
+  })
+}
+
+it.effect('A restored original requires an exact live carrier proof (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const reads: string[] = []
+  const requests: NativeCarrierRequest[] = []
+  const checked = (request: NativeCarrierRequest) => effect {
+    requests.push(request)
+    return proof
+  }
+  provide githubOf(false, reads) {
+    const actual = try verifyNativeCarrierRecipients(packet, integrationBranch, checked)
+    const unavailable = verifyNativeCarrierRecipients(packet, integrationBranch) catch (error) => error._tag
+    const unregisteredBranch = verifyNativeCarrierRecipients(packet, undefined, checked) catch (error) => error._tag
+    const missingMarker = verifyNativeCarrierRecipients({ ...packet, recipientCorrections: [{ ...correction, nativeCarrierSourceId: undefined }] }, integrationBranch, checked) catch (error) => error._tag
+    const omitted = verifyNativeCarrierRecipients({ ...packet, sourceAudit: { ...sourceAudit, sources: [carrier] } }, integrationBranch, checked) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), proof)
+      assert.deepEqual(requests, [{ repository, repositoryNodeId: nodeId, repositoryDatabaseId: 123456, integrationBranch, original, carrier, acceptedSha }])
+      assert.deepEqual(reads, [original.id, carrier.id, original.id, carrier.id, original.id, carrier.id, original.id])
+      assert.equal(unavailable, "ReviewedRefused")
+      assert.equal(unregisteredBranch, "ReviewedRefused")
+      assert.equal(missingMarker, "ReviewedRefused")
+      assert.equal(omitted, "ReviewedRefused")
+    })
+  }
+  provide githubOf(true, []) {
+    const moved = verifyNativeCarrierRecipients(packet, integrationBranch, checked) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(moved, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
+  }
+})
+
+it.effect('Native recipient evidence must agree even when changed weights would round to the same award (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  try Effect.try(() => {
+    assert.isTrue(matchesNativeRecipient(correction, sourceSha256, proof))
+    assert.isFalse(matchesNativeRecipient({ ...correction, recipients: [{ ...correction.recipients[0], weight: "81" }] }, sourceSha256, proof))
+    assert.isFalse(matchesNativeRecipient({ ...correction, recipients: [{ ...correction.recipients[0], actor: { ...actor, id: "U_other" } }] }, sourceSha256, proof))
+    assert.isFalse(matchesNativeRecipient({ ...correction, claimIds: [claimIds[0]] }, sourceSha256, proof))
+    assert.isFalse(matchesNativeRecipient(correction, "3".repeat(64), proof))
+    assert.isFalse(matchesNativeRecipient(correction, sourceSha256, undefined))
+  })
+})
+
+it.effect('Direct ordinary corrections and separately assessed work units retain their existing checks (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const reads: string[] = []
+  const unmarked = [{ ...correction, nativeCarrierSourceId: undefined }]
+  provide githubOf(false, reads, true) {
+    const actual = try verifyNativeCarrierRecipients({ ...packet, recipientCorrections: unmarked }, integrationBranch)
+    try Effect.try(() => {
+      assert.equal(actual.size, 0)
+      assert.deepEqual(reads, [original.id])
+    })
+  }
+  provide githubOf(false, reads) {
+    const workUnit: CorrectionManifest = {
+      ...corrections, candidates: corrections.candidates.map((candidate) => ({ ...candidate, kind: "work-unit" })),
+    }
+    const actual = try verifyNativeCarrierRecipients({ ...packet, corrections: workUnit, recipientCorrections: unmarked }, integrationBranch)
+    try Effect.try(() => {
+      assert.equal(actual.size, 0)
+      assert.deepEqual(reads, [original.id])
+    })
+  }
+})

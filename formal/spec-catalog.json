@@ -15120,22 +15120,22 @@
     },
     {
       "path": "spec/operations/escrowQualification.md",
-      "sha256": "5a0565e98cd3bb1f3921134fcba495ee22c5fa4fc4d9a1e086e64eff9e26205c",
+      "sha256": "36c5dc5a52e4b5fd03ef841b1242ce8075d3325ad64a4505270cbe1fbd41e57d",
       "module": "operations__escrowQualification",
       "stories": [
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope",
-          "line": 17
+          "line": 30
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls",
-          "line": 205
+          "line": 218
         }
       ],
       "rules": [
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization",
-          "line": 19,
+          "line": 32,
           "definitions": [
             "Network",
             "QualificationPhase",
@@ -15168,7 +15168,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation",
-          "line": 75,
+          "line": 88,
           "definitions": [
             "fresh",
             "allowedOperation",
@@ -15186,7 +15186,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Missing or mismatched evidence holds the attempt, and finalized failure stops further actions",
-          "line": 112,
+          "line": 125,
           "definitions": [
             "canMissReceipt",
             "missReceipt",
@@ -15210,7 +15210,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Completed lanes do not repeat, and Ethereum requires both shared EVM qualifications and its own evidence",
-          "line": 159,
+          "line": 172,
           "definitions": [
             "ActivationEvidence",
             "canCompleteLane",
@@ -15235,7 +15235,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Native and Token-2022 qualification requires the whole asset flow and a reviewed authorization for the particular action",
-          "line": 207,
+          "line": 220,
           "definitions": [
             "TokenFacts",
             "AssetChecks",
@@ -15249,7 +15249,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization",
-          "line": 239,
+          "line": 252,
           "definitions": [
             "SolanaUpgradeEvidence",
             "ExistingSolanaStep",
@@ -15264,7 +15264,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Sample plans, receipts and checks cover the allowed progression and conflicting evidence",
-          "line": 266,
+          "line": 279,
           "definitions": [
             "planValues",
             "evidenceValues",
@@ -15303,8 +15303,12 @@
       ],
       "references": [
         {
+          "target": "../settlement/attesterActivation.md",
+          "line": 24
+        },
+        {
           "target": "../settlement/money.md",
-          "line": 212
+          "line": 225
         }
       ]
     },
@@ -18012,7 +18016,7 @@
     },
     {
       "path": "spec/points/census.md",
-      "sha256": "450e043e55263e5336adaf487d33d5078ff7f34f5956e3c601e905235e370f41",
+      "sha256": "06c6af798d0bce09c0200b29decb9ad0428ee6d882023c62f669ff82e6fec657",
       "module": "points__census",
       "stories": [
         {
@@ -18021,7 +18025,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only",
-          "line": 434
+          "line": 445
         }
       ],
       "rules": [
@@ -18063,7 +18067,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Every retained item has a deterministic, fail-closed selection decision with all its reasons",
-          "line": 98,
+          "line": 109,
           "definitions": [
             "Reason",
             "Status",
@@ -18088,7 +18092,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Only a complete census is ready for publication",
-          "line": 152,
+          "line": 163,
           "definitions": [
             "alwaysItemsDistinct",
             "alwaysCursorsDistinct",
@@ -18101,7 +18105,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days",
-          "line": 166,
+          "line": 177,
           "definitions": [
             "claimMaxAgeMs",
             "ClaimSource",
@@ -18124,7 +18128,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget",
-          "line": 228,
+          "line": 239,
           "definitions": [
             "maxGenerationCost",
             "rateLimitReserve",
@@ -18155,7 +18159,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A split Search range whose children disagree with the parent count is repeated once",
-          "line": 306,
+          "line": 317,
           "definitions": [
             "searchSafeResultLimit",
             "minimumSearchSliceMs",
@@ -18176,7 +18180,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / An optional discussion probe starts only with two available points and never waits for quota to probe",
-          "line": 347,
+          "line": 358,
           "definitions": [
             "probeCost",
             "ProbeAnswer",
@@ -18195,7 +18199,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Simulation samples include repeated cursors, count changes and blocked items",
-          "line": 387,
+          "line": 398,
           "definitions": [
             "human",
             "emptyPage",
@@ -18213,7 +18217,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only / The band reapplication touches only eligible unpaid work from 1 September through 31 October 2026",
-          "line": 440,
+          "line": 451,
           "definitions": [
             "AwardStage",
             "BandedWork",
@@ -18251,7 +18255,7 @@
         },
         {
           "target": "./ingestion.md",
-          "line": 256
+          "line": 267
         }
       ]
     },
@@ -19267,7 +19271,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "dc04db39c56ed15796535036321b2dc67110c05595c1e7dc3825d02d1a9775b2",
+      "sha256": "9adc7f40622d68e956d7771f4c6e0583db16e38961ca4df8695b3980b13fcb9e",
       "module": "points__journal",
       "stories": [
         {
@@ -19377,7 +19381,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
-          "line": 320,
+          "line": 321,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -19389,7 +19393,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 344,
+          "line": 345,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -19398,7 +19402,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 374,
+          "line": 375,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -19408,7 +19412,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 408,
+          "line": 409,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -19416,7 +19420,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 444,
+          "line": 445,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -19429,7 +19433,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 496,
+          "line": 497,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -19443,7 +19447,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 545,
+          "line": 546,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -19454,7 +19458,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 575,
+          "line": 576,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -19483,7 +19487,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 678,
+          "line": 679,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberReviewedAcceptedLinesReason",
@@ -19516,7 +19520,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 762,
+          "line": 763,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19525,7 +19529,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 792,
+          "line": 793,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19534,7 +19538,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 824,
+          "line": 825,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19548,7 +19552,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 861,
+          "line": 862,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19564,7 +19568,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 889,
+          "line": 890,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19577,7 +19581,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 923,
+          "line": 924,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19605,7 +19609,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 989,
+          "line": 990,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19629,7 +19633,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 1015,
+          "line": 1016,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19736,27 +19740,27 @@
         },
         {
           "target": "./evaluations.md",
-          "line": 322
+          "line": 323
         },
         {
           "target": "./scoringPolicy.md",
-          "line": 347
+          "line": 348
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 764
+          "line": 765
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 794
+          "line": 795
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 826
+          "line": 827
         },
         {
           "target": "./allocation.md",
-          "line": 832
+          "line": 833
         }
       ]
     },
@@ -21231,18 +21235,18 @@
     },
     {
       "path": "spec/points/reviews.md",
-      "sha256": "19559b4c8bf9f3349c6974d9802ceae407084f9e34984a83e257b9a141a04534",
+      "sha256": "279468ed4be28ed34663615416cda4452006bdf265ba57141bd83bac680c1d83",
       "module": "points__reviews",
       "stories": [
         {
           "heading": "Story: Credit the first five distinct useful reviewers",
-          "line": 8
+          "line": 16
         }
       ],
       "rules": [
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Review records preserve first qualification and highest band",
-          "line": 13,
+          "line": 21,
           "definitions": [
             "Reviewer",
             "Reviews",
@@ -21261,7 +21265,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews",
-          "line": 50,
+          "line": 58,
           "definitions": [
             "ActorKind",
             "ReviewEvidence",
@@ -21286,7 +21290,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Pool shares use ten-Point largest remainder and the original review order",
-          "line": 111,
+          "line": 119,
           "definitions": [
             "bandTotal",
             "poolPoints",
@@ -21302,7 +21306,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment",
-          "line": 134,
+          "line": 142,
           "definitions": [
             "ReviewDecision",
             "ReviewContent",
@@ -21317,7 +21321,7 @@
         },
         {
           "heading": "Story: Credit the first five distinct useful reviewers / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 177,
+          "line": 185,
           "definitions": [
             "review1",
             "evidenceValues",
@@ -21330,8 +21334,12 @@
       "imports": [],
       "references": [
         {
+          "target": "../slopbot/valueInference.md",
+          "line": 13
+        },
+        {
           "target": "./corrections.md",
-          "line": 65
+          "line": 73
         }
       ]
     },
@@ -36834,7 +36842,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "05abaa48f4b4ec653f25649b3a245be45735165bba965d03c24d7aec1abe824f",
+      "sha256": "73256538b3e1581c7f0012eab5c020b4724c181fa8047216e87b5bcb11b9f3fc",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36925,7 +36933,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 255,
+          "line": 256,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36939,7 +36947,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 295,
+          "line": 296,
           "definitions": [
             "CensusPull",
             "CensusQuery",

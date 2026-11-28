@@ -1,0 +1,185 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { type PublicMergeRepository, collectVerifiedMergeResolutions, withPublicGitObjects } from "@repo/platform/git"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import type { Actor, CommitAttribution, Evidence } from "../evidence/types.vibe"
+import { type CarrierLineProof, CarrierLineProofUnavailable, readCarrierGit, readCarrierGitBytes, verifyCarrierLines } from "./carrierLines.vibe"
+import { type NativeCarrierHistory, type NativeCarrierPartition, type NativeCommitBytes, type NativeCommitObject, parseNativeCommitObject, verifyNativeCarrierPartition } from "./carrierPartition.vibe"
+import { mergeInputOf } from "./merge.vibe"
+import { claimKey } from "./types.vibe"
+
+const oid = /^[0-9a-f]{40}$/u
+const proofObjectLimit = 8192
+const proofByteLimit = 8 * 1024 * 1024
+const commitByteLimit = 256 * 1024
+const rangeByteLimit = 256 * 1024
+
+function refused() {
+  return new CarrierLineProofUnavailable({ reason: "Native carrier scope changed or has incomplete ancestry" })
+}
+
+function historyOf(evidence: Evidence) {
+  const attribution = new Map<string, CommitAttribution>()
+  for (const row of evidence.commitAttribution) {
+    if (attribution.has(row.sha)) return undefined
+    attribution.set(row.sha, row)
+  }
+  return {
+    baseSha: evidence.pull.base.sha,
+    headSha: evidence.pull.head.sha,
+    commitCount: evidence.pull.commits,
+    commits: evidence.commits.map((commit) => {
+      const row = attribution.get(commit.sha)
+      return {
+        sha: commit.sha,
+        parents: commit.parents.map(({ sha }) => sha),
+        author: commit.author === null ? null : { nodeId: commit.author.node_id, type: commit.author.type },
+        ...(row !== undefined && row.changedPaths !== null && row.limitations.length === 0 ? { attributionDigest: sha256Of(JSON.stringify(row)) } : {}),
+      }
+    }),
+  } satisfies NativeCarrierHistory
+}
+
+function baseAncestors(baseSha: string, known: ReadonlyMap<string, NativeCommitObject>) {
+  const found = new Set<string>()
+  const pending = [baseSha]
+  while (pending.length > 0) {
+    const sha = pending.pop()
+    if (sha === undefined || found.has(sha)) continue
+    found.add(sha)
+    pending.push(...known.get(sha)?.parents ?? [])
+  }
+  return found
+}
+
+function pathObjects(baseSha: string, boundary: string, rows: string) {
+  if (rows === "" || !rows.endsWith("\n")) return undefined
+  const references = rows.slice(0, -1).split("\n")
+  const ids = references.map((row) => row.split(" ")[0] ?? "")
+  return ids.length < proofObjectLimit && ids.includes(baseSha) && ids.every((sha) => oid.test(sha) && sha !== boundary) &&
+    new Set(ids).size === ids.length ? ids : undefined
+}
+
+export effect function reconstructCarrierProof(directory: string, original: NativeCarrierHistory, carrier: NativeCarrierHistory, acceptanceSha: string) {
+  const { baseSha, headSha } = carrier
+  const all = new Set([original.baseSha, original.headSha, baseSha, headSha, acceptanceSha, ...original.commits.map(({ sha }) => sha), ...carrier.commits.map(({ sha }) => sha)])
+  if (!oid.test(original.headSha) || all.size > proofObjectLimit || [...all].some((sha) => !oid.test(sha))) throw refused()
+  const shallow = try readCarrierGit(directory, ["rev-parse", "--is-shallow-repository"])
+  if (shallow !== "false\n") throw refused()
+  const originalParentRows = try readCarrierGit(directory, ["rev-list", "--parents", original.headSha, "^" + original.baseSha], rangeByteLimit)
+  const parentRows = try readCarrierGit(directory, ["rev-list", "--parents", headSha, "^" + baseSha], rangeByteLimit)
+  const objects: NativeCommitBytes[] = []
+  const known = new Map<string, NativeCommitObject>()
+  let bytes = 0
+  effect function add(sha: string) {
+    if (known.has(sha)) return
+    if (objects.length >= proofObjectLimit || !oid.test(sha)) throw refused()
+    const raw = try readCarrierGitBytes(directory, ["cat-file", "commit", sha], commitByteLimit)
+    bytes += raw.length
+    const native = parseNativeCommitObject(sha, raw)
+    if (bytes > proofByteLimit || native === undefined) throw refused()
+    objects.push({ sha, raw })
+    known.set(sha, native)
+  }
+  for (const sha of all) try add(sha)
+  const submitted = new Set(carrier.commits.map(({ sha }) => sha))
+  const boundaries = new Set([
+    ...original.commits.filter(({ sha }) => !submitted.has(sha)).map(({ sha }) => sha),
+    ...carrier.commits.flatMap(({ parents }) => parents.filter((parent) => !submitted.has(parent))),
+  ])
+  let covered = baseAncestors(baseSha, known)
+  for (const boundary of boundaries) {
+    if (covered.has(boundary)) continue
+    if (!oid.test(boundary)) throw refused()
+    const rows = try readCarrierGit(directory, ["rev-list", "--parents", "--max-count=" + proofObjectLimit,
+      "--ancestry-path=" + boundary, baseSha, "^" + boundary], rangeByteLimit)
+    const path = pathObjects(baseSha, boundary, rows)
+    if (path === undefined) throw refused()
+    for (const sha of path) try add(sha)
+    covered = baseAncestors(baseSha, known)
+    if (!covered.has(boundary)) throw refused()
+  }
+  const partition = verifyNativeCarrierPartition({ original, carrier, acceptanceSha, objects,
+    trustedOriginalRange: { baseSha: original.baseSha, headSha: original.headSha, parentRows: originalParentRows },
+    trustedRange: { baseSha, headSha, parentRows },
+  })
+  if (partition === undefined) throw refused()
+  const lineProof = try verifyCarrierLines(directory, { baseSha, acceptedSha: acceptanceSha })
+  return { partition, lineProof }
+}
+
+interface OriginalCarrierClaim {
+  readonly id: string
+  readonly commitSha: string
+  readonly path: string
+  readonly actor: Actor
+  readonly additions: number
+  readonly deletions: number
+}
+
+effect function acceptedOriginalClaims(directory: string, evidence: Evidence, partition: NativeCarrierPartition, lineProof: CarrierLineProof) {
+  const novel = new Set(partition.newlyAcceptedCommitShas)
+  const commits = evidence.commits.filter(({ sha }) => novel.has(sha))
+  const ordinary = commits.filter(({ parents }) => parents.length < 2)
+  const authors = new Map(ordinary.map(({ sha, author }) => [sha, author]))
+  const commitAttribution = evidence.commitAttribution.filter(({ sha }) => novel.has(sha))
+  const attributedPaths = new Map(commitAttribution.map(({ sha, changedPaths }) => [sha, new Set(changedPaths ?? [])]))
+  const sourcePaths = new Set([...attributedPaths.values()].flatMap((paths) => [...paths]))
+  const resolutions = try collectVerifiedMergeResolutions(mergeInputOf({ ...evidence, commits, commitAttribution }), directory)
+  if (resolutions.length + ordinary.length !== commits.length || resolutions.some(({ paths }) => paths.length > 0)) {
+    throw new CarrierLineProofUnavailable({ reason: "Newly accepted original merge work has no exact line attribution" })
+  }
+  const result: OriginalCarrierClaim[] = []
+  for (const path of lineProof.paths) {
+    if (!sourcePaths.has(path.path)) continue
+    if (path.unresolvedAdditions !== 0 || path.unresolvedDeletions !== 0) {
+      throw new CarrierLineProofUnavailable({ reason: "Original contribution has competing accepted lines" })
+    }
+    for (const edit of path.claims) {
+      if (!authors.has(edit.sha)) continue
+      const actor = authors.get(edit.sha)
+      if (attributedPaths.get(edit.sha)?.has(path.path) !== true ||
+        actor === null || actor === undefined || !isCreditEligibleCommitAuthor({ id: actor.node_id, kind: actor.type })) throw refused()
+      result.push({
+        id: sha256Of(claimKey(evidence.repositoryNodeId, edit.sha, path.path)),
+        commitSha: edit.sha, path: path.path, actor, additions: edit.additions, deletions: edit.deletions,
+      })
+    }
+  }
+  if (result.length === 0) throw new CarrierLineProofUnavailable({ reason: "Original contribution has no surviving accepted lines" })
+  return result.sort((left, right) => left.id.localeCompare(right.id))
+}
+
+export effect function collectNativeCarrierProof(from: Evidence, to: Evidence, repository: PublicMergeRepository) {
+  const native = from.nativeMergeAcceptance
+  const accepted = to.mergeCommitEvidence
+  const baseSha = to.pull.base.sha
+  const originalAt = Date.parse(from.pull.merged_at ?? "")
+  const carrierAt = Date.parse(to.pull.merged_at ?? "")
+  const acceptanceSha = native?.carrier?.mergeSha ?? native?.mergeSha
+  if (native === undefined || native.schemaVersion !== 1 || from.pull.node_id === to.pull.node_id || !Number.isFinite(originalAt) || !Number.isFinite(carrierAt) || carrierAt > originalAt ||
+    native.headSha !== from.pull.head.sha || native.mergeSha !== from.pull.merge_commit_sha || native.integratedHeadSha !== to.pull.head.sha ||
+    acceptanceSha === undefined || acceptanceSha !== to.pull.merge_commit_sha || accepted?.sha !== acceptanceSha ||
+    accepted.parents.length !== 2 || accepted.parents[0]?.sha !== baseSha || accepted.parents[1]?.sha !== to.pull.head.sha ||
+    (native.carrier !== undefined && (native.carrier.pullRequestId !== to.pull.node_id || native.carrier.mergedAt !== to.pull.merged_at)) ||
+    repository.private !== false || repository.id !== from.repositoryDatabaseId || repository.id !== to.repositoryDatabaseId ||
+    repository.node_id !== from.repositoryNodeId || repository.node_id !== to.repositoryNodeId ||
+    repository.full_name?.toLowerCase() !== from.repository.toLowerCase() || repository.full_name?.toLowerCase() !== to.repository.toLowerCase()) {
+    throw refused()
+  }
+  const originalHistory = historyOf(from)
+  const carrierHistory = historyOf(to)
+  if (originalHistory === undefined || carrierHistory === undefined) throw refused()
+  const objects = [originalHistory.baseSha, originalHistory.headSha, carrierHistory.baseSha, carrierHistory.headSha, acceptanceSha]
+  const reconstructed = try withPublicGitObjects(repository, objects, (directory) => effect {
+    const proof = try reconstructCarrierProof(directory, originalHistory, carrierHistory, acceptanceSha)
+    const originalClaims = try acceptedOriginalClaims(directory, from, proof.partition, proof.lineProof)
+    return { ...proof, originalClaims }
+  })
+  return {
+    ...reconstructed,
+    repositoryNodeId: from.repositoryNodeId,
+    originalPullRequestId: from.pull.node_id,
+    carrierPullRequestId: to.pull.node_id,
+  }
+}

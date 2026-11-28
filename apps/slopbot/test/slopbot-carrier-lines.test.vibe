@@ -1,0 +1,88 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, it } from "@effect/vitest"
+import { gitText, systemGit } from "@repo/platform/git"
+import { carrierPatchLines, verifyCarrierLines } from "../src/value/workUnits/carrierLines.vibe"
+
+const gitServices = Layer.mergeAll(NodeServices.layer, systemGit)
+
+effect function command(root: string, ...args: ReadonlyArray<string>) {
+  return (try gitText({
+    args: ["-C", root, "-c", "user.name=Review Fixture", "-c", "user.email=review-fixture@example.test",
+      "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", "-c", "core.hooksPath=/dev/null", ...args],
+    limit: 32 * 1024,
+    seconds: 30,
+  }, "Fixture Git command failed")).trim()
+}
+
+effect function openGit() {
+  const fs = try FileSystem.FileSystem
+  const root = try fs.makeTempDirectoryScoped({ prefix: "slop-carrier-lines-" })
+  try command(root, "init", "-q", "-b", "main")
+  return root
+}
+
+effect function commit(root: string, data: string) {
+  const path = try Path.Path
+  try (try FileSystem.FileSystem).writeFileString(path.join(root, "source.txt"), data)
+  try command(root, "add", "source.txt")
+  try command(root, "commit", "-qm", "Change source")
+  return try command(root, "rev-parse", "HEAD")
+}
+
+it.effect("Bind final carrier lines to original and independent follow-up edits by native history", () => effect {
+  provide gitServices {
+    const root = try openGit()
+    const original = try commit(root, "top\nprior\nbottom\n")
+    try command(root, "switch", "-qc", "contribution")
+    const contributor = try commit(root, "top\noriginal\nbottom\n")
+    const followUp = try commit(root, "top\noriginal\nbottom\nfollow-up\n")
+    try command(root, "switch", "-q", "main")
+    try command(root, "merge", "--no-ff", "-qm", "Accept contribution", "contribution")
+    const acceptedSha = try command(root, "rev-parse", "HEAD")
+    const proof = try verifyCarrierLines(root, { baseSha: original, acceptedSha })
+    try Effect.try(() => {
+      assert.equal(proof.acceptedSha, acceptedSha)
+      assert.deepEqual(proof.paths, [{
+        path: "source.txt", additions: 2, deletions: 1, unresolvedAdditions: 0, unresolvedDeletions: 0,
+        claims: [
+          { sha: contributor, additions: 1, deletions: 1 },
+          { sha: followUp, additions: 1, deletions: 0 },
+        ].sort((left, right) => left.sha.localeCompare(right.sha)),
+      }])
+    })
+    const wrongFirstParent = verifyCarrierLines(root, { baseSha: contributor, acceptedSha }) catch (error) => error._tag
+    try Effect.try(() => assert.equal(wrongFirstParent, "CarrierLineProofUnavailable"))
+  }
+}, 30_000)
+
+it.effect("Competing deletions are unresolved even when both commits reach the accepted carrier", () => effect {
+  provide gitServices {
+    const root = try openGit()
+    const baseSha = try commit(root, "top\nprior\nbottom\n")
+    try command(root, "switch", "-qc", "first")
+    try commit(root, "top\nbottom\n")
+    try command(root, "switch", "-qc", "second", "main")
+    const second = try commit(root, "top\nbottom\nindependent\n")
+    try command(root, "merge", "--no-ff", "-qm", "Both branches", "first")
+    try command(root, "switch", "-q", "main")
+    try command(root, "merge", "--no-ff", "-qm", "Accept both", "second")
+    const acceptedSha = try command(root, "rev-parse", "HEAD")
+    const proof = try verifyCarrierLines(root, { baseSha, acceptedSha })
+    try Effect.try(() => {
+      assert.deepEqual(proof.paths, [{
+        path: "source.txt", additions: 1, deletions: 1, unresolvedAdditions: 0, unresolvedDeletions: 1,
+        claims: [{ sha: second, additions: 1, deletions: 0 }],
+      }])
+    })
+  }
+}, 30_000)
+
+it("Refuse missing hunks and preserve whether a signed edit ends in a newline", () => {
+  const header = "diff --git a/file b/file\n--- a/file\n+++ b/file\n"
+  assert.isUndefined(carrierPatchLines(header + "@@ -1 +1 @@\n-old\n"))
+  assert.isUndefined(carrierPatchLines(header + "@@ -1 +3 @@\n-old\n+new\n"))
+  assert.deepEqual(carrierPatchLines(header + "@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n"), {
+    additions: new Map([[1, "new"]]), deletions: new Map([[1, "old\n"]]),
+  })
+})

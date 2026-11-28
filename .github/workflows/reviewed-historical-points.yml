@@ -205,6 +205,6 @@ jobs:
           HISTORICAL_POINTS_APPLY: ${{ inputs.apply }}
         run: |
           set -euo pipefail
-          reviewed=(node apps/points/dist/programs/main.js reviewed "$RUNNER_TEMP/repository-registry.json" --reviewed-sha256 "$REVIEWED_PACKET_SHA256")
+          reviewed=(node apps/slopbot/dist/programs/main.js reviewed "$RUNNER_TEMP/repository-registry.json" --reviewed-sha256 "$REVIEWED_PACKET_SHA256")
           if [ "$HISTORICAL_POINTS_APPLY" = true ]; then reviewed+=(--apply); fi
           "${reviewed[@]}"

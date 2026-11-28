@@ -10,6 +10,7 @@ import { inspectValueIntakeHistoryCommand } from "./inspectValueIntakeHistory.vi
 import { qualifyValueModelsCommand } from "./qualify.vibe"
 import { readyAutoMergeCommand } from "./readyAutoMerge.vibe"
 import { reviewedReplay } from "./replay.vibe"
+import { reviewedHistoricalPublication } from "./reviewedPublication.vibe"
 import { valueSettingsCommand } from "./valueSettings.vibe"
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
@@ -24,6 +25,7 @@ program({
     "inspect-value-intake-history": command(inspectValueIntakeHistoryCommand),
     collect: command(collect),
     "reviewed-replay": command(reviewedReplay),
+    reviewed: command(reviewedHistoricalPublication),
     "value-settings": command(valueSettingsCommand),
     corrections: command(correctionsCommand),
     "ready-auto-merge": command(readyAutoMergeCommand),

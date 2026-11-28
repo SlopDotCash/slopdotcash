@@ -178,6 +178,14 @@ layer(Layer.mergeAll(Started, webCrypto, FetchHttpClient.layer), { excludeTestSe
     })
   })
 
+  it.effect('Retain a production-sized published journal without reconsidering its awards (spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    const published: Revision[] = []
+    for (let index = 1; index <= 72_000; index += 1) {
+      published.push(try revision({ project: "alpha", source: `issue-${index}`, amount: 30, occurredAt: october }))
+    }
+    try same(try held(published, published, committedOnly, new Map()), { count: 0, kept: published.map((row) => row.id) })
+  })
+
   it.effect(`Read the private protected months only from this site's route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")`, () => effect {
     const union = answer([{ projectId: "feed", period: "2026-10" }, { projectId: "alpha", period: "2026-10" }], ["eliza"])
     const notConfigured = try privateRead({ url: "", token: Redacted.make(secret) }, listing(union))

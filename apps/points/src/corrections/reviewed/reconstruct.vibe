@@ -20,6 +20,7 @@ import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetir
 import { type VerifiedRetirements, checkedRetirement, ownRecordPool } from "./retirement.vibe"
 import { type VerifiedClosedReviews, projectHistoricalValueChanges } from "./replay/value.vibe"
 import { latestOf } from "./replay/latest.vibe"
+import { type VerifiedNativeCarriers, matchesNativeRecipient, nativeCarrierCorrectionKey } from "./nativeRecipient.vibe"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -41,6 +42,7 @@ export interface ReconstructInput {
   readonly preview: boolean
   readonly closedReviews?: VerifiedClosedReviews
   readonly verifiedRetirements?: VerifiedRetirements
+  readonly verifiedNativeCarriers?: VerifiedNativeCarriers
 }
 
 interface DecisionText {
@@ -220,6 +222,11 @@ effect function checkedRecipients(input: ReconstructInput, correction: PacketRec
     new Set(correction.expectedAfter.map((row) => row.key)).size === correction.expectedAfter.length, "Recipient correction repeats a key")
   const candidate = packet.corrections.candidates.find((item) => item.sourceId === correction.sourceId && item.workUnitId === correction.workUnitId)
   try require(candidate !== undefined, "Recipient correction lacks canonical source scope")
+  if (correction.nativeCarrierSourceId !== undefined) {
+    const native = input.verifiedNativeCarriers?.get(nativeCarrierCorrectionKey(correction))
+    try require(candidate?.kind === "pull-request" && candidate.proof.status === "held" &&
+      matchesNativeRecipient(correction, dossier?.sourceSha256, native), "Recipient correction differs from the verified native carrier evidence")
+  }
   const proof = candidate?.proof
   if (proof?.status === "complete" && proof.claims !== undefined) {
     const claims = proof.claims

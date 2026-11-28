@@ -1,9 +1,17 @@
 # Useful review credit
 
-This model covers PRD section 7. A qualifying review has a verified immutable
-review ID, an independent human recipient, useful content, and a pre-merge
-occurrence time. The GitHub adapter supplies these facts and must keep original
-review time across ingestion retries and edits.
+This model covers the merged pull request review pool in PRD section 7. A
+qualifying review has a verified immutable review ID, an independent human
+recipient, useful content, and a pre-merge occurrence time. The GitHub adapter
+supplies these facts and keeps the original review time across ingestion retries
+and edits.
+
+The value policy also permits credit for an independent human review
+submitted before a verified unmerged closure when a positive assessment
+binds the exact review and head. That award records review credit alone.
+Reviewed historical replays apply their separate closure evidence rules. See
+the [value assessment](../slopbot/valueInference.md) and [historical
+audit](./assessmentAudit.md).
 
 ## Story: Credit the first five distinct useful reviewers
 
@@ -15,8 +23,8 @@ the PR's value and is allocated in ten-Point units with deterministic ties.
 Discovered by the proof review, an empty synthetic review state with a
 five-Point assessment satisfied the prior invariants and accepted a first
 review below the ten-Point minimum. Assessments are now one of the published
-size bands, which all meet the minimum. Credit exists only for a merged PR:
-the merge time is observed once and every credited review precedes it. Once
+size bands, which all meet the minimum. The merged pull request pool records
+the merge time once, and every credited review precedes it. Once
 the shares are written to the Points journal the record is closed; a later
 assessment or review appends a correction there instead.
 
