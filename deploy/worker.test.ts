@@ -27,7 +27,7 @@ import { describeSlopStateBackend, resolveSlopStateLayer } from "./state.ts";
 
 const rootDir = path.resolve(import.meta.dirname, "..");
 const appDistDir = path.join(rootDir, "apps/app/dist");
-const testStage = resolveStage({ mode: "test", cwd: rootDir }).stage;
+const testStage = resolveStage({ mode: "test", cwd: rootDir, env: {} }).stage;
 
 describe("slopdotcash Alchemy catalog and stage invariants", () => {
   it("loads reviewed configs, enforces stage isolation, and blocks production leakage into staging/dev", () => {
@@ -38,9 +38,9 @@ describe("slopdotcash Alchemy catalog and stage invariants", () => {
       PUBLICATION_ORDER.indexOf("IdentityWorker"),
     );
 
-    const prodTarget = resolveStage({ stage: "production", cwd: rootDir });
-    const stagingTarget = resolveStage({ stage: "staging", cwd: rootDir });
-    const devTarget = resolveStage({ mode: "dev", cwd: rootDir });
+    const prodTarget = resolveStage({ stage: "production", cwd: rootDir, env: {} });
+    const stagingTarget = resolveStage({ stage: "staging", cwd: rootDir, env: {} });
+    const devTarget = resolveStage({ mode: "dev", cwd: rootDir, env: {} });
 
     expect(() => assertSlopStageIsolation(prodTarget, reviewed)).not.toThrow();
     expect(() => assertSlopStageIsolation(stagingTarget, reviewed)).not.toThrow();
@@ -71,9 +71,9 @@ describe("slopdotcash Alchemy catalog and stage invariants", () => {
   });
 
   it("isolates remote state prefixes by GitHub environment and stage", () => {
-    const prodTarget = resolveStage({ stage: "production", cwd: rootDir });
-    const stagingTarget = resolveStage({ stage: "staging", cwd: rootDir });
-    const devTarget = resolveStage({ mode: "dev", cwd: rootDir });
+    const prodTarget = resolveStage({ stage: "production", cwd: rootDir, env: {} });
+    const stagingTarget = resolveStage({ stage: "staging", cwd: rootDir, env: {} });
+    const devTarget = resolveStage({ mode: "dev", cwd: rootDir, env: {} });
     expect(resolveSlopStatePrefix(stagingTarget, {})).toBe("alchemy/slop-staging/");
     expect(resolveSlopStatePrefix(prodTarget, {})).toBe("alchemy/slop-production/");
     expect(
