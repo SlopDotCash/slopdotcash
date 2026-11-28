@@ -171,12 +171,29 @@ export const driver: Driver = {
 };
 `;
 
+type DriverVerdict = { summary: string; problem?: never } | { problem: string; summary?: never };
+
+function problemText(text: string): string {
+  return text.trim() ? text : "the driver failed without an error message";
+}
+
+function readDriverVerdict(stdout: string): DriverVerdict | undefined {
+  const terminal = stdout.trimEnd().split("\n").at(-1) ?? "";
+  try {
+    const value: unknown = JSON.parse(terminal);
+    if (!value || typeof value !== "object" || Object.keys(value).length !== 1) return;
+    const fields = value as Record<string, unknown>;
+    if (Object.hasOwn(fields, "problem") && typeof fields.problem === "string") return { problem: problemText(fields.problem) };
+    if (Object.hasOwn(fields, "summary") && typeof fields.summary === "string" && fields.summary.trim()) return { summary: fields.summary };
+  } catch { /* no terminal verdict */ }
+}
+
 /**
  * Run `test/drivers/<name>.ts` of the package `root` in a Node of its own that runs VibeLang (`main` below), and say
  * what it found: every saved counterexample, then the journeys, the probes and the walks. A counterexample it saves
  * is added to `wrote`.
  */
-async function driven(root: string, name: string, machine: Machine, mode: TestProfile, wrote: Map<string, string>): Promise<{ problem?: string; summary?: string }> {
+async function driven(root: string, name: string, machine: Machine, mode: TestProfile, wrote: Map<string, string>): Promise<DriverVerdict> {
   const dir = makeTempDir("spec-driver-"), found = path.join(dir, "found.json"), saved = `${COUNTEREXAMPLES}/${name}`;
   let r: Awaited<ReturnType<typeof exec>>;
   let before: Set<string>;
@@ -188,12 +205,10 @@ async function driven(root: string, name: string, machine: Machine, mode: TestPr
     removeTempDir(dir);
   }
   for (const file of filesUnder(root, saved).filter((file) => !before.has(file))) wrote.set(path.join(root, file), fs.readFileSync(path.join(root, file), "utf8"));
-  let verdict: { problem?: string; summary?: string } | undefined;
-  if (!r.stopped) {
-    const said = r.stdout.trimEnd().split("\n").at(-1) ?? "";
-    try { verdict = JSON.parse(said); } catch { /* not the last line it writes, so the driver never finished */ }
-  }
-  return verdict ?? { problem: `${DRIVERS}/${name}.ts did not finish${r.stopped ? `: ${r.stopped}` : ""}\n${`${r.stdout}${r.stderr}`.trim().split("\n").slice(-40).join("\n")}` };
+  const verdict = r.stopped ? undefined : readDriverVerdict(r.stdout);
+  if (verdict && (verdict.problem !== undefined || r.status === 0)) return verdict;
+  const reason = r.stopped ?? (r.status !== 0 ? `exited with status ${r.status}` : "invalid or missing terminal verdict");
+  return { problem: `${DRIVERS}/${name}.ts did not finish: ${reason}\n${`${r.stdout}${r.stderr}`.trim().split("\n").slice(-40).join("\n")}` };
 }
 
 /** In the driver's own Node, in its package: replay what was saved, then check; a new disagreement is saved. */
@@ -218,7 +233,7 @@ async function main(name: string, foundFile: string, mode: TestProfile) {
     const cov = coverage.total
       ? `(${coverage.accepted.length}/${coverage.total} transitions accepted, ${coverage.refused.length}/${coverage.total} refused${coverage.uncovered.length ? `; uncovered: ${coverage.uncovered.join(", ")}` : ""})`
       : "";
-    return [parts.join(", "), cov].filter(Boolean).join(" ");
+    return [parts.join(", "), cov].filter(Boolean).join(" ") || "driver comparisons";
   } catch (error) {
     if (!(error instanceof ConformanceError) || error.origin === "replay") throw error;
     const file = `${saved}/${createHash("sha256").update(JSON.stringify(error.trace)).digest("hex").slice(0, 12)}.json`;
@@ -231,7 +246,8 @@ async function main(name: string, foundFile: string, mode: TestProfile) {
 }
 
 if (import.meta.main) {
-  const verdict = await main(process.argv[2], process.argv[3], process.argv[4] === "nightly" ? "nightly" : "normal").then((summary) => ({ summary }), (error) => ({ problem: error instanceof Error ? error.message : String(error) }));
+  const verdict = await main(process.argv[2], process.argv[3], process.argv[4] === "nightly" ? "nightly" : "normal").then((summary) => ({ summary }), (error) => ({ problem: problemText(error instanceof Error ? error.message : String(error)) }));
+  if ("problem" in verdict) process.exitCode ||= 1;
   // The last line is the verdict, whatever the driver wrote; a driver may leave a server or a timer running.
   process.stdout.write(`\n${JSON.stringify(verdict)}\n`, () => process.exit());
 }
@@ -248,9 +264,9 @@ export async function conformance(root: string, machines: Map<string, Machine>, 
     if (problem.startsWith("unstable conformance to ")) return "the disagreement did not reproduce";
     return /^(?:conformance to|trace|line) /.test(problem) ? "the program departs from the spec" : "the run did not get as far as comparing";
   };
-  const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([!problem, "traces",
-    `${where}: ${problem ? reportProblem(problem) : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
-    problem ? indent(problem) : "", where]);
+  const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([problem === undefined, "traces",
+    `${where}: ${problem === undefined ? `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}` : reportProblem(problem)}`,
+    problem === undefined ? "" : indent(problemText(problem)), where]);
   for (const name of shelled(root)) {
     const file = path.join(root, DRIVERS, `${name}.ts`), model = machines.get(name)?.model;
     if (model && !fs.existsSync(file)) {
@@ -266,8 +282,8 @@ export async function conformance(root: string, machines: Map<string, Machine>, 
     const name = path.basename(file, ".ts"), machine = machines.get(name);
     if (!machine) { add(file, undefined, "no state-machine spec has this name", ""); continue; }
     const run = () => driven(root, name, machine, mode, wrote);
-    const { problem, summary } = await (inputs === undefined ? run() : remember(JSON.stringify([name, inputs, sha(JSON.stringify(machine.found))]), run, (r) => !r.problem));
-    add(file, machine, problem, summary!);
+    const { problem, summary } = await (inputs === undefined ? run() : remember(JSON.stringify([name, inputs, sha(JSON.stringify(machine.found))]), run, (r) => r.summary !== undefined));
+    add(file, machine, problem, summary ?? "");
   }
   const dir = path.join(root, TRACES);
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((file) => file.endsWith(".jsonl")).sort() : []) {

@@ -4390,6 +4390,49 @@ assert.equal((await other).status, 0);
   });
 }
 
+test("conformance requires a valid terminal verdict from its driver child", async () => {
+  const root = oneRule("counter", "Count", "pure val initial: int = 0\npure def canInc(n: int): bool = n < 2\npure def inc(n: int): int = n + 1");
+  const spec = parseSpec(root, "spec/counter.md"), model = await gen(root, spec);
+  const domain = await import(path.join(root, "gen/counter.ts"));
+  const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }]], []);
+  const machines = new Map([["counter", { domain, model, found }]]);
+  const file = path.join(root, "test/drivers/counter.ts");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "junction");
+  const driver = `let state = 0;
+export const options = { keys: ["counter"], walks: 1, steps: 1, paths: false };
+export const driver = {
+  reset() { state = 0; },
+  dispatch() { state++; return "accepted"; },
+  observe() { return state; },
+};`;
+  const checkDriver = async (source: string) => {
+    fs.writeFileSync(file, source);
+    const kept: boolean[] = [];
+    const [result] = await checkTraces(root, machines, {}, async (_, run, keep) => {
+      const value = await run();
+      kept.push(keep(value));
+      return value;
+    }, new Map());
+    return { result, kept };
+  };
+  const passed = await checkDriver(driver);
+  assert.ok(passed.result[0] && passed.result[2].includes("1 walks of seed 1"), passed.result.join("\n"));
+  assert.deepEqual(passed.kept, [true]);
+  const quiet = await checkDriver(driver.replace("walks: 1", "walks: 0"));
+  assert.equal(quiet.result[0], true, quiet.result.join("\n"));
+  assert.deepEqual(quiet.kept, [true]);
+  const blank = await checkDriver(driver.replace("reset() { state = 0; }", 'reset() { throw new Error(""); }'));
+  assert.equal(blank.result[0], false, blank.result.join("\n"));
+  assert.match(blank.result[2], /did not get as far as comparing/);
+  assert.match(blank.result[3] ?? "", /the driver failed without an error message/);
+  assert.deepEqual(blank.kept, [false]);
+  const failedExit = await checkDriver(`${driver}\nprocess.exitCode = 7;`);
+  assert.equal(failedExit.result[0], false, failedExit.result.join("\n"));
+  assert.match(failedExit.result[3] ?? "", /did not finish: exited with status 7/);
+  assert.deepEqual(failedExit.kept, [false]);
+});
+
 const LANES = Math.min(4, os.availableParallelism());
 const SHARDS = { [toolShards.a]: eachCheckA, [toolShards.b]: eachCheckB };
 describe("the tools", { concurrency: true }, () => {
