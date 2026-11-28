@@ -588,6 +588,88 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   })
 
+  it.effect('A captured revert after canonical indexing records only the exact old failure (spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner")', () => effect {
+    const { escrow, script } = try Journey
+    const { vault, deployment, asset } = try opened(19n, escrow.roles.owner.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const recipient = try address(escrow.roles.recipient.address)
+    const digest = try authorize("61", recipient, "claim-61-a", null)
+    const award = try committed(vault, 0x1901n, 61n, 4_000_000n)
+    try same(outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)), "Recorded")
+    try bound(vault, 61n, recipient, 0n, digest)
+    const wrongVersion = try Effect.try(() => payCalldata(award.id, 9n))
+    const reverted = try promise(() => escrow.chain.transact({ from: escrow.roles.donor.address, to: vault, data: wrongVersion }))
+    const transaction = reverted.transactionHash.toLowerCase()
+    const revertedReceipt = try promise(() => rpc(escrow.chain.url, "eth_getTransactionReceipt", [transaction]))
+    if (!isRecord(revertedReceipt) || typeof revertedReceipt.blockHash !== "string") return try die(new Error("The revert fixture has no canonical block"))
+    const blockHash = revertedReceipt.blockHash
+    const submissionsBefore = script.submits.length
+    script.answers.push(transaction)
+    try same(try shell(dispatchPayment(deployment, asset, award.id)), "Submitted")
+    const attempt = script.submits[submissionsBefore]
+    if (attempt === undefined) return try die(new Error("The recovery fixture submitted no attempt"))
+
+    const requested = try Deferred.make<void>()
+    const release = try Deferred.make<void>()
+    let readRevert = false
+    const upstream = forward(escrow.chain.url)
+    const proxy = try acquireRelease(promise(() => serve(async (request) => {
+      const body: unknown = await request.clone().json()
+      const response = await upstream(request)
+      if (isRecord(body) && body.method === "eth_getTransactionReceipt" && Array.isArray(body.params) && body.params[0] === transaction) {
+        readRevert = true
+      }
+      return response
+    })), (server) => promise(() => server.close()))
+    const served = { deployment: { ...deployment, rpc: Redacted.make([proxy.url]) }, asset }
+    const inspection = fork.scoped effect {
+      return shell(effect {
+        const database = try D1
+        provide Layer.succeed(D1, {
+          ...database,
+          batch: (statements) => effect {
+            if (readRevert) {
+              try Deferred.succeed(requested, undefined)
+              try Deferred.await(release)
+            }
+            return try database.batch(statements)
+          },
+        }) {
+          return try reconcileFailedAttempts([network], [served])
+        }
+      }) catch (error) => error instanceof RecoveryFailed ? error.failures : [failureTag(error)]
+    }
+    try timeout(Deferred.await(requested), "60 seconds")
+    const payout = try paid(vault, award.id, 1n)
+    const paidTransaction = payout.receipt.transactionHash.toLowerCase()
+    const indexedPayout = outcomeOf(try indexed(deployment, "paid", paidTransaction, payout.index, award.id))
+    const obligation = sql`SELECT state, paid_transaction, gross_base, fee_base FROM payment_obligations WHERE id = ${award.id}`
+    const outbox = sql`SELECT state, lease_token, lease_until, updated_at FROM payment_outbox WHERE obligation_id = ${award.id}`
+    const evidence = sql`SELECT evidence_json FROM payment_events WHERE obligation_id = ${award.id} AND kind = 'paid'`
+    const before = try shell(effect { return (try (try D1).batch([obligation, outbox, evidence])).map(({ rows }) => rows) })
+    try same([indexedPayout, paidTransaction !== transaction, (try phaseOf(deployment, award.id)).queue], ["Recorded", true, "Indexed"])
+
+    try Deferred.succeed(release, undefined)
+    const reconciled = join inspection
+    const oldAttempt = sql`SELECT id, state, transaction_id FROM payment_attempts WHERE obligation_id = ${award.id} ORDER BY rowid`
+    const failures = sql`SELECT attempt_id, transaction_id, evidence_json FROM payment_attempt_failures WHERE attempt_id = ${attempt.idempotencyKey}`
+    const [attemptRows, failureRows, ...after] = try shell(effect { return (try (try D1).batch([oldAttempt, failures, obligation, outbox, evidence])).map(({ rows }) => rows) })
+    try shell(reconcileFailedAttempts([network], [served]))
+    const replayed = outcomeOf(try indexed(deployment, "paid", paidTransaction, payout.index, award.id))
+    const retried = try shell(dispatchPayment(deployment, asset, award.id))
+    const afterReplay = try shell(effect { return (try (try D1).batch([failures, obligation, outbox, evidence])).map(({ rows }) => rows) })
+    try same({ reconciled, attemptRows, failureRows, after, replayed, retried, submits: script.submits.length - submissionsBefore, afterReplay }, {
+      reconciled: undefined,
+      attemptRows: [{ id: attempt.idempotencyKey, state: "failed", transaction_id: transaction }],
+      failureRows: [{ attempt_id: attempt.idempotencyKey, transaction_id: transaction, evidence_json: JSON.stringify({ chain: "base", transactionId: transaction, blockHash, status: "reverted", finality: "finalized" }) }],
+      after: before,
+      replayed: "Replayed",
+      retried: "Unavailable",
+      submits: 1,
+      afterReplay: [failureRows, ...before],
+    })
+  })
+
   it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, a refused cancellation leaves the attempt unknown, and reconciliation selects only the served networks, reporting and holding an attempt whose vault is not reviewed, and a newer wallet parks the uncertain attempt held with its payout exception sent to the payout audience (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
     const { escrow, script } = try Journey
     const { vault, deployment, asset } = try opened(14n, escrow.roles.owner.address)
