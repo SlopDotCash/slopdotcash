@@ -260,8 +260,6 @@ effect function changedPaths(directory: string, before: string, after: string) {
   return changes
 }
 
-// Run only in the pinned, verified Git workspace. This derives the candidate
-// scope from native history, so a supplied list cannot suppress a competing edit.
 export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest) {
   const { baseSha, acceptedSha } = request
   if (!oid.test(baseSha) || !oid.test(acceptedSha) || baseSha === acceptedSha) {
