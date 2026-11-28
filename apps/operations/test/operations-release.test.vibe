@@ -36,11 +36,12 @@ module stagedGitHub {
   }
 
   /** @throws {never} */
-  export function refuseNext(fake: GitHubFake, repository: string, match: string, status: number, headers: Readonly<Record<string, string>>, meanwhile: Meanwhile = {}): void {
+  export function refuseNext(fake: GitHubFake, repository: string, match: string, status: number, headers: Readonly<Record<string, string>> | (() => Readonly<Record<string, string>>), meanwhile: Meanwhile = {}): void {
     fake.alterNext(match, () => {
       if (meanwhile.history !== undefined) stagedHistory(fake, repository, meanwhile.history)
       if (meanwhile.branch !== undefined) execFileSync("git", ["-C", meanwhile.branch.origin, "branch", "-f", meanwhile.branch.name, meanwhile.branch.sha])
-      return new Response(JSON.stringify({ message: "API rate limit exceeded for user synthetic" }), { status, headers: { "content-type": "application/json", ...headers } })
+      const responseHeaders = typeof headers === "function" ? headers() : headers
+      return new Response(JSON.stringify({ message: "API rate limit exceeded for user synthetic" }), { status, headers: { "content-type": "application/json", ...responseHeaders } })
     })
   }
 
@@ -392,7 +393,7 @@ module workflowShape {
 
   /** @throws {Error} */
   function bash(script: string, env: Readonly<Record<string, string>>, cwd: string): Ran {
-    const ran = spawnSync("bash", ["-euc", script], { cwd, env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" })
+    const ran = spawnSync("bash", ["--noprofile", "--norc", "-euc", script], { cwd, env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" })
     if (ran.error !== undefined) throw ran.error
     if (ran.stderr !== "") throw new Error(ran.stderr)
     return { code: ran.status, lines: ran.stdout.split("\n").filter((line) => line !== "" && !line.startsWith("::")).map((line) => line.trimEnd()) }
@@ -977,22 +978,26 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const stagedLegacyProdFlag = try staged([{ sha: tested }, { sha: divergent, ref: "development", createdAt: "2026-11-24T12:00:00Z", productionEnvironment: true }])
     const stagedUnknownRef = try staged([{ sha: tested }, { sha: divergent, ref: "main", createdAt: "2026-11-24T12:00:00Z" }])
     const stagedNewer = try staged([{ sha: tested }, { sha: newer, workflow: ".github/workflows/deploy.yml" }])
-    const quotaReset = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }))
+    const freshPrimaryQuotaHeaders = () => ({
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(Math.floor(Date.now() / 1_000) + 1),
+    })
+    const quotaReset = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, freshPrimaryQuotaHeaders))
     const quotaAtStatuses = try staged([{ sha: tested }, { sha: newer, workflow: controller }], () => refuseNext(fake, repository, "/statuses", 429, { "retry-after": "0" }, { history: provenanceChanged }))
     const quotaAtRun = try staged([{ sha: tested }, { sha: newer, workflow: controller }], () => refuseNext(fake, repository, "/actions/runs/", 429, { "retry-after": "0" }, { history: provenanceChanged }))
     const unauthorized = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 401, { "retry-after": "0" }))
     const forbidden = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, {}))
     const invalidReset = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "invalid" }))
     const pastReset = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now - 10) }))
-    const beyondBudget = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1), "retry-after": "180" }), 300)
-    const beyondJob = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1), "retry-after": "60" }), 30)
+    const beyondBudget = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, () => ({ ...freshPrimaryQuotaHeaders(), "retry-after": "180" })), 300)
+    const beyondJob = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, () => ({ ...freshPrimaryQuotaHeaders(), "retry-after": "60" })), 30)
     const quotaTwice = try staged(inOrder, () => {
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
     })
     const forcePushed = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" }, { branch: { origin, name: "develop", sha: divergent } }))
     try git(origin, ["branch", "-f", "develop", tested])
-    const withoutJobDeadline = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }), "unset")
+    const withoutJobDeadline = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, freshPrimaryQuotaHeaders), "unset")
     const retryAtDeadline = try staged(inOrder, () => {
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
       hangNext(fake, historyPage)
@@ -1388,7 +1393,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const collectorToken = "Mint the read-only collector token for assessment source reads"
     const catalog = "Read and verify the complete historical assessment catalog"
     const receipt = "Preserve the assessment audit receipt"
-    const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+    const publication = `apps/slopbot/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
     assert.deepStrictEqual(try Effect.try(() => reviewedWorkflow()), {
       tokenScopes: { workflow: { contents: "read" }, job: { contents: "read", actions: "read" } },
       validation: {
