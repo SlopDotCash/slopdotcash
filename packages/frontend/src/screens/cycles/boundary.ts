@@ -1,4 +1,4 @@
-// spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"
+// spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/views.md, "A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap"
 import type { ManagedRuntime } from "effect";
 import { useState } from "react";
 import { snapshotStaleAfterMs } from "../../../gen/frontend__snapshotCache.ts";

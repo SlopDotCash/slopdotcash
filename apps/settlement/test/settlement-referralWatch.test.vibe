@@ -328,7 +328,7 @@ effect function snapshotted<A, E, R>(bench: Chain.Shape, run: A!E!R) {
 }
 
 layer(Layer.mergeAll(FilesStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('A closed month is awaited until 02:00 and stale after it, and good files pass (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Every month closed more than two hours ago has a filed accrual file, and an earlier month is only awaiting filing"; spec/settlement/referralWatch.md, "Each public file\'s bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralFiles.md, "The index lists every filed period once in epoch order with its digest, root, total, leaf count and URL"; spec/settlement/referralFiles.md, "A period file answers its exact stored bytes and the SHA-256 recorded when it was filed")', () => effect {
+  it.effect(`A closed month is awaited until 02:00 and stale after it, and good files pass (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Every month closed more than two hours ago has a filed accrual file, and an earlier month is only awaiting filing"; spec/settlement/referralWatch.md, "Each public file's bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralFiles.md, "The index lists every filed period once in epoch order with its digest, root, total, leaf count and URL"; spec/settlement/referralFiles.md, "A period file answers its exact stored bytes and the SHA-256 recorded when it was filed")`, () => effect {
     const { good } = try Files
     const setup = try setupOf(varsFor("https://rpc.invalid", absentChain))
     const empty = try filesAt(setup, good.origin, "2026-12-01T01:59:59.000Z")
@@ -347,7 +347,7 @@ layer(Layer.mergeAll(FilesStarted, webCrypto, outbound), { excludeTestServices: 
     })
   })
 
-  it.effect('Changed bytes, totals and wallet pins fail with their own codes, and the referral-roots command reports them with its exit status (spec/settlement/referralWatch.md, "Each public file\'s bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")', () => effect {
+  it.effect(`Changed bytes, totals and wallet pins fail with their own codes, and the referral-roots command reports them with its exit status (spec/settlement/referralWatch.md, "Each public file's bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")`, () => effect {
     const { digest, pin, total } = try Files
     const setup = try setupOf(varsFor("https://rpc.invalid", absentChain))
     const at = "2027-01-01T02:30:00.000Z"
@@ -375,7 +375,7 @@ layer(Layer.mergeAll(FilesStarted, webCrypto, outbound), { excludeTestServices: 
     })
   })
 
-  it.effect('Unavailable, redirected and oversized public data, a failing provider and the wrong chain fail explicitly (spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referralWatch.md, "Each posted root equals its file\'s tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")', () => effect {
+  it.effect(`Unavailable, redirected and oversized public data, a failing provider and the wrong chain fail explicitly (spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referralWatch.md, "Each posted root equals its file's tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")`, () => effect {
     const { good } = try Files
     const at = "2027-01-01T02:30:00.000Z"
     const before = "2026-11-15T00:00:00.000Z"
@@ -409,7 +409,7 @@ layer(Layer.mergeAll(FilesStarted, webCrypto, outbound), { excludeTestServices: 
 })
 
 layer(Layer.mergeAll(ChainStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('Posted roots verify after finality, and a changed root or total, a missing event and a non-canonical receipt fail (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Each posted root equals its file\'s tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")', () => effect {
+  it.effect(`Posted roots verify after finality, and a changed root or total, a missing event and a non-canonical receipt fail (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Each posted root equals its file's tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")`, () => effect {
     const bench = try Chain
     const november2026 = try file(bench.site, month("2026-11", 0, november, novemberTotal, walletA))
     const december2026 = try file(bench.site, month("2026-12", 1, december, decemberTotal, walletA))

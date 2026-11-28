@@ -21,7 +21,7 @@ export const meta: ComponentMeta<PaginationProps> = {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "back" }], [{ type: "forward" }]]),
     First: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "forward" }]]),
     Last: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "back" }]]),
-    // spec/ui/pagination.md, "Move through pages without leaving the list": reaching the last page by key disables
+    // spec/ui/pagination.md, "Story: Move through pages without leaving the list": reaching the last page by key disables
     // Next, so focus moves to Previous rather than leaving the list.
     NextToLast: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       onSend.mockClear();

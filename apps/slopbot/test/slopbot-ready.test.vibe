@@ -207,7 +207,7 @@ effect function merges(fake: Fake) {
 }
 
 layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('A ready pull request is labelled with one comment line, only writer approvals at the head count, and nothing is ever merged (spec/slopbot/readyLabel.md, "The owner\'s settings are off unless saved on, and stay within their bounds"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "A changed file is protected when it is deleted, on a default or owner path, or has no text diff"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready"; spec/slopbot/readyLabel.md, "Only a human merges")', () => effect {
+  it.effect(`A ready pull request is labelled with one comment line, only writer approvals at the head count, and nothing is ever merged (spec/slopbot/readyLabel.md, "The owner's settings are off unless saved on, and stay within their bounds"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "A changed file is protected when it is deleted, on a default or owner path, or has no text diff"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready"; spec/slopbot/readyLabel.md, "Only a human merges")`, () => effect {
     const area = try Area
     const { fake } = try World
     try prepared(area)
@@ -262,7 +262,7 @@ layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => 
     try same((try stateOf(area, guarded.number)).line, notLabelled(guarded.head, "it touches a dependency manifest or lockfile (package.json)"))
   })
 
-  it.effect('A push removes the label and replaces the line, a push during the check adds nothing, and pending mergeability is rechecked by the cron, claimed before sending (spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request\'s own events are GitHub\'s"; spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready")', () => effect {
+  it.effect(`A push removes the label and replaces the line, a push during the check adds nothing, and pending mergeability is rechecked by the cron, claimed before sending (spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready")`, () => effect {
     const area = try Area
     const { fake, flips } = try World
     try prepared(area)
@@ -312,7 +312,7 @@ layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => 
     })
   })
 
-  it.effect('Turning the setting off clears an open pull request, a closed one keeps its label, and a finished review queues a check whose queue failure does not replay the review (spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request\'s own events are GitHub\'s"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay")', () => effect {
+  it.effect(`Turning the setting off clears an open pull request, a closed one keeps its label, and a finished review queues a check whose queue failure does not replay the review (spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay")`, () => effect {
     const area = try Area
     const { fake } = try World
     try prepared(area)
@@ -474,7 +474,8 @@ effect function autoSkipReason(change: (item: AutoFixture) => void, options: Aut
   return outcomes[0]?.detail ?? ""
 }
 
-standaloneIt.effect('Ready auto-merge obeys the switch, dry-run write guard, base branch rules, label provenance, write-access approvals, clean mergeability, .github exclusion, second-read pin, run cap, and workflow guardrails (spec/slopbot/readyLabel.md, "The pilot workflow merges only on Slop\'s own repository when switched on, into the registered integration branch, and never touches `.github/`")', () => effect {
+// spec/slopbot/readyLabel.md, "The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`"
+standaloneIt.effect("Ready auto-merge obeys the switch, dry-run write guard, base branch rules, label provenance, write-access approvals, clean mergeability, .github exclusion, second-read pin, run cap, and workflow guardrails", () => effect {
   for (const enabled of [undefined, "", "off", "ON", "true"]) {
     let calls = 0
     const target = autoWorld([autoFixture()])

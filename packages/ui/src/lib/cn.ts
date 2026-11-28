@@ -21,7 +21,7 @@ export const inactive = "disabled:pointer-events-none disabled:opacity-50 aria-d
 
 /**
  * The 44px square every standalone control can be hit in, however small it is drawn: an invisible box centered on it
- * (spec/ui/index.md, "Every control can be hit in a 44px square"). A positioned control keeps its own position.
+ * (spec/ui/index.md, "Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square"). A positioned control keeps its own position.
  */
 export const target = "relative after:absolute after:top-1/2 after:left-1/2 after:size-full after:min-h-11 after:min-w-11 after:-translate-1/2";
 
