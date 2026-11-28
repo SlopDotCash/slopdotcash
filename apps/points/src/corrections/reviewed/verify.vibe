@@ -17,6 +17,7 @@ import { numstatFiles, readPullRequestGitFiles } from "../../collect/merged/file
 import type { CorrectionFile, CorrectionSource } from "../apply/manifest.vibe"
 import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
 import { type AuditedSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, digestText, githubIdPattern, historicalFrom, historicalThrough, matchesCarriedAcceptance, pullUrl, refusal, require, shaPattern, usesSlopRepositoryCensus } from "./packet.vibe"
+import { mergedRepositorySources } from "./mergedRepository.vibe"
 import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
 
 schema CensusRepository { readonly id: string }
@@ -25,9 +26,6 @@ const CensusNode = Schema.Struct({ ...CensusIdentity.fields, repository: CensusR
 schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
 schema CensusSearch { readonly issueCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<CensusNode> }
 schema CensusPage { readonly search: CensusSearch }
-schema MergedConnection { readonly totalCount: number; readonly nodes: ReadonlyArray<CensusIdentity>; readonly pageInfo: PageInfo }
-schema CensusConnectionRepository { readonly id: string; readonly nameWithOwner: string; readonly isPrivate: boolean; readonly pullRequests: MergedConnection }
-schema CensusConnectionPage { readonly repository: CensusConnectionRepository }
 export schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
 schema PullUser { readonly node_id: string; readonly type: string }
 schema PullRef { readonly sha: string }
@@ -133,7 +131,6 @@ export interface VerifiedIdenticalChanges {
 export const historicalMonths: ReadonlyArray<string> = ["2026-09", "2026-10"]
 
 const censusQuery = "query HistoricalPointsCensus($query:String!,$after:String){search(query:$query,type:ISSUE,first:100,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{...on PullRequest{id number headRefOid mergedAt repository{id}}}}}"
-const mergedConnectionQuery = "query HistoricalMergedRepository($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id nameWithOwner isPrivate pullRequests(states:MERGED,first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){totalCount nodes{id number headRefOid mergedAt} pageInfo{hasNextPage endCursor}}}}"
 const promotionQuery = "query HistoricalPromotionMerge($id:ID!){node(id:$id){...on PullRequest{id headRefOid mergedAt repository{id} mergeCommit{oid}}}}"
 const squashQuery = "query HistoricalAcceptedSquashes($ids:[ID!]!){nodes(ids:$ids){...on PullRequest{id number url merged mergedAt headRefOid repository{id nameWithOwner} author{__typename login ...on User{id} ...on Bot{id}} mergeCommit{oid author{user{__typename id login}} parents(first:10){nodes{oid} pageInfo{hasNextPage}}}}}}"
 const pageSize = 100
@@ -185,47 +182,12 @@ effect function censusRange(repository: string, repositoryNodeId: string, from: 
   return rowsFound
 }
 
-// The direct repository connection includes restored merges that GitHub Search can omit.
-effect function slopRepositoryCensus(repository: string, nodeId: string, from: string, through: string) {
-  const [owner = "", name = ""] = repository.split("/")
-  const github = try GitHub
-  const ids = new Set<string>()
-  const numbers = new Set<number>()
-  const cursors = new Set<string>()
-  const selected: AuditedSource[] = []
-  let total: number | undefined
-  let after: string | null = null
-  do {
-    const observed: CensusConnectionRepository = (try github.graphql(mergedConnectionQuery, { owner, name, after }, CensusConnectionPage)).repository
-    const page = observed.pullRequests
-    try require(observed.id === nodeId && observed.nameWithOwner.toLowerCase() === repository.toLowerCase() && !observed.isPrivate &&
-      Number.isSafeInteger(page.totalCount) && page.totalCount > 0 && (total === undefined || total === page.totalCount) &&
-      page.nodes.length > 0 && page.nodes.length <= pageSize && ids.size + page.nodes.length <= page.totalCount,
-      "Historical merged repository identity or count changed")
-    total = page.totalCount
-    for (const row of page.nodes) {
-      const millis = Date.parse(row.mergedAt)
-      try require(row.id !== "" && !ids.has(row.id) && Number.isSafeInteger(row.number) && row.number > 0 && !numbers.has(row.number) &&
-        shaPattern.test(row.headRefOid) && Number.isFinite(millis), "Historical merged repository returned an invalid or repeated source")
-      ids.add(row.id)
-      numbers.add(row.number)
-      const mergedAt = new Date(millis).toISOString()
-      if (mergedAt >= from && mergedAt < through) selected.push({ id: row.id, number: row.number, headSha: row.headRefOid, mergedAt })
-    }
-    const { hasNextPage, endCursor } = page.pageInfo
-    try require(!hasNextPage || (endCursor !== null && endCursor !== "" && !cursors.has(endCursor) && ids.size < total),
-      "Historical merged repository pagination failed")
-    if (endCursor !== null) cursors.add(endCursor)
-    after = hasNextPage ? endCursor : null
-  } while (after !== null)
-  try require(ids.size === total, "Historical merged repository census incomplete")
-  return selected
-}
-
 effect function reviewedCensus(repository: string, repositoryNodeId: string, from: string, through: string) {
   const searched = try censusRange(repository, repositoryNodeId, from, through)
   if (!usesSlopRepositoryCensus(repository, repositoryNodeId)) return searched
-  const connection = try slopRepositoryCensus(repository, repositoryNodeId, from, through)
+  const repositorySources = try mergedRepositorySources(repository, repositoryNodeId)
+  const connection = repositorySources.flatMap(({ id, number, headSha, mergedAt }) =>
+    mergedAt >= from && mergedAt < through ? [{ id, number, headSha, mergedAt }] : [])
   const byId = new Map(connection.map((row) => [row.id, row] as const))
   try require(searched.every((row) => {
     const found = byId.get(row.id)

@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest"
 import { GitHub } from "@repo/platform/github"
 import type { CorrectionManifest } from "../src/corrections/apply/manifest.vibe"
-import { type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
+import { type NativeCarrierGroupRequest, type NativeCarrierRequest, matchesNativeRecipient, nativeCarrierCorrectionKey, verifyNativeCarrierRecipients } from "../src/corrections/reviewed/nativeRecipient.vibe"
 import type { PacketRecipientCorrection, SourceAudit } from "../src/corrections/reviewed/packet.vibe"
 
 const repository = "SlopDotCash/slopdotcash"
@@ -44,7 +44,17 @@ function githubOf(moved: boolean, reads: string[], direct = false) {
     json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
     graphql: (_query, variables, schema) => effect {
       const ids = variables.ids
-      if (!Array.isArray(ids)) return try die("Missing exact source IDs")
+      if (!Array.isArray(ids)) {
+        if (!direct) return try die("Missing exact source IDs")
+        return try orDie(Schema.decodeUnknownEffect(schema)({
+          repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
+            totalCount: 2, nodes: [
+              { ...original, headRefOid: original.headSha, mergeCommit: { oid: acceptedSha } },
+              { ...carrier, headRefOid: carrier.headSha, mergeCommit: { oid: "9".repeat(40) } },
+            ], pageInfo: { hasNextPage: false, endCursor: null },
+          } },
+        }))
+      }
       const nodes = ids.map((id) => {
         const row = id === original.id ? original : carrier
         reads.push(row.id)
@@ -121,6 +131,105 @@ it.effect('Direct ordinary corrections and separately assessed work units retain
     try Effect.try(() => {
       assert.equal(actual.size, 0)
       assert.deepEqual(reads, [original.id])
+    })
+  }
+})
+
+const sibling = { id: "PR_other", number: 13, headSha: "e".repeat(40), mergedAt: original.mergedAt }
+const foreign = { id: "PR_outside", number: 14, headSha: "f".repeat(40), mergedAt: "2026-09-26T00:00:00.000Z" }
+const directCorrection = {
+  ...correction,
+  sourceId: carrier.id,
+  workUnitId: "carrier-unit",
+  nativeCarrierAliases: [{ path: "src/app.ts", canonicalSha: "3".repeat(40), repeatedSha: "4".repeat(40) }],
+} satisfies PacketRecipientCorrection
+const groupCorrections: CorrectionManifest = {
+  ...corrections,
+  candidates: [...corrections.candidates, {
+    id: "held-carrier", kind: "pull-request", projectId: "slopdotcash", sourceId: carrier.id, sourceUrl: "https://github.com/" + repository + "/pull/12",
+    occurredAt: carrier.mergedAt, workUnitId: directCorrection.workUnitId, sourceIds: [carrier.id], expectedPredecessors: [], proof: { status: "held" },
+  }],
+}
+const groupPacket = {
+  ...packet,
+  sourceAudit: { ...sourceAudit, sources: [original, carrier, sibling] },
+  corrections: groupCorrections,
+  recipientCorrections: [correction, directCorrection],
+}
+const carrierProof = { ...proof, claimIds: ["7".repeat(64)] }
+
+function groupGithub(reads: string[], outside = false) {
+  const sources = [original, carrier, sibling, ...(outside ? [foreign] : [])]
+  const unsupported = () => die("Unexpected GitHub method")
+  return Layer.succeed(GitHub, {
+    json: unsupported, pages: unsupported, bytes: unsupported, send: unsupported, status: unsupported,
+    graphql: (_query, variables, schema) => effect {
+      const ids = variables.ids
+      if (Array.isArray(ids)) {
+        const nodes = ids.flatMap((id) => {
+          const row = sources.find((source) => source.id === id)
+          if (row === undefined) return []
+          reads.push(row.id)
+          return [{
+            id: row.id, number: row.number, url: "https://github.com/" + repository + "/pull/" + row.number,
+            state: "MERGED", mergedAt: row.mergedAt, headRefOid: row.headSha,
+            repository: { id: nodeId, databaseId: 123456, nameWithOwner: repository, isPrivate: false },
+            mergeCommit: { oid: acceptedSha, parents: { totalCount: 2, nodes: [{ oid: baseSha }, { oid: carrier.headSha }] } },
+          }]
+        })
+        return try orDie(Schema.decodeUnknownEffect(schema)({ nodes }))
+      }
+      reads.push("merged repository")
+      return try orDie(Schema.decodeUnknownEffect(schema)({
+        repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
+          totalCount: sources.length,
+          nodes: sources.map((source) => ({ ...source, headRefOid: source.headSha, mergeCommit: { oid: acceptedSha } })),
+          pageInfo: { hasNextPage: false, endCursor: null },
+        } },
+      }))
+    },
+  })
+}
+
+it.effect('A linked carrier verifies its complete official membership including unchanged sibling awards (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const reads: string[] = []
+  const requests: NativeCarrierGroupRequest[] = []
+  const verify = (request: NativeCarrierGroupRequest) => effect {
+    requests.push(request)
+    return new Map([[original.id, proof], [carrier.id, carrierProof]])
+  }
+  provide groupGithub(reads) {
+    const actual = try verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify)
+    try Effect.try(() => {
+      assert.deepEqual(reads, [original.id, carrier.id, "merged repository", sibling.id])
+      assert.deepEqual(requests[0]?.sameTerminalSources, [original, carrier, sibling])
+      assert.deepEqual(requests[0]?.correctedSources, [original, carrier])
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(correction)), proof)
+      assert.deepEqual(actual.get(nativeCarrierCorrectionKey(directCorrection)), carrierProof)
+    })
+  }
+  provide groupGithub([], true) {
+    const unreviewedSource = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(unreviewedSource, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
+  }
+})
+
+it.effect('A direct carrier cannot select its own weights or assign the same native claim twice (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+  const duplicateClaims = (_request: NativeCarrierGroupRequest) => effect {
+    return new Map([[original.id, proof], [carrier.id, proof]])
+  }
+  provide groupGithub([]) {
+    const unmarked = { ...directCorrection, nativeCarrierAliases: undefined, nativeCarrierSourceId: undefined }
+    const bypass = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [unmarked] }, integrationBranch) catch (error) => error._tag
+    const duplicate = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, duplicateClaims) catch (error) => error._tag
+    const omitted = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [directCorrection] }, integrationBranch, undefined, duplicateClaims) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(bypass, "ReviewedRefused")
+      assert.equal(duplicate, "ReviewedRefused")
+      assert.equal(omitted, "ReviewedRefused")
     })
   }
 })

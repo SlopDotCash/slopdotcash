@@ -1,6 +1,7 @@
 // spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { GitHub } from "@repo/platform/github"
 import { type AuditedSource, type HistoricalPacket, type PacketNativeCarrierAlias, type PacketRecipientCorrection, type ReviewedRefused, digestPattern, isIso, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
+import { mergedRepositorySources } from "./mergedRepository.vibe"
 
 schema Repository {
   readonly id: string
@@ -106,7 +107,7 @@ function matchingScopes(packet: NativeCorrectionScope, correction: PacketRecipie
 }
 
 function directlyIntegrated(pull: MergedPull) {
-  return pull.mergeCommit.parents.nodes.length === 2 && pull.mergeCommit.parents.nodes.some(({ oid }) => oid === pull.headRefOid)
+  return pull.mergeCommit.parents.nodes.length === 2 && pull.mergeCommit.parents.nodes[1]?.oid === pull.headRefOid
 }
 
 function heldOrdinaryScope(packet: NativeCorrectionScope, correction: PacketRecipientCorrection) {
@@ -222,8 +223,25 @@ export effect function verifyNativeCarrierRecipients<E = never, R = never, G = n
       matchingScopes(packet, correction).some((candidate) => candidate.kind === "pull-request")
   })
   if (directGroups.size > 0 || directOrdinary) {
-    const remaining = new Map([...audit].filter(([id]) => !observed.has(id)))
+    const terminals = new Set([...observed.values()].filter(directlyIntegrated).map(({ mergeCommit }) => mergeCommit.oid))
+    const full = try mergedRepositorySources(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId)
+    try require(full.every((source) => source.acceptedSha !== null), "Same-terminal membership is incomplete")
+    const members = full.filter(({ acceptedSha }) => acceptedSha !== null && terminals.has(acceptedSha))
+    const remaining = new Map<string, AuditedSource>()
+    for (const { id, number, headSha, mergedAt } of members) {
+      const source = audit.get(id)
+      if (source === undefined || source.number !== number || source.headSha !== headSha || source.mergedAt !== mergedAt) {
+        throw refusal("Same-terminal source is outside the exact reviewed census")
+      }
+      if (!observed.has(id)) remaining.set(id, source)
+    }
     for (const [id, pull] of try observedSources(packet, remaining)) observed.set(id, pull)
+    for (const [id, pull] of observed) {
+      if (terminals.has(pull.mergeCommit.oid)) {
+        try require(members.some((member) => member.id === id && member.acceptedSha === pull.mergeCommit.oid), "Same-terminal census contradicts current source")
+      }
+    }
+    try require(members.every(({ id, acceptedSha }) => observed.get(id)?.mergeCommit.oid === acceptedSha), "Same-terminal source acceptance changed")
   }
   for (const direct of directGroups.values()) {
     const proofs = try correctedGroup(packet, direct, audit, observed, integrationBranch, verifyGroup)
