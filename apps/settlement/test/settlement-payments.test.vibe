@@ -756,6 +756,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
 
   it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, a refused cancellation leaves the attempt unknown, and reconciliation selects only the served networks, reporting and holding an attempt whose vault is not reviewed, and a newer wallet parks the uncertain attempt held with its payout exception sent to the payout audience (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
     const { escrow, script } = try Journey
+    const submissionsBefore = script.submits.length
     const { vault, deployment, asset } = try opened(14n, escrow.roles.owner.address)
     try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
     const recipient = try address(escrow.roles.recipient.address)
@@ -769,7 +770,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const reverted = try promise(() => escrow.chain.transact({ from: escrow.roles.donor.address, to: vault, data: wrongVersion }))
     script.answers.push(reverted.transactionHash.toLowerCase())
     const resent = try shell(dispatchPayment(deployment, asset, award.id))
-    const keys = script.submits.map((submitted) => submitted.idempotencyKey)
+    const keys = script.submits.slice(submissionsBefore).map((submitted) => submitted.idempotencyKey)
     const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_getTransactionReceipt", fault: "timeout" }]))
     const faulty = try acquireRelease(promise(() => serve(faults)), (served) => promise(() => served.close()))
     const unreachable = shell(reconcileFailedAttempts([network], [{ deployment: { ...deployment, rpc: Redacted.make([faulty.url]) }, asset }])) catch (error) => failureTag(error)
