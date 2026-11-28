@@ -1151,7 +1151,7 @@ const STACK_IMPORT_PATTERNS = [
   { regex: `^(?:@(?:${BANNED_SCOPES.join("|")})/|(?:${BANNED_PACKAGES.join("|")})(?:[/-]|$))`, message: `Not part of the stack: ${STACK_REF}.` },
 ]
 
-const CITATION_RE = String.raw`spec\/\S+\.md, "[^"]+"`
+const CITATION_RE = String.raw`spec\/\S+\.md, "(?:[^"]|"(?=[^\s"';),\`])[^"]*")+"`
 const SUPPRESSIBLE_RE = String.raw`(?!code\/|barrel\/|no-console\b)[\w@/-]+`
 const CITED_RE = new RegExp(String.raw`^\s*${CITATION_RE}(?:; ${CITATION_RE})*\s*$`)
 const SUPPRESSION_RE = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? ${SUPPRESSIBLE_RE}(?:, ${SUPPRESSIBLE_RE})* -- \S`)

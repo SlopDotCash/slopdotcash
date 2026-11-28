@@ -21,7 +21,7 @@ import { heading } from "./parse.ts";
 import { precomputeSimulations, prepareSimulationReceipts } from "./formal.ts";
 import { exec, makeTempDir, removeTempDir, run as tool, toolCpuSeconds } from "./run.ts";
 import { pendingSpecs, showPending, writeLedger } from "./review.ts";
-import { filesUnder, packageScripts, testInputs, testReceipt, writeWhole } from "./util.ts";
+import { fileCitations, filesUnder, missingCitations, packageScripts, testInputs, testReceipt, writeWhole } from "./util.ts";
 import { profile } from "./testing/profile.ts";
 import { installChromium } from "./chromium.ts";
 import { hostedCachedFixture, isolatedInstalls } from "./selftests/install.ts";
@@ -4800,6 +4800,12 @@ test("the lint refuses, in a project's own code, a comment that is neither a cit
     `globalThis["queueMicrotask"](later);`,
     "// eslint-disable-next-line no-undef -- a global the page defines",
   ]), ["6 code/comments", "7 code/comments", "8 code/comments", "9 code/comments", "10 code/effects", "11 code/effects", "12 code/effects", "13 no-console", "14 code/effects", "15 code/effects"]);
+  const quoted = '"Funded by" lists finalized deposits';
+  const quotedCitations = [`// spec/quoted.md, "${quoted}"; ${specFile}, "${ruleHeading}"`, `it('funds (spec/quoted.md, "${quoted}")', () => {})`];
+  assert.deepEqual(await found("apps/app/src/probe.vibe", quotedCitations.slice(0, 1)), []);
+  const quotedSpec = parseSpec(project, "spec/quoted.md", ruleSpec("pure val funded: bool = true", quoted));
+  assert.deepEqual(quotedCitations.flatMap((line) => fileCitations("test/probe.test.vibe", line)).map((c) => c.heading), [quoted, ruleHeading, quoted]);
+  assert.deepEqual(missingCitations([quotedSpec], fileCitations("test/probe.test.vibe", quotedCitations[1])), []);
   assert.deepEqual([...new Set(await found("apps/app/src/probe.vibe", [
     "const clock = { setTimeout: () => undefined }",
     "const capture = { setTimeout: globalThis.setTimeout }",

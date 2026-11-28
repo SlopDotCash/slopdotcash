@@ -51,7 +51,7 @@ const untyped = ["*.{js,ts}", "**/*.mjs", "**/.storybook/**", "packages/design-s
 const tsx = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "vibestack/studio/src/page/**/*.{ts,tsx}"]
 const design = "packages/design-system"
 const writing = 'AGENTS.md, "Writing code"'
-const citation = String.raw`spec\/\S+\.md, "[^"]+"`
+const citation = String.raw`spec\/\S+\.md, "(?:[^"]|"(?=[^\s"';),\`])[^"]*")+"`
 const suppressible = String.raw`(?!code\/|no-console\b)[\w@/-]+`
 const cited = new RegExp(String.raw`^\s*${citation}(?:; ${citation})*\s*$`)
 const suppression = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? ${suppressible}(?:, ${suppressible})* -- \S`)
