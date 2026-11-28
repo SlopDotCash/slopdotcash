@@ -21,6 +21,7 @@ export const onlyAnAuthorizedWalletFirstConfirmedBeforeTheDeadlineCounts = vecto
   [[wallet], true],
   [[{ ...wallet, firstAuthorizedAtMs: closesAtMs }], false],
   [[{ ...wallet, firstAuthorizedAtMs: undefined }], false],
+  [[{ ...wallet, firstAuthorizedAtMs: 0 }], false],
   [[{ ...wallet, authorized: false }], false],
   [[{ ...wallet, chain: "solana" }], false],
   [[{ ...wallet, chain: "solana" }, wallet], true],
