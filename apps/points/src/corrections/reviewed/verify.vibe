@@ -185,7 +185,6 @@ effect function censusRange(repository: string, repositoryNodeId: string, from: 
   return rowsFound
 }
 
-// The direct repository connection includes restored merges that GitHub Search can omit.
 effect function slopRepositoryCensus(repository: string, nodeId: string, from: string, through: string) {
   const [owner = "", name = ""] = repository.split("/")
   const github = try GitHub
