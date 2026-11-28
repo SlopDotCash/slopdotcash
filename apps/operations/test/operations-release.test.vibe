@@ -393,7 +393,7 @@ module workflowShape {
 
   /** @throws {Error} */
   function bash(script: string, env: Readonly<Record<string, string>>, cwd: string): Ran {
-    const ran = spawnSync("bash", ["-euc", script], { cwd, env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" })
+    const ran = spawnSync("bash", ["--noprofile", "--norc", "-euc", script], { cwd, env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" })
     if (ran.error !== undefined) throw ran.error
     if (ran.stderr !== "") throw new Error(ran.stderr)
     return { code: ran.status, lines: ran.stdout.split("\n").filter((line) => line !== "" && !line.startsWith("::")).map((line) => line.trimEnd()) }
