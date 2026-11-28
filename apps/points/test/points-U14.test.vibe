@@ -6,7 +6,7 @@ import { outbound } from "@repo/platform/http"
 import { program } from "@repo/platform/program"
 import { type Answer, Area, areaLayer } from "@repo/platform/testing/area"
 import { type Journal, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
-import { octoberOriginalContributorReason as octoberOriginalContributorDecision, verifiedAllocationReason as verifiedHistoricalAllocationDecision } from "../gen/points__journal.effect.vibe"
+import { octoberOriginalContributorReason as octoberOriginalContributorDecision, octoberReviewedAcceptedLinesReason, verifiedAllocationReason as verifiedHistoricalAllocationDecision } from "../gen/points__journal.effect.vibe"
 import { journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { applyCorrections } from "../src/corrections/apply/command.vibe"
 import type { CompleteProof } from "../src/corrections/apply/manifest.vibe"
@@ -265,6 +265,25 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
       dispositions: [{ candidateId: "correction_alpha", status: "retained" }, { candidateId: "correction_beta", status: "already-applied" }],
       phases: ["Open", "Replayed"],
       unchanged: true,
+    })
+  })
+
+  it.effect('Atomic import refuses a zero-delta reviewed accepted-lines decision after an October pool is protected (spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
+    const base = try baseJournal()
+    const [prior] = base.revisions
+    if (prior === undefined) throw new Error("Missing funded-history fixture")
+    try seeded(base)
+    const before = try publicText()
+    const recordedAt = "2026-11-12T00:00:00.000Z"
+    const digest = "b".repeat(64)
+    const body: RevisionBody = { previous: prior.id, recordedAt, sourceDigest: digest, sourceRule: "slop-score-v2", award: prior.award,
+      decision: { sourceId: `owner_october_${digest}`, effectiveAt: recordedAt, reason: octoberReviewedAcceptedLinesReason, delta: 0 } }
+    const row = { id: try pointRevisionId(body), ...body }
+    const reviewed = `${journalText({ ...base, generatedAt: recordedAt, revisions: [...base.revisions, row] })}\n`
+    try (try Area).sql(transferSql(alpha))
+    const result = try recorded(reviewed)
+    try same({ result, public: try publicText(), revisionCount: try revisionCount() }, {
+      result: { outcome: "refused", message: notVerified }, public: before, revisionCount: base.revisions.length,
     })
   })
 

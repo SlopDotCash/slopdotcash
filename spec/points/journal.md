@@ -680,7 +680,8 @@ pure def sometimesJointAbsorbedOwnRecord(l: Ledger): bool =
 
 A source is October-protected when the latest revision of one of its
 merged-work awards occurred in October 2026 and carries the owner's
-original-contributor or duplicate-retirement decision. A snapshot's exact
+original-contributor, reviewed accepted-lines, or duplicate-retirement
+decision. A snapshot's exact
 reviewed membership (`reviewedImplementationUnits`: per source, each
 assessed record digest, work unit and membership group) then holds every
 reviewed unit of a group that contains a protected source, and the sources
@@ -698,10 +699,14 @@ reason, for each held source or unit; a hold appends no revision.
 ```quint
 pure val octoberOriginalContributorReason =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved."
+pure val octoberReviewedAcceptedLinesReason =
+  "Owner-reviewed accepted lines determine the recipients' shares of this October 2026 implementation Points pool. The pool value and occurrence date are preserved."
 pure val octoberDuplicateRetirementReason = "Owner-reviewed duplicate accepted work already rewarded by earlier sources."
+pure def octoberProtectionReason(reason: str): bool =
+  reason == octoberOriginalContributorReason or reason == octoberReviewedAcceptedLinesReason or reason == octoberDuplicateRetirementReason
 pure def octoberProtected(l: Ledger, source: int): bool =
   l.revisions.some(r => isLatest(l, r) and r.key.category == MergedWork and P::periodOf(r.occurredAt) == P::october2026 and
-    (r.decision.reason == octoberOriginalContributorReason or r.decision.reason == octoberDuplicateRetirementReason) and
+    octoberProtectionReason(r.decision.reason) and
     unitOf(l, r.key.workUnit).sources.contains(source))
 type ReviewedUnit = { source: int, recordDigest: str, workUnit: int, groupId: str }
 type AssessedSource = { source: int, recordDigest: str }
@@ -791,7 +796,8 @@ The [reviewed historical runner](./reviewedHistory.md) redivides a source's
 October implementation pool, unchanged since the owner's review, between the
 reviewed recipients by their reviewed weights. The pool keeps its total; the
 revision is recorded under the v2 score with the decision
-`owner_october_<dossier digest>`, with the reviewed shares, only inside a
+`owner_october_<dossier digest>` and the reviewed accepted-lines reason, only
+inside a
 reviewed packet the run admits: one that previews for a preview run, one
 that applies for an apply run. A frozen reward period refuses it.
 
@@ -803,7 +809,7 @@ pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH
   project != "" and unit > 0 and prior.amount >= 10 and prior.amount <= P::maxSafe and correction.pool == prior.amount and
   P::periodOf(prior.occurredAt) == P::october2026 and RH::recipientCorrectionApplies(correction) and
   RH::packetAdmits(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
-  reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
+  reason == octoberReviewedAcceptedLinesReason and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
 pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
     packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
   val prior = latest(l, unitKey(project, unit))
@@ -1147,7 +1153,7 @@ pure val eval_witness_sometimesOwnerCorrected = (
   ("acceptUnit", 1, 2432110),
   ("creditUnit", { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432110, repositoryCountsFrom: 2432000,
     projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision }),
-  ("correctRecipients", "p", 1, ownerCorrection, RH::readyRun, "checked", "d9"))
+  ("correctRecipients", "p", 1, ownerCorrection, RH::readyRun, octoberReviewedAcceptedLinesReason, "d9"))
 pure val eval_witness_sometimesRatified = (
   ("advance", 2432005),
   ("formUnit", { project: "p", sources: Set(1), commits: Set(11), band: -1, hashesVerified: true, digest: "a", promotion: W::NotPromotion }),

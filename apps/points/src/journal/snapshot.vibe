@@ -9,7 +9,7 @@ import { instantOf } from "../kernels/records/instants.ts"
 import { workUnitSlug } from "../score/facts.vibe"
 import {
   type Decision, type Event, type JointHoldInput, type JointHoldReason, type SourceActor, type SourceCoverage, type SourceRule, type Supersession, implementationPoolHeld, jointHoldReason,
-  freshSnapshotMatches, noDecision, octoberDuplicateRetirementReason, octoberOriginalContributorReason, reviewedSourceHeld, unassessedSourceHeld, unseenOmittedReview, verifiedAllocationReason,
+  freshSnapshotMatches, noDecision, octoberDuplicateRetirementReason, octoberOriginalContributorReason, octoberProtectionReason, reviewedSourceHeld, unassessedSourceHeld, unseenOmittedReview, verifiedAllocationReason,
 } from "../../gen/points__journal.effect.vibe"
 import type { Provenance as Phase, Scored } from "../../gen/points__scoringPolicy.ts"
 import { findRepository } from "../client/snapshot/checks.vibe"
@@ -28,7 +28,6 @@ export const octoberOriginalContributorDecision = octoberOriginalContributorReas
 export const octoberDuplicateRetirementDecision = octoberDuplicateRetirementReason
 export const verifiedHistoricalAllocationDecision = verifiedAllocationReason
 
-const octoberDecisions = new Set([octoberOriginalContributorDecision, octoberDuplicateRetirementDecision])
 const unassessedCoverage = new Set(["missing", "legacy-policy"])
 const changedLineCount = /^(0|[1-9][0-9]*)$/u
 const omittedBeforePolicy = "review-credit-before-policy"
@@ -173,7 +172,7 @@ effect function allocationTemplates(allocation: ImplementationAllocation, first:
 function octoberHeld(store: Store) {
   const held = new Set<string>()
   for (const { award, decision } of store.latest.values()) {
-    if (award.category === "merged-pull-request" && award.occurredAt.startsWith("2026-10-") && octoberDecisions.has(decision?.reason ?? "")) {
+    if (award.category === "merged-pull-request" && award.occurredAt.startsWith("2026-10-") && octoberProtectionReason(decision?.reason ?? "")) {
       held.add(sourceKey(award.projectId, award.sourceId))
     }
   }

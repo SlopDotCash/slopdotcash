@@ -15,6 +15,7 @@ import type { Actor as Sender, JournalEntry } from "../../../gen/points__correct
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { allocatePoints, canWriteAllocation } from "../../../gen/points__allocation.effect.vibe"
+import { octoberReviewedAcceptedLinesReason } from "../../../gen/points__journal.effect.vibe"
 import type { PointShare, Recipient } from "../../../gen/points__allocation.ts"
 import { type Collection, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
 import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, deriveProof, digestPattern, distinct, isEmptyPromotion, isInstant, isNodeId, sameSet, sourceRepository } from "./derive.vibe"
@@ -227,6 +228,11 @@ effect function replacementsOf(candidate: ManifestCandidate, previous: ReadonlyA
   return replacements
 }
 
+function ownerReviewedOctober(decision: Row["decision"]) {
+  return decision?.reason === octoberReviewedAcceptedLinesReason ||
+    (decision?.reason === octoberOriginalContributorDecision && /^owner_october_[a-f0-9]{64}$/u.test(decision.sourceId))
+}
+
 effect function planOf(index: number, candidate: ManifestCandidate, input: PlanInput, pools: { baseline: Map<string, Row[]>; current: Map<string, Row[]> }, eligibility: ReadonlyMap<string, FreezeEvidence>, bannedAt: ReadonlyMap<string, number>) {
   const { manifest } = input.collection
   try check(isNodeId(candidate.id) && isNodeId(candidate.sourceId) && isInstant(candidate.occurredAt) && candidate.occurredAt <= manifest.generatedAt &&
@@ -240,10 +246,11 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
     previous.every(({ award }) => award.occurredAt === candidate.occurredAt && award.sourceUrl === candidate.sourceUrl && award.workUnitId === candidate.workUnitId), "pool predecessors or immutable identity differ")
   const complete = candidate.proof
   const usesOctober = complete.status === "complete" && (complete.originalContributor !== undefined || complete.originalContributorParts !== undefined)
+  const reviewedOctober = candidate.occurredAt.startsWith("2026-10-") && previous.some((revision) => ownerReviewedOctober(revision.decision))
   const appliedOctober = previous.some((revision) => revision.decision?.reason === octoberOriginalContributorDecision)
-  const derived = appliedOctober && !usesOctober ? null : try deriveProof(candidate, input.projectOf)
+  const derived = reviewedOctober || (appliedOctober && !usesOctober) ? null : try deriveProof(candidate, input.projectOf)
   const proof = derived !== null && replacementAgrees(derived, usesOctober) ? derived : null
-  if (candidate.kind === "work-unit" && complete.status === "complete") {
+  if (!reviewedOctober && candidate.kind === "work-unit" && complete.status === "complete") {
     try check(previous.every((revision) => revision.decision?.sourceId === `value:${complete.decisionDigest ?? ""}`), "grouped proof does not match retained valuation provenance")
   }
   const total = previous.reduce((sum, revision) => sum + revision.award.amount, 0)

@@ -145,8 +145,14 @@ occurrence. The whole pool, a positive safe total, is divided by the
 reviewed positive weights through the [allocation](./allocation.md)
 largest remainder; a key that loses its share records zero, and the result
 must equal the reviewed one. Each revision carries the decision
-`owner_october_<dossier digest>` with the October original-contributor
-reason.
+`owner_october_<dossier digest>` with the October reviewed accepted-lines
+reason. The reason reflects the reviewed shares and applies when one or
+several recipients receive credit. A later routine historical reallocation
+holds the reviewed pool, including older reviewed records with the
+`owner_october_<dossier digest>` decision ID and the original-contributor
+reason. The rolling snapshot also preserves the reviewed pool. Atomic import
+refuses to append the decision once the reward period is protected, even
+when the reviewed shares already match the recorded amounts.
 
 ```quint
 type RecipientCorrection = { uniqueUnit: bool, dossierBound: bool, claimsMatchProof: bool, octoberPool: bool,
