@@ -1,0 +1,298 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { gitBytes, publicGitArguments } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+import { hunkHeader, noNewlineMarker } from "../proofs/patchReplay.ts"
+
+export error CarrierLineProofUnavailable { reason: string }
+
+interface Edits {
+  readonly additions: ReadonlyMap<number, string>
+  readonly deletions: ReadonlyMap<number, string>
+}
+
+interface LineOrigin {
+  readonly sha: string
+  readonly path: string
+  readonly number: number
+  readonly contents: string
+}
+
+interface Range {
+  readonly oldEnd: number
+  readonly newEnd: number
+  oldPosition: number
+  newPosition: number
+}
+
+interface CarrierOrdinaryChange {
+  readonly sha: string
+  readonly parentSha: string
+}
+
+export interface CarrierLineRequest {
+  readonly baseSha: string
+  readonly acceptedSha: string
+}
+
+export interface CarrierLineProof {
+  readonly baseSha: string
+  readonly acceptedSha: string
+  readonly paths: ReadonlyArray<CarrierPathLines>
+}
+
+export interface CarrierPathClaim {
+  readonly sha: string
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface CarrierPathLines {
+  readonly path: string
+  readonly additions: number
+  readonly deletions: number
+  readonly claims: ReadonlyArray<CarrierPathClaim>
+  readonly unresolvedAdditions: number
+  readonly unresolvedDeletions: number
+}
+
+const oid = /^[0-9a-f]{40}$/u
+const blameHeader = /^([0-9a-f]{40}) ([1-9]\d*) ([1-9]\d*)(?: [1-9]\d*)?$/u
+const outputLimit = 8 * 1024 * 1024
+const unavailable = "Native carrier text proof is unavailable or incomplete"
+
+function complete(range: Range | undefined) {
+  return range === undefined || (range.oldPosition === range.oldEnd && range.newPosition === range.newEnd)
+}
+
+export function carrierPatchLines(patch: string) {
+  const additions = new Map<number, string>()
+  const deletions = new Map<number, string>()
+  if (patch === "") return { additions, deletions } satisfies Edits
+  if (!patch.startsWith("diff --git ") || !patch.endsWith("\n") || patch.includes("\0")) return undefined
+  const firstHunk = patch.indexOf("\n@@ ")
+  if (firstHunk === -1 || patch.indexOf("\ndiff --git ") >= 0) return undefined
+  let range: Range | undefined
+  let previous: { readonly lines: Map<number, string>; readonly position: number } | undefined
+  for (const line of patch.slice(firstHunk + 1, -1).split("\n")) {
+    if (line.startsWith("@@ ")) {
+      const header = hunkHeader(line)
+      if (!header.ok || !complete(range) || header.oldCount + header.newCount === 0) return undefined
+      const oldStart = header.oldStart - Number(header.oldCount > 0)
+      const newStart = header.newStart - Number(header.newCount > 0)
+      const oldGap = oldStart - (range?.oldEnd ?? 0)
+      if (oldGap < 0 || newStart - (range?.newEnd ?? 0) !== oldGap) return undefined
+      const oldEnd = oldStart + header.oldCount
+      const newEnd = newStart + header.newCount
+      if (!Number.isSafeInteger(oldEnd) || !Number.isSafeInteger(newEnd)) return undefined
+      range = { oldEnd, newEnd, oldPosition: oldStart, newPosition: newStart }
+      previous = undefined
+      continue
+    }
+    if (line === noNewlineMarker && previous !== undefined) {
+      const changed = previous.lines.get(previous.position)
+      if (changed === undefined) return undefined
+      previous.lines.set(previous.position, changed.slice(0, -1))
+      previous = undefined
+      continue
+    }
+    const sign = line[0]
+    if (range === undefined || (sign !== "+" && sign !== "-")) return undefined
+    const position = sign === "+" ? ++range.newPosition : ++range.oldPosition
+    if (range.newPosition > range.newEnd || range.oldPosition > range.oldEnd) return undefined
+    const lines = sign === "+" ? additions : deletions
+    if (lines.has(position)) return undefined
+    lines.set(position, line.slice(1) + "\n")
+    previous = { lines, position }
+  }
+  return complete(range) ? { additions, deletions } satisfies Edits : undefined
+}
+
+function carrierBlameLines(text: string) {
+  const rows = new Map<number, LineOrigin>()
+  if (!text.endsWith("\n") || text.includes("\0")) return undefined
+  let current: { readonly sha: string; readonly origin: number; readonly number: number } | undefined
+  let filename: string | undefined
+  for (const line of text.slice(0, -1).split("\n")) {
+    const match = blameHeader.exec(line)
+    if (match !== null) {
+      const origin = Number(match[2])
+      const number = Number(match[3])
+      if (current !== undefined || !Number.isSafeInteger(origin) || number !== rows.size + 1) return undefined
+      current = { sha: match[1] ?? "", origin, number }
+      continue
+    }
+    if (current === undefined) return undefined
+    if (line.startsWith("filename ")) {
+      if (filename !== undefined || line.length <= 9) return undefined
+      filename = line.slice(9)
+      continue
+    }
+    if (line.startsWith("\t")) {
+      if (filename === undefined) return undefined
+      rows.set(current.number, { sha: current.sha, number: current.origin, path: filename, contents: line.slice(1) })
+      current = undefined
+      filename = undefined
+    }
+  }
+  return current === undefined ? rows : undefined
+}
+
+function sourceLine(row: LineOrigin) {
+  return JSON.stringify([row.sha, row.path, row.number, row.contents])
+}
+
+function blameMatches(row: LineOrigin | undefined, edit: string): row is LineOrigin {
+  return row !== undefined && row.contents === (edit.endsWith("\n") ? edit.slice(0, -1) : edit)
+}
+
+function literalPath(path: string) {
+  return path !== "" && !path.includes("\0") && !path.includes("\n") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
+}
+
+export effect function readCarrierGitBytes(directory: string, args: ReadonlyArray<string>, limit = outputLimit) {
+  return try gitBytes({
+    args: publicGitArguments(directory, ["-c", "core.quotePath=false", ...args]),
+    env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory },
+    seconds: 30,
+    limit,
+  }, unavailable)
+}
+
+export effect function readCarrierGit(directory: string, args: ReadonlyArray<string>, limit = outputLimit) {
+  const text = utf8Text(try readCarrierGitBytes(directory, args, limit))
+  if (text === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
+  return text
+}
+
+effect function editsOf(directory: string, before: string, after: string, path: string) {
+  const diff = try readCarrierGit(directory, ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+    "--no-renames", "--diff-algorithm=myers", "--inter-hunk-context=0", "--unified=0", before, after, "--", path])
+  const parsed = carrierPatchLines(diff)
+  if (parsed === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
+  return parsed
+}
+
+effect function blameOf(directory: string, sha: string, path: string, needed: ReadonlyMap<number, string>) {
+  const rows = needed.size === 0 ? new Map<number, LineOrigin>() : carrierBlameLines(try readCarrierGit(directory, ["blame", "--root", "--line-porcelain", sha, "--", path]))
+  if (rows === undefined || [...needed].some(([position, edit]) => !blameMatches(rows.get(position), edit))) {
+    throw new CarrierLineProofUnavailable({ reason: unavailable })
+  }
+  return rows
+}
+
+effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>) {
+  const { baseSha, acceptedSha } = request
+  const accepted = try editsOf(directory, baseSha, acceptedSha, path)
+  const baseBlame = try blameOf(directory, baseSha, path, accepted.deletions)
+  const acceptedBlame = try blameOf(directory, acceptedSha, path, accepted.additions)
+  const byCommit = new Map<string, Edits>()
+  const removalCandidates = new Map<string, Array<{ readonly sha: string; readonly text: string }>>()
+  for (const { sha, parentSha } of candidates) {
+    const edits = try editsOf(directory, parentSha, sha, path)
+    byCommit.set(sha, edits)
+    const candidateBlame = try blameOf(directory, parentSha, path, edits.deletions)
+    for (const [position, edit] of edits.deletions) {
+      const identity = candidateBlame.get(position)
+      if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
+      const key = sourceLine(identity)
+      const options = removalCandidates.get(key) ?? []
+      options.push({ sha, text: edit })
+      removalCandidates.set(key, options)
+    }
+  }
+  const claims = new Map<string, { additions: number; deletions: number }>()
+  function count(sha: string, kind: "additions" | "deletions") {
+    const entry = claims.get(sha) ?? { additions: 0, deletions: 0 }
+    entry[kind] += 1
+    claims.set(sha, entry)
+  }
+  let unresolvedAdditions = 0
+  for (const [position, edit] of accepted.additions) {
+    const identity = acceptedBlame.get(position)
+    if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
+    if (identity.path === path && byCommit.get(identity.sha)?.additions.get(identity.number) === edit) count(identity.sha, "additions")
+    else unresolvedAdditions += 1
+  }
+  let unresolvedDeletions = 0
+  for (const [position, edit] of accepted.deletions) {
+    const identity = baseBlame.get(position)
+    if (identity === undefined) throw new CarrierLineProofUnavailable({ reason: unavailable })
+    const options = removalCandidates.get(sourceLine(identity)) ?? []
+    const [candidate] = options
+    if (options.length === 1 && candidate !== undefined && candidate.text === edit) count(candidate.sha, "deletions")
+    else unresolvedDeletions += 1
+  }
+  return {
+    path,
+    additions: accepted.additions.size,
+    deletions: accepted.deletions.size,
+    claims: [...claims].map(([sha, lines]) => ({ sha, ...lines })).sort((left, right) => left.sha.localeCompare(right.sha)),
+    unresolvedAdditions,
+    unresolvedDeletions,
+  } satisfies CarrierPathLines
+}
+
+interface RawChange {
+  readonly path: string
+  readonly text: boolean
+}
+
+const rawChange = /^:([0-7]{6}) ([0-7]{6}) ([a-f0-9]{40}) ([a-f0-9]{40}) [ADMT]$/u
+const zeroSha = "0".repeat(40)
+const regularMode = /^(000000|100644|100755)$/u
+
+effect function changedPaths(directory: string, before: string, after: string) {
+  const groups = (try readCarrierGit(directory, ["diff-tree", "--no-commit-id", "-r", "--raw", "--no-renames", "--no-abbrev", "-z", before, after])).split("\0")
+  if (groups.pop() !== "" || groups.length % 2 !== 0) throw new CarrierLineProofUnavailable({ reason: unavailable })
+  const paths = new Set<string>()
+  const changes: RawChange[] = []
+  for (let index = 0; index < groups.length; index += 2) {
+    const match = rawChange.exec(groups[index] ?? "")
+    const path = groups[index + 1] ?? ""
+    if (match === null || !literalPath(path) || paths.has(path)) throw new CarrierLineProofUnavailable({ reason: unavailable })
+    const [, beforeMode = "", afterMode = "", beforeObject = "", afterObject = ""] = match
+    if ((beforeMode === "000000") !== (beforeObject === zeroSha) || (afterMode === "000000") !== (afterObject === zeroSha)) {
+      throw new CarrierLineProofUnavailable({ reason: unavailable })
+    }
+    paths.add(path)
+    changes.push({ path, text: regularMode.test(beforeMode) && regularMode.test(afterMode) })
+  }
+  return changes
+}
+
+// Run only in the pinned, verified Git workspace. This derives the candidate
+// scope from native history, so a supplied list cannot suppress a competing edit.
+export effect function verifyCarrierLines(directory: string, request: CarrierLineRequest) {
+  const { baseSha, acceptedSha } = request
+  if (!oid.test(baseSha) || !oid.test(acceptedSha) || baseSha === acceptedSha) {
+    throw new CarrierLineProofUnavailable({ reason: "Native carrier text proof has an invalid identity" })
+  }
+  const history = try readCarrierGit(directory, ["rev-list", "--parents", acceptedSha, "^" + baseSha])
+  const rows = history.trimEnd().split("\n").map((line) => line.split(" "))
+  const [terminal] = rows
+  if (terminal?.length !== 3 || terminal[0] !== acceptedSha || terminal[1] !== baseSha || terminal[2] === baseSha ||
+    rows.some((row) => row.length < 1 || row.some((object) => !oid.test(object)) || new Set(row).size !== row.length) ||
+    new Set(rows.map((row) => row[0])).size !== rows.length) {
+    throw new CarrierLineProofUnavailable({ reason: "Native carrier first-parent range differs" })
+  }
+  const changes = try changedPaths(directory, baseSha, acceptedSha)
+  const acceptedPaths = new Set(changes.map(({ path }) => path))
+  const candidates = new Map<string, CarrierOrdinaryChange[]>()
+  for (const [sha, parentSha, ...otherParents] of rows.slice(1)) {
+    if (sha === undefined || parentSha === undefined || otherParents.length > 0) continue
+    const touched = try changedPaths(directory, parentSha, sha)
+    for (const { path, text } of touched) {
+      if (!acceptedPaths.has(path)) continue
+      if (!text) throw new CarrierLineProofUnavailable({ reason: unavailable })
+      const rowsForPath = candidates.get(path) ?? []
+      rowsForPath.push({ sha, parentSha })
+      candidates.set(path, rowsForPath)
+    }
+  }
+  const paths: CarrierPathLines[] = []
+  for (const { path, text } of changes) {
+    if (!text) throw new CarrierLineProofUnavailable({ reason: unavailable })
+    paths.push(try carrierPathLines(directory, request, path, candidates.get(path) ?? []))
+  }
+  return { baseSha, acceptedSha, paths } satisfies CarrierLineProof
+}
