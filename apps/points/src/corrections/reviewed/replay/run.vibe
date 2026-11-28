@@ -15,7 +15,7 @@ import { exactMainHead, trustedMain } from "../transport.vibe"
 import { type AuditPhase, type AuditedScope, auditedScope, historicalReplayRequiresCollection, sealedReceipt } from "../audit/run.vibe"
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
-import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { advanceAudit } from "../audit/cut.vibe"
 import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings } from "./bindings.vibe"
 import { historicalAssessmentTransport } from "./history.vibe"
 import { mergedHistoricalReplaySnapshot } from "./merged.vibe"
@@ -132,7 +132,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
 effect function recheckedCut(audited: AuditedScope, state: AssessmentAudit) {
   try exactMainHead("Historical publication source changed")
   try assertHistoricalAssessmentFreshness(audited.scope, audited.catalog.heads)
-  return try apply(state, { type: "changeCheckpoint", affectsScope: false }, dispatch)
+  return try advanceAudit(state, { type: "changeCheckpoint", affectsScope: false }, dispatch)
 }
 
 effect function replayRun<E, R>(setPhase: (phase: ReplayPhase) => void, args: ReadonlyArray<string>, valueInputs: ReplayValueInputs<E, R>) {
@@ -158,7 +158,7 @@ effect function replayRun<E, R>(setPhase: (phase: ReplayPhase) => void, args: Re
       valueKeys: result.valueKeys,
       qualificationSha256: qualificationSha256 ?? "",
     }, try reviewStorage())
-    state = try apply(state, { type: "stageReview", explicit: true, qualified: true, verifiedReadback: true }, dispatch)
+    state = try advanceAudit(state, { type: "stageReview", explicit: true, qualified: true, verifiedReadback: true }, dispatch)
     output = { ...summary, replay: { ...result.summary, privateReviewManifest } }
   }
   try sealedReceipt(setPhase, audited, state, output)
