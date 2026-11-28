@@ -47,7 +47,7 @@ export function sha256Of(data: string | Uint8Array): string {
 }
 
 /** @throws {never} */
-export function gitObjectId(kind: "blob" | "tree", body: Uint8Array): string {
+export function gitObjectId(kind: "blob" | "tree" | "commit", body: Uint8Array): string {
   return bytesToHex(sha1.create().update(utf8ToBytes(`${kind} ${body.length}\0`)).update(body).digest());
 }
 

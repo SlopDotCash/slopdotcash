@@ -22,6 +22,7 @@ export schema PacketRecipientCorrection {
   readonly recipients: ReadonlyArray<ReviewedRecipient>
   readonly evidenceSha256: string
   readonly evidence: string
+  readonly nativeCarrierSourceId?: string
   readonly expectedAfter: ReadonlyArray<ExpectedAward>
   readonly claimIds: ReadonlyArray<string>
   readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
