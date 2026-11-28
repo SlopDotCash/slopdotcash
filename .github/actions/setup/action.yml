@@ -185,6 +185,10 @@ runs:
         [[ $(solana --version) == "solana-cli $AGAVE_VERSION "* ]]
         [[ $(cargo-build-sbf --version) == "solana-cargo-build-sbf $AGAVE_VERSION"* ]]
         if command -v solana-test-validator; then echo "::error::A solana-test-validator on PATH would shadow the reviewed validator image."; exit 1; fi
+        # The escrow trace builds its own genesis with the verified release tools.
+        test -x "$target/solana-release/bin/solana-genesis"
+        test -x "$target/solana-release/bin/solana-test-validator"
+        echo "SLOP_SOLANA_TRACE_BIN=$target/solana-release/bin" >> "$GITHUB_ENV"
         mkdir -p "$HOME/.cache/solana"
         cd packages/contracts/solana
         CARGO_TARGET_DIR="$PWD/.cache/target" cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version "$SBF_TOOLS" --sbf-out-dir "$RUNNER_TEMP/sbf-tools-check" -- --locked

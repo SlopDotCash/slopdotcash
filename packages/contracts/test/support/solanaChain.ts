@@ -257,9 +257,15 @@ const primordial = (accounts: ReadonlyArray<GenesisAccount>) =>
     executable: account.executable,
   }])));
 
+function traceTool(name: "solana-genesis" | "solana-test-validator"): string {
+  const directory = process.env.SLOP_SOLANA_TRACE_BIN;
+  return directory ? join(directory, name) : name;
+}
+
 async function validatorVersion(): Promise<void> {
-  const { stdout } = await exec("solana-test-validator", ["--version"], { timeout: 60_000 });
-  if (!stdout.startsWith(`solana-test-validator ${SOLANA_VERSION} `)) throw new Error(`solana-test-validator ${SOLANA_VERSION} must be on PATH; found ${stdout.trim()}`);
+  const validator = traceTool("solana-test-validator");
+  const { stdout } = await exec(validator, ["--version"], { timeout: 60_000 });
+  if (!stdout.startsWith(`solana-test-validator ${SOLANA_VERSION} `)) throw new Error(`Expected solana-test-validator ${SOLANA_VERSION} from ${validator}; found ${stdout.trim()}`);
 }
 
 /**
@@ -345,7 +351,7 @@ export async function launch(): Promise<Chain> {
 
   const start = async (ledger: string, args: ReadonlyArray<string>) => {
     const log = await open(join(ledger, "..", `validator-${generation}.log`), "w", 0o600);
-    const child = spawn("solana-test-validator", [
+    const child = spawn(traceTool("solana-test-validator"), [
       ...args, "--ledger", ledger, "--quiet", "--rpc-port", String(port), "--faucet-port", String(port + 41),
       "--dynamic-port-range", `${port + 2}-${port + 31}`, "--bind-address", "127.0.0.1",
     ], { stdio: ["ignore", log.fd, log.fd] });
@@ -502,7 +508,7 @@ export async function launch(): Promise<Chain> {
     await mkdir(ledger);
     const file = join(directory, `accounts-${generation}.json`);
     await writeFile(file, primordial(genesis));
-    await exec("solana-genesis", [
+    await exec(traceTool("solana-genesis"), [
       "--ledger", ledger,
       "--bootstrap-validator", bootstrap.identity.address, bootstrap.vote.address, bootstrap.stake.address,
       "--faucet-pubkey", bootstrap.faucet.address, "--faucet-lamports", "500000000000000000",

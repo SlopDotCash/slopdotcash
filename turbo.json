@@ -316,6 +316,7 @@
         "@repo/app#test",
         "@repo/app#test:browser"
       ],
+      "passThroughEnv": ["SLOP_SOLANA_TRACE_BIN"],
       "cache": false
     },
     "//#lint:js": {
