@@ -108,6 +108,7 @@ describe("Close and reopen an account without losing history", () => {
     await at("/account");
     await shown(named("heading", "Settings", { level: 1 })).toMatchObject({ visible: true });
     expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 1, closed_at: null }]);
+    expect(await site.fetch("GET", "/api/v1/notifications/email")).toMatchObject({ status: 200 });
   });
 });
 
