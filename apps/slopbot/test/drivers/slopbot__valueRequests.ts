@@ -98,7 +98,8 @@ function live(state: ValueRequests, token: number) {
 
 function view(state: ValueRequests): Observed {
   const { known, suspended, removed, sourceTime } = state.install;
-  return { ...state, groups: state.groups.filter((group) => live(state, group.token)), install: { known, suspended, removed, sourceTime } };
+  const groups = state.groups.filter((group) => live(state, group.token)).sort((left, right) => left.token - right.token);
+  return { ...state, groups, install: { known, suspended, removed, sourceTime } };
 }
 
 function restored(state: ValueRequests): Observed {
