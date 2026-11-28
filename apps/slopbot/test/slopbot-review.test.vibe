@@ -192,7 +192,7 @@ function row(route_step: number, provider: string, requested_model: string, outc
 }
 
 layer(reviewArea(bothKeys), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('A lost comment response is recovered through the App actor and the item keeps one neutralized review comment (spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App\'s own actor, and echoed text is neutralized"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
+  it.effect(`A lost comment response is recovered through the App actor and the item keeps one neutralized review comment (spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")`, () => effect {
     const area = try Area
     const { fake, providers, items } = try World
     try installed(area)
@@ -403,7 +403,7 @@ layer(reviewArea(bothKeys), { excludeTestServices: true, timeout: "240 seconds" 
     })
   })
 
-  it.effect('A paused project skips a new outside pull request before any call, comment or label, while a pull request reviewed before the pause and a maintainer\'s own pull request are not refused by the pause (spec/slopbot/review.md, "A bound review of a paused project\'s new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"; spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap")', () => effect {
+  it.effect(`A paused project skips a new outside pull request before any call, comment or label, while a pull request reviewed before the pause and a maintainer's own pull request are not refused by the pause (spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"; spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap")`, () => effect {
     const area = try Area
     const { fake, providers, items } = try World
     try installed(area)
@@ -473,7 +473,7 @@ layer(reviewArea(bothKeys), { excludeTestServices: true, timeout: "240 seconds" 
     })
   })
 
-  it.effect('Past the month\'s free-review cap a new item, and a review restarted in a new month after earlier calls, is skipped before any call or GitHub write, while an admitted item is reviewed again and other repositories and months do not count (spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A bound review of a new item over the month\'s free-review cap is skipped before any call")', () => effect {
+  it.effect(`Past the month's free-review cap a new item, and a review restarted in a new month after earlier calls, is skipped before any call or GitHub write, while an admitted item is reviewed again and other repositories and months do not count (spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call")`, () => effect {
     const area = try Area
     const { fake, providers, items } = try World
     try installed(area)

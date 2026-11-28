@@ -316,7 +316,8 @@
         "@repo/app#test",
         "@repo/app#test:browser"
       ],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["SLOP_CONTRACT_SOLANA_TOOLS"]
     },
     "//#lint:js": {
       "dependsOn": [

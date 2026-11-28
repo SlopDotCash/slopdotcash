@@ -218,7 +218,7 @@ effect function decide(pullNumber: number, outcome: "refund_due" | "kept_due") {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('Due refunds and kept fees are recorded before broadcast, confirmed from the chain, resent unchanged and never signed twice (spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row\'s due outcome or a refund")', () => effect {
+  it.effect(`Due refunds and kept fees are recorded before broadcast, confirmed from the chain, resent unchanged and never signed twice (spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row's due outcome or a refund")`, () => effect {
     const world = try World
     const { chain } = world
     try write(sql`INSERT INTO submission_fee_cursors (network, next_block) VALUES (${network}, ${firstBlock + 1})`)

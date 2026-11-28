@@ -393,7 +393,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     })
   }))
 
-  it.effect('J1: a received fee on Base converts end to end through the scheduled Worker: exact approval, reserved and journaled swap, finalized USDC credit, nothing twice (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/composition.md, "The conversion run is the journal\'s, and a finalized conversion output is retained once")', () => Effect.scoped(effect {
+  it.effect(`J1: a received fee on Base converts end to end through the scheduled Worker: exact approval, reserved and journaled swap, finalized USDC credit, nothing twice (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/composition.md, "The conversion run is the journal's, and a finalized conversion output is retained once")`, () => Effect.scoped(effect {
     const { base } = try FeeWorld
     const wallet = try walletAt(1)
     try minted(base.feeToken, wallet.address, received)
@@ -438,7 +438,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     })
   }))
 
-  it.effect('A completed native direct award on Base is sold through the scheduled Worker only down to the per-transaction reserve, and its receipt is counted once (spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => Effect.scoped(effect {
+  it.effect(`A completed native direct award on Base is sold through the scheduled Worker only down to the per-transaction reserve, and its receipt is counted once (spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it")`, () => Effect.scoped(effect {
     const { base } = try FeeWorld
     const wallet = try walletAt(9)
     const live = try converter({
@@ -468,7 +468,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     })
   }))
 
-  it.effect('J19: a request cannot assert a fact to the Worker, and a redeploy that withdraws readiness or binds it to another wallet stops signing while recorded sends still settle (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => Effect.scoped(effect {
+  it.effect(`J19: a request cannot assert a fact to the Worker, and a redeploy that withdraws readiness or binds it to another wallet stops signing while recorded sends still settle (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it")`, () => Effect.scoped(effect {
     const { base } = try FeeWorld
     const wallet = try walletAt(5)
     const other = try walletAt(8)
@@ -581,7 +581,7 @@ function refusal(answer: Answer) {
 }
 
 layer(SiteLive, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('The fee report is reachable through the fees area of the composed site: an administrator reads it without signed bytes, a member and a visitor are refused (spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network\'s target")', () => effect {
+  it.effect(`The fee report is reachable through the fees area of the composed site: an administrator reads it without signed bytes, a member and a visitor are refused (spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network's target")`, () => effect {
     const area = try Area
     const now = new Date().toISOString()
     try area.sql(`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, tx_id, raw_tx, evm_nonce, expires_at, amount_out, landed_tx_id, state, created_at, updated_at, submitted_at, finalized_at)

@@ -74,7 +74,7 @@ effect function changed(change: (typeof changes)[number]) {
   return f
 }
 
-describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
+describe(`Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")`, () => {
   it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
     provide webCrypto {
       const f = try Effect.try(() => mixedSubmittedAndSquashFixture())

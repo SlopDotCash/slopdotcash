@@ -236,7 +236,7 @@ effect function carried(site: Site.Shape) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Carry one report from receipt through screening, owner routing, the maintainer assessment and a decided award handed to settlement, one case throughout, on the composed security routes (spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
+  it.effect(`Carry one report from receipt through screening, owner routing, the maintainer assessment and a decided award handed to settlement, one case throughout, on the composed security routes (spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")`, () => effect {
     try carried(try Site)
   })
 })

@@ -125,7 +125,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     }])
   })
 
-  it.effect('A live session lists its own account\'s unexpired sessions, newest expiry first, and revoking a listed ID removes only that session (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs")', () => effect {
+  it.effect(`A live session lists its own account's unexpired sessions, newest expiry first, and revoking a listed ID removes only that session (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs")`, () => effect {
     const area = try Area
     try member("61")
     try member("62")

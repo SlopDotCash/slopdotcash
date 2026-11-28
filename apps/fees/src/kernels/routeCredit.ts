@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
+// spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
 
 export interface RouteTokenBalance {
   accountIndex: number;

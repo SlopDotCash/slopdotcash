@@ -279,7 +279,7 @@ it.live('The snapshot publishes exact unit memberships from hash-pinned stale hi
   }
 })
 
-it.live('A pinned repository uses the real historical scoring and snapshot validator (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
+it.live(`A pinned repository uses the real historical scoring and snapshot validator (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")`, () => effect {
   const world = try Effect.try(() => seeded())
   provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
@@ -321,7 +321,7 @@ it.live('A pinned repository uses the real historical scoring and snapshot valid
   }
 })
 
-it.live('A verified empty legacy closure earns nothing in the merged replay and refuses any changed term (spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository")', () => effect {
+it.live(`A verified empty legacy closure earns nothing in the merged replay and refuses any changed term (spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository")`, () => effect {
   const world = try Effect.try(() => seeded())
   provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {

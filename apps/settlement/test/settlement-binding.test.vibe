@@ -203,7 +203,7 @@ effect function run(statement: Statement) {
 }
 
 layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Prepare a Solana binding without a hosted dispatcher (spec/backend/bindingConsent.md, "A Solana prepare opens the obligation\'s first attempt for the current claim under a ready outbox"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes")', () => effect {
+  it.effect(`Prepare a Solana binding without a hosted dispatcher (spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes")`, () => effect {
     const area = try Area
     try seedRegistry()
     const member = try signIn("401")

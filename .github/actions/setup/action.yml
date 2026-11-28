@@ -178,13 +178,17 @@ runs:
         curl --fail --location --retry 3 -o "$target/release.tar.bz2" "https://github.com/anza-xyz/agave/releases/download/v$AGAVE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
         echo "5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397  $target/release.tar.bz2" | sha256sum --check --strict
         tar -xjf "$target/release.tar.bz2" -C "$target" --no-same-owner
-        ln -sfn "$target/solana-release/bin/solana" "$target/bin/solana"
-        ln -sfn "$target/solana-release/bin/cargo-build-sbf" "$target/bin/cargo-build-sbf"
+        agave_bin="$target/solana-release/bin"
+        ln -sfn "$agave_bin/solana" "$target/bin/solana"
+        ln -sfn "$agave_bin/cargo-build-sbf" "$target/bin/cargo-build-sbf"
         export PATH="$target/bin:$PATH"
         echo "$target/bin" >> "$GITHUB_PATH"
         [[ $(solana --version) == "solana-cli $AGAVE_VERSION "* ]]
         [[ $(cargo-build-sbf --version) == "solana-cargo-build-sbf $AGAVE_VERSION"* ]]
         if command -v solana-test-validator; then echo "::error::A solana-test-validator on PATH would shadow the reviewed validator image."; exit 1; fi
+        [[ $("$agave_bin/solana-test-validator" --version) == "solana-test-validator $AGAVE_VERSION "* ]]
+        [[ $("$agave_bin/solana-genesis" --version) == "solana-genesis $AGAVE_VERSION "* ]]
+        printf 'SLOP_CONTRACT_SOLANA_TOOLS=%s\n' "$agave_bin" >> "$GITHUB_ENV"
         mkdir -p "$HOME/.cache/solana"
         cd packages/contracts/solana
         CARGO_TARGET_DIR="$PWD/.cache/target" cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version "$SBF_TOOLS" --sbf-out-dir "$RUNNER_TEMP/sbf-tools-check" -- --locked

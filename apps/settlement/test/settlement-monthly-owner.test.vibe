@@ -198,7 +198,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Owner adjusts another recipient, never their own row, and a banned owner is refused (spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', () => effect {
+  it.effect(`Owner adjusts another recipient, never their own row, and a banned owner is refused (spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount")`, () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "alpha")
@@ -230,7 +230,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('A cut needs a public reason, is listed publicly, closes 24 hours before the cutoff and delays finalization by 24 hours (spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor\'s latest change when that change is a cut"; spec/settlement/monthly.md, "A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff")', () => effect {
+  it.effect(`A cut needs a public reason, is listed publicly, closes 24 hours before the cutoff and delays finalization by 24 hours (spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff")`, () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "foxtrot")
@@ -265,7 +265,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     try same({ owner: owner.status, runs, single: frozen !== (field(owner.body, "run", "trigger") === "owner") }, { owner: 200, runs: 1, single: true })
   })
 
-  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/settlement/monthPledges.md, "Another month\'s open pledge is held back from this month\'s funding"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
+  it.effect(`An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")`, () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "charlie")
@@ -384,7 +384,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('Close ASI\'s November pool early (spec/settlement/asiNovemberCloseout.md, "Story: Close ASI\'s November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off")', () => effect {
+  it.effect(`Close ASI's November pool early (spec/settlement/asiNovemberCloseout.md, "Story: Close ASI's November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off")`, () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-11-18T12:00:00.000Z"))
     try proposed(env, "asi", true)
@@ -410,7 +410,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('A month pledged in the vault that pays it closes cuts 24 hours before the cutoff and every change at the cutoff, with the automatic default off (spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project")', () => effect {
+  it.effect(`A month pledged in the vault that pays it closes cuts 24 hours before the cutoff and every change at the cutoff, with the automatic default off (spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project")`, () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     for (const projectId of ["sierra", "tango", "uniform"]) {

@@ -87,7 +87,7 @@ it('locks the page with external styles and keeps confirmation modal (spec/ui/co
   expect(scroll()).toBe(before.scroll);
 });
 
-/** The primitive of each kind (spec/ui/index.md, "Each control kind has one primitive"), as a page would show it. */
+/** The primitive of each kind (spec/ui/index.md, "Each control kind has one primitive, and every component has stories"), as a page would show it. */
 const samples: Record<ControlKind, ReactNode> = {
   Action: <Button size="sm">Save</Button>,
   Text: <Input aria-label="Name" />,
@@ -158,7 +158,7 @@ it("shows each control kind as `moves` and `showsRing` say, in every motion and 
   }
 });
 
-// spec/ui/index.md, "A shown control stands still under reduced motion": the indicators that are not controls
+// spec/ui/index.md, "A shown control stands still under reduced motion, and keyboard focus shows its ring": the indicators that are not controls
 it("stands the spinner, the skeleton and an unknown progress still under reduced motion, and moves them otherwise", async () => {
   const host = await show(<><Spinner /><Skeleton /><Progress aria-label="Upload" value={null} /></>);
   const indicators = () => [host.querySelector("svg")!, host.querySelector("[aria-hidden].h-4")!, host.querySelector("[role=progressbar] > div")!]
@@ -176,6 +176,7 @@ it("lays controls out at the heights the spec gives", async () => {
   expect([small, regular, height("input"), height("select")]).toEqual([heightPx("Small"), heightPx("Regular"), heightPx("Field"), heightPx("Field")]);
 });
 
+// spec/ui/index.md, "Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square"
 it("can hit every control anywhere in a 44px square centered on it", async () => {
   const others: Record<string, ReactNode> = {
     "the close button of a dialog": <Dialog open><DialogContent><DialogTitle>Settings</DialogTitle></DialogContent></Dialog>,

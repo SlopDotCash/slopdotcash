@@ -240,7 +240,7 @@ function archived(name: string, text: string): ArchivedFile {
   return { name, content: encoder.encode(text), deflated: true }
 }
 
-describe('Restore the newest trusted memo for a fresh main collection (spec/operations/releaseCoverage.md, "A fresh trusted main collection reuses its memo run\'s discussion reads only when no explicit resume names a run"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
+describe(`Restore the newest trusted memo for a fresh main collection (spec/operations/releaseCoverage.md, "A fresh trusted main collection reuses its memo run's discussion reads only when no explicit resume names a run"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")`, () => {
   it.live("the newest attempt's unexpired memo of the nearest trusted ancestor run is restored with its sidecar and discussion reads, and a digest mismatch restores nothing", () => effect {
     const clock = settableClock(actionsStart)
     const world = try Effect.try(() => seededActions(clock.now))

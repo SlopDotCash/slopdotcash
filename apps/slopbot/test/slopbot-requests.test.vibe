@@ -201,7 +201,7 @@ effect function inbox(options: { readonly as?: string; readonly expected?: strin
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Value requests settle in order, back off, park and resume, and overlapping groups never both lease (spec/slopbot/valueRequests.md, "Story: Claim each due request alone for its pull request"; spec/slopbot/valueRequests.md, "A ten-minute claim needs a due row and no other live claim on the same pull request"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop"; spec/slopbot/valueRequests.md, "A parked request resumes when its repository is active again, checked in rotation"; spec/slopbot/valueRequests.md, "Overlapping groups contend by permanent source ID")', () => effect {
+  it.effect(`Value requests settle in order, back off, park and resume, and overlapping groups never both lease (spec/slopbot/valueRequests.md, "Story: Claim each due request alone for its pull request"; spec/slopbot/valueRequests.md, "A ten-minute claim needs a due row and no other live claim on the same pull request"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop"; spec/slopbot/valueRequests.md, "A parked request resumes when its repository is active again, checked in rotation"; spec/slopbot/valueRequests.md, "Overlapping groups contend by permanent source ID")`, () => effect {
     try batch([
       sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (501, 101, 'ada', 'User', ${seededAt}, 1)`,
       ...requested("vr-a1", 5, at(0)),
@@ -327,7 +327,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('Source-incomplete value requests emit structured sanitized limitation warnings for evidence, group, and work-unit gaps (spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")', () => effect {
+  it.effect(`Source-incomplete value requests emit structured sanitized limitation warnings for evidence, group, and work-unit gaps (spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")`, () => effect {
     const { db } = try Journey
     const seeded = try seededInference()
     clock.set(Date.now())
