@@ -83,6 +83,8 @@ export interface Assessment {
   readonly rationale: string
 }
 
+export type ClosedAssessment = Assessment | (Omit<Assessment, "tier"> & { readonly tier: null })
+
 export interface Authority {
   readonly maintainer: Actor
   readonly project: string
@@ -164,7 +166,7 @@ export interface ClosedPull {
   readonly headRefOid: string
   readonly commits: ReadonlyArray<Commit> | null
   readonly reviews: ReadonlyArray<Review>
-  readonly assessment: Assessment | null
+  readonly assessment: ClosedAssessment | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
   readonly externalPrize: boolean
 }

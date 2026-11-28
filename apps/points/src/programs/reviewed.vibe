@@ -15,7 +15,7 @@ import { type VerifyNativeCarrier, type VerifyNativeCarrierGroup, verifyNativeCa
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
 import { type PacketStorage, type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
-import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
+import { type AuditPhase, auditAssessments } from "../corrections/reviewed/audit/run.vibe"
 import type { HistoricalAssessmentReceipt } from "../corrections/reviewed/audit/reconcile.vibe"
 import type { HistoricalProject } from "../client/snapshot/validate.vibe"
 import { latestOf } from "../corrections/reviewed/replay/latest.vibe"
@@ -35,14 +35,13 @@ module verified {
 import { githubUserIdFromNodeId } from verified
 
 export type PublicationPhase =
+  | AuditPhase
   | "trusted invocation"
-  | "main source verification"
   | "private packet read"
   | "reviewed packet validation"
   | "enforcement checkpoint read"
   | "project and repository verification"
   | "owner authority verification"
-  | "historical census verification"
   | "duplicate acceptance order verification"
   | "accepted squash verification"
   | "financial protection verification"
@@ -51,13 +50,6 @@ export type PublicationPhase =
   | "assessment qualification match"
   | "value record verification"
   | "native original recipient verification"
-  | "complete assessment catalog read"
-  | "assessment source reconciliation"
-  | "historical assessment replay"
-  | "assessment qualification recheck"
-  | "private replay review staging"
-  | "assessment receipt"
-  | "public Points read"
   | "recipient and account restriction verification"
   | "published checkpoint verification"
   | "historical Points reconstruction"

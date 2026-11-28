@@ -8,17 +8,21 @@ import { type SourceAudit, digestPattern, digestText, refusal, require } from ".
 import { exactMainHead } from "../transport.vibe"
 import { PublicRepository, historicalSourceAudit } from "../verify.vibe"
 import type { AssessmentAudit, AuditStatus } from "../../../../gen/points__assessmentAudit.ts"
-import { apply, canSeal, catalogsComplete, initial } from "../../../../gen/points__assessmentAudit.effect.vibe"
-import { type HistoricalAssessmentCatalog, type HistoricalAssessmentHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, readHistoricalAssessmentCatalog } from "./catalog.vibe"
+import { canSeal, catalogsComplete } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { advanceAudit, initialAuditState } from "./cut.vibe"
+import { type AssessmentCatalogPhase, type HistoricalAssessmentCatalog, type HistoricalAssessmentHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, readHistoricalAssessmentCatalog } from "./catalog.vibe"
 import { type ClassifiedScope, type ReceiptStatus, classifyHistoricalAssessmentScope } from "./reconcile.vibe"
 import { boundCut, historicalEvidence } from "../replay/bindings.vibe"
 
 export type AuditPhase =
+  | AssessmentCatalogPhase
   | "main source verification"
-  | "project and repository verification"
+  | "current project registry verification"
+  | "live GitHub repository verification"
   | "historical census verification"
-  | "complete assessment catalog read"
+  | "historical census digest comparison"
   | "public Points read"
+  | "public Points baseline comparison"
   | "assessment source reconciliation"
   | "assessment qualification recheck"
   | "assessment receipt"
@@ -134,26 +138,27 @@ effect function liveRepository(repository: string, githubId: string, nodeId: str
 }
 
 export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads, requireNoActive = false) {
-  let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount, requireNoActive }, dispatch)
-  for (const observation of classified.observations) state = try apply(state, observation, dispatch)
+  let state = try advanceAudit(initialAuditState, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount, requireNoActive }, dispatch)
+  for (const observation of classified.observations) state = try advanceAudit(state, observation, dispatch)
   return state
 }
 
 export effect function sealedCut(state: AssessmentAudit, fresh: boolean) {
-  const checked = try apply(state, { type: "changeCheckpoint", affectsScope: !fresh }, dispatch)
+  const checked = try advanceAudit(state, { type: "changeCheckpoint", affectsScope: !fresh }, dispatch)
   try require(canSeal(checked), "Historical assessment catalog: assessment qualification changed during collection")
-  return try apply(checked, { type: "seal" }, dispatch)
+  return try advanceAudit(checked, { type: "seal" }, dispatch)
 }
 
 export effect function auditedScope(setPhase: (phase: AuditPhase) => void, replay: boolean) {
   const inputs = try historicalAssessmentAuditInputs(replay)
-  setPhase("project and repository verification")
+  setPhase("current project registry verification")
   const project = try currentProjectScope(inputs.projectId)
+  setPhase("live GitHub repository verification")
   try liveRepository(project.repository, project.githubId, project.nodeId)
   setPhase("historical census verification")
   const sourceAudit = try historicalSourceAudit(project.repository, project.nodeId)
+  setPhase("historical census digest comparison")
   try require(digestText(sourceAudit) === inputs.sourceDigest, "Assessment audit source digest changed")
-  setPhase("complete assessment catalog read")
   const scope: HistoricalAssessmentScope = {
     projectId: inputs.projectId,
     repositoryNodeId: project.nodeId,
@@ -161,9 +166,10 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
     manifestSha256: project.manifestSha256,
     expectedPointsDigest: inputs.expectedPointsDigest,
   }
-  const catalog = try readHistoricalAssessmentCatalog(scope)
+  const catalog = try readHistoricalAssessmentCatalog(scope, undefined, setPhase)
   setPhase("public Points read")
   const baseline = try publishedJournal()
+  setPhase("public Points baseline comparison")
   try require((try batchDigest(baseline)) === inputs.expectedPointsDigest && baseline.revisions.length === catalog.heads.d1PointsCount, "Assessment audit Points baseline differs from the public journal")
   setPhase("assessment source reconciliation")
   const classified = try classifyHistoricalAssessmentScope(catalog, sourceAudit, inputs.projectId, historicalEvidence({ baseline, integrationBranch: project.integrationBranch }, inputs.projectId))
@@ -192,7 +198,7 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
     receiptDigest: classified.receipt.receiptSha256,
   }
   if (!catalogsComplete(state) || classified.receipt.status === "incomplete") {
-    const sealed = try apply(state, { type: "seal" }, dispatch)
+    const sealed = try advanceAudit(state, { type: "seal" }, dispatch)
     try require(sealedStatus[sealed.status] === "incomplete" && classified.receipt.status === "incomplete", "Assessment catalog could not be reconciled")
     try Console.log(JSON.stringify({ ...report, blockerCodes: classified.receipt.blockers }))
     throw refusal("Assessment catalog could not be reconciled")

@@ -224,7 +224,7 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   try creditEvaluated(facts.evaluated ?? [], ledger, windowFrom, windowTo)
   const held = new Set([...merges.held.map((entry) => entry.sourceId), ...facts.heldUnits.flatMap((unit) => unit.sources)])
   const ordered = (try timedPulls(merged)).sort(outcomeOrder).map(({ pull }) => pull)
-  const { exclusions: reviewExclusions, omittedReviewCredits } = try reviewCredit(ordered, closed, { windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })
+  const { exclusions: reviewExclusions, omittedReviewCredits } = try reviewCredit(ordered, closed, { rolling: facts.mode !== "historical", windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })
   try creditRetained(facts.retainedReviews ?? [], new Set([...merged.map((pull) => pull.id), ...closed.map((pull) => pull.id), ...held]), ledger, windowFrom, windowTo)
   const events = published(ledger.events)
   const deducted = try deductions(events, facts.penalties, facts.projects)

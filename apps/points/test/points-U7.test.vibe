@@ -535,3 +535,16 @@ it.effect('Review bands: on each side of the 1 November 2026 policy switch only 
   const staleRefusal = try refusal(facts([], { closedUnmerged: [staleDecision] }))
   try Effect.try(() => assert.strictEqual(staleRefusal, "Value review decision does not match the current head"))
 })
+
+it.effect('A standalone joint closure with only review value keeps the minimum pool (spec/points/reviews.md, "Pool shares use ten-Point largest remainder and the original review order"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence")', () => effect {
+  const submittedAt = "2026-11-11T10:00:00Z"
+  const source = closed(803, "2026-11-12T00:00:00Z", oscar, [], {
+    reviews: [review("PRR_c3", rev2, "APPROVED", submittedAt, substantive)],
+  })
+  const reviewUnit = { ...unit("wu_slop_closed_review", null, [source], [], "Review-only closure."), reviewValues: [valued("PRR_c3", "deep")] }
+  const group = decision("e", [source], [reviewUnit])
+  const scored = try scoreSnapshot(facts([], { mode: "rolling", closedUnmerged: [source], joint: [group] }))
+  try Effect.try(() => assert.deepStrictEqual(scored.ledger.map((event) => [event.category, event.source.id, event.scoreThirds, event.occurredAt, event.scoreDecisionAt, event.scoreDecisionSourceId]), [
+    ["substantive-review", "PRR_c3", 1, submittedAt, group.recordedAt, `value:${group.digest}`],
+  ]))
+})

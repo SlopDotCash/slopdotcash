@@ -18,6 +18,7 @@ export interface Ledger extends Credit {
 }
 
 export interface ReviewContext {
+  readonly rolling: boolean
   readonly windowFrom: number
   readonly windowTo: number
   readonly reviewCutoff: number
@@ -404,7 +405,7 @@ effect function closedReviews(pull: ClosedPull, context: ReviewContext, exclude:
   const closedAt = try millisAt(pull.closedAt, pull.id)
   if (closedAt < valuePolicyAt) return
   const candidates: Candidate[] = []
-  let sizeFloor = 0
+  let sizeFloor = context.rolling ? sizePoints(0) : 0
   for (const review of pull.reviews) {
     const submitted = review.submittedAt === null ? -1 : try millisAt(review.submittedAt, review.id)
     if (submitted >= 0 && submitted < valuePolicyAt) sizeFloor = Math.max(sizeFloor, assessedSize(pull, review, context))
