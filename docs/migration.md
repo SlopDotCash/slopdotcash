@@ -218,6 +218,21 @@ database, chain and deployment acceptance follow implementation. Existing
 approved waivers remain recorded as waivers. STATE-01 through STATE-05 remain
 open until the required source mappings and implementation evidence are complete.
 
+### Native October proposal import
+
+The [native October workflow](../.github/workflows/october-rewards.yml) runs
+on qualified `main` in `slop-production`. For a read-only preview, supply
+the owner-reviewed `reviewed_packet_sha256` and leave `apply` false.
+Eliza defaults to `OCTOBER_REWARDS_REVIEWED_PACKET`. Select `slopdotcash`
+explicitly to use `OCTOBER_SLOP_REWARDS_REVIEWED_PACKET`. Each project uses
+its own protected secret. The packet must name only the selected project
+and bind the current canonical Points checkpoint and verified registry.
+An authorized apply requests the atomic proposal import. The owner finalizes
+the proposal and settles through its existing vault under the
+[October import rules](../spec/settlement/octoberImport.md).
+The commands in the [carried runbook](./october-payout-proposal-import.md)
+refer to the legacy checkout.
+
 ### EVM failed-recipient qualification
 
 The [extended escrow requirement](../spec/operations/extendedQualification.md)
