@@ -4,16 +4,18 @@ import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { sha256Of, textBytes } from "@repo/platform/git/bytes"
 import { outbound } from "@repo/platform/http"
-import type { Journal } from "../src/kernels/records/canonical.ts"
+import type { Award, Journal } from "../src/kernels/records/canonical.ts"
+import { pointKey } from "../src/kernels/records/ids.vibe"
 import { instantOf } from "../src/kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
-import { type HistoricalPacket, decodePacketBytes, digestText } from "../src/corrections/reviewed/packet.vibe"
+import { type HistoricalPacket, type PacketRecipientCorrection, decodePacketBytes, digestText } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
+import { octoberReviewedAcceptedLinesReason } from "../gen/points__journal.effect.vibe"
 import { periodOf } from "../gen/points__periods.effect.vibe"
 import { distinctOrder } from "../gen/points__reviewedHistory.ts"
-import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
+import { actor, appended, baselineOf, batchDigestOf, fixture, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
 const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
@@ -75,6 +77,44 @@ effect function changed(change: (typeof changes)[number]) {
 }
 
 describe(`Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")`, () => {
+  it.effect('A 25/5 owner split records the reviewed accepted-lines reason and survives routine historical reallocation (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/journal.md, "An owner-reviewed recipient correction redivides the October pool it covers")', () => effect {
+    provide webCrypto {
+      const { packet, baseline, award } = try Effect.try(fixture)
+      const [candidate] = packet.corrections.candidates
+      if (candidate === undefined) throw new InvalidFixture({ message: "Missing reviewed pool" })
+      const other = { id: btoa("04:User43"), login: "fixer" }
+      const key = try pointKey({ projectId: award.projectId, actorId: other.id, category: award.category, sourceId: award.sourceId })
+      const shares: Award[] = [{ ...award, amount: 25 }, { ...award, key, actor: other, amount: 5 }]
+      const recipients = [
+        { actor: award.actor, githubId: "42", weight: "5" },
+        { actor: other, githubId: "43", weight: "1" },
+      ]
+      const claimIds = ["1".repeat(64)]
+      const evidence = JSON.stringify({ sourceId: award.sourceId, workUnitId: award.workUnitId, recipients,
+        sourceSha256: "2".repeat(64), acceptedClaimIds: claimIds })
+      const evidenceSha256 = sha256Of(evidence)
+      const correction: PacketRecipientCorrection = { sourceId: award.sourceId, workUnitId: award.workUnitId,
+        evidence, evidenceSha256, claimIds, recipients, expectedPredecessors: candidate.expectedPredecessors,
+        expectedAfter: shares.map((row) => ({ key: row.key, actorId: row.actor.id, amount: row.amount, occurredAt: row.occurredAt })) }
+      const decision = { sourceId: `owner_october_${evidenceSha256}`, reason: octoberReviewedAcceptedLinesReason }
+      const digest = digestText(correction)
+      const expected = try Effect.try(() => [...shares].sort((left, right) => left.key.localeCompare(right.key))
+        .reduce((journal, share) => appended(journal, share, digest, decision), baseline))
+      const candidateDigest = try Effect.try(() => batchDigestOf(expected))
+      const reviewed = { ...packet, recipientCorrections: [correction], candidateDigest }
+      const written = try rebuilt(reviewed, baseline)
+      try same(written, expected)
+
+      const confirmedDigest = try Effect.try(() => batchDigestOf(written))
+      const confirmedBaseline = try Effect.try(() => baselineOf(written))
+      const ordinary = { ...packet, baselineDigest: confirmedDigest, baselineRevisionCount: written.revisions.length,
+        candidateDigest: confirmedDigest, corrections: { ...packet.corrections, baseline: confirmedBaseline,
+          candidates: [{ ...candidate, expectedPredecessors: written.revisions.slice(baseline.revisions.length)
+            .map((row) => ({ key: row.award.key, revisionId: row.id })) }] } }
+      try same(try rebuilt(ordinary, written), written)
+    }
+  })
+
   it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
     provide webCrypto {
       const f = try Effect.try(() => mixedSubmittedAndSquashFixture())

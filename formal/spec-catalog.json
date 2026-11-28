@@ -19267,7 +19267,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "ee6af14d5c862a1f5438d1223556c7338434deaaabce053342fa8ff99c11468d",
+      "sha256": "dc04db39c56ed15796535036321b2dc67110c05595c1e7dc3825d02d1a9775b2",
       "module": "points__journal",
       "stories": [
         {
@@ -19486,7 +19486,9 @@
           "line": 678,
           "definitions": [
             "octoberOriginalContributorReason",
+            "octoberReviewedAcceptedLinesReason",
             "octoberDuplicateRetirementReason",
+            "octoberProtectionReason",
             "octoberProtected",
             "ReviewedUnit",
             "AssessedSource",
@@ -19514,7 +19516,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 757,
+          "line": 762,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19523,7 +19525,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 787,
+          "line": 792,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19532,7 +19534,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 818,
+          "line": 824,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19546,7 +19548,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 855,
+          "line": 861,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19562,7 +19564,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 883,
+          "line": 889,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19575,7 +19577,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 917,
+          "line": 923,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19603,7 +19605,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 983,
+          "line": 989,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19627,7 +19629,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 1009,
+          "line": 1015,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19742,19 +19744,19 @@
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 759
+          "line": 764
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 789
+          "line": 794
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 820
+          "line": 826
         },
         {
           "target": "./allocation.md",
-          "line": 826
+          "line": 832
         }
       ]
     },
@@ -21023,7 +21025,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "759385bcefec00fe66afe29c695dcf436f05e92b4925fa93387e83feea3820cd",
+      "sha256": "97272285f147bd975cadec24c90130ef27ac7772aab8145490862f6466cc91e1",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -21096,7 +21098,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers",
-          "line": 176,
+          "line": 182,
           "definitions": [
             "AcceptedPromotion",
             "promotionKeepsContent",
@@ -21186,7 +21188,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
-          "line": 530,
+          "line": 536,
           "definitions": [
             "HistoricalScope",
             "HistoricalInput",
@@ -21223,7 +21225,7 @@
         },
         {
           "target": "./authorship.md",
-          "line": 542
+          "line": 548
         }
       ]
     },

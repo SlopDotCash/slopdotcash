@@ -9,6 +9,7 @@ import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
 import { applySnapshots, batchOwnedKeys, jointHoldReasons, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import { octoberReviewedAcceptedLinesReason } from "../gen/points__journal.effect.vibe"
 import { planCorrections } from "../src/corrections/apply/apply.vibe"
 import { projectOfRegistry } from "../src/corrections/apply/derive.vibe"
 import { collectionOf, verifyCollection } from "../src/corrections/apply/manifest.vibe"
@@ -323,14 +324,17 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       return { row, store }
     }
     const { store: accepted, row: historicalRow } = try storeWithReason(verifiedHistoricalAllocationDecision)
+    const { store: reviewed, row: reviewedRow } = try storeWithReason(octoberReviewedAcceptedLinesReason)
     const { store: ordinary } = try storeWithReason("Previously credited implementation")
     try applySnapshots(accepted, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    try applySnapshots(reviewed, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
     try applySnapshots(ordinary, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
     const current = [...ordinary.latest.values()].filter(({ award }) => award.amount > 0)
     try Effect.try(() => assert.deepStrictEqual({
       historical: accepted.revisions,
+      reviewed: reviewed.revisions,
       ordinary: current.map(({ award }) => [award.actor.login, award.amount]),
-    }, { historical: [historicalRow], ordinary: [[carrier.login, 30]] }))
+    }, { historical: [historicalRow], reviewed: [reviewedRow], ordinary: [[carrier.login, 30]] }))
   })
 
   it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {

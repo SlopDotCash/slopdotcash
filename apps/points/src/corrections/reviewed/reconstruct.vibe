@@ -7,13 +7,13 @@ import { instantOf } from "../../kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../../client/snapshot/schema.vibe"
 import { type Opened, type Repositories, type Store, advanceTo, command, finish, openStore, unitNameOf } from "../../journal/ledger.vibe"
 import { appended, commit, flush, rowsOf, sendAll } from "../../journal/rows.vibe"
-import { octoberDuplicateRetirementDecision, octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
+import { octoberDuplicateRetirementDecision } from "../../journal/snapshot.vibe"
 import { isExtension, planCorrections } from "../apply/apply.vibe"
 import type { Collection } from "../apply/manifest.vibe"
 import { type ProjectOfRepository, sameSet } from "../apply/derive.vibe"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { periodOf } from "../../../gen/points__periods.effect.vibe"
-import type { Event } from "../../../gen/points__journal.effect.vibe"
+import { type Event, octoberReviewedAcceptedLinesReason } from "../../../gen/points__journal.effect.vibe"
 import type { MixedProof, PacketRun, RecipientCorrection } from "../../../gen/points__reviewedHistory.ts"
 import { initial as unbound, machineOver as bindingOver } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetirement, digestPattern, digestText, githubIdPattern, refusal, require } from "./packet.vibe"
@@ -273,7 +273,7 @@ effect function recipientsCorrected(input: ReconstructInput, correction: PacketR
     reviewedShares: ordered.map((award) => ({ actor: actors.get(award.actor.id) ?? 0, points: correction.expectedAfter.find((expected) => expected.key === award.key)?.amount ?? -1 })),
   }
   const digest = digestText(correction)
-  const event: Event = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberOriginalContributorDecision, digest }
+  const event: Event = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberReviewedAcceptedLinesReason, digest }
   const appendedRows = try appendedPool(pool, event, checked.replacements, digest, `owner_october_${correction.evidenceSha256}`, input.packet.reviewedAt, changed)
   try require(appendedRows.written.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.amount === row.award.amount)), changed)
   return appendedRows.journal
