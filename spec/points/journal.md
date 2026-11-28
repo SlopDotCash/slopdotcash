@@ -293,9 +293,10 @@ pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision)
 
 A human review allocated a positive share under the [review rules](./reviews.md)
 keeps its original submission time and assessed share when it precedes the
-rolling window. The accepted outcome must be in the current census, and the
-review must fall inside the allocation window ending at that outcome. Its
-outside-window exclusion stays in the snapshot, and its share stays out of
+rolling window. The current census must admit the merge or verified unmerged
+closure under that lifecycle's cutoff. The review must fall inside the
+allocation window ending at that outcome. Its outside-window exclusion stays
+in the snapshot, and its share stays out of
 the rolling ledger, standings and payment basis. The omitted share binds the
 same repository, pull request, review, actor, assessment and work unit as
 its ordinary credit. The adapter may submit it through the ordinary first

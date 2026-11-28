@@ -22,7 +22,7 @@ import { november2026 } from "../gen/points__periods.ts"
 import { type Journal, type Revision, journalText } from "../src/kernels/records/canonical.ts"
 import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { assembleSnapshot, createHistoricalSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
-import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
+import { type Seeded, closedAt, day, repository, seeded, start } from "./support/u5/github.ts"
 import { extractCollectedData, restoreLocal } from "../src/snapshot/restoreLocal.vibe"
 import { zipOf } from "./support/u3/archive.ts"
 import { acceptedReviewHistoryJson, registryAnswer, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
@@ -205,6 +205,34 @@ it.live('Publish a collected window through the real snapshot assembly (spec/poi
     const refused = validateSnapshot(unbound, registry) catch (error) => message(error)
     try same(refused, "Value score event is not bound to its assessment coverage")
   })
+  }
+})
+
+it.live('A collected unmerged closure retains its exact review-only assessment and minimum pool (spec/points/reviews.md, "Pool shares use ten-Point largest remainder and the original review order"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const pullRequestId = world.ids.closed
+  const submittedAt = new Date(Date.parse(closedAt) - 3_600_000).toISOString()
+  const recordedAt = new Date(Date.parse(closedAt) + 3_600_000).toISOString()
+  const reviewId = try Effect.try(() => {
+    const id = world.fake.world.addReview(repository, world.pulls.closed, { author: "ada", state: "APPROVED", body: "Verified the review evidence against the submitted change.", submittedAt })
+    return `PRR_kwDO${id.toString(36)}`
+  })
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
+    try scoped(effect {
+      const record = {
+        pullRequestNodeId: pullRequestId, repository, headSha: world.commits.linus, occurredAt: closedAt,
+        rubricVersion: "slop-value-2026-11-01", model: { reported: "fixture" },
+        assessment: { tier: null, rationale: "Review-only outcome.", reviews: [{ sourceId: reviewId, tier: "deep", finding: "Verified behavior.", outcome: "Review before closure." }] },
+      }
+      const recordJson = JSON.stringify(record)
+      const digest = try sha256Hex(recordJson)
+      const decision = { status: "assessed", history: [{ sequence: 1, record_digest: digest, record_json: recordJson, recorded_at: recordedAt }], latestDigest: digest, record }
+      const { written } = try collected(world, start, new Map([[pullRequestId, decision]]))
+      const relevant = written.ledger.filter((event) => event.source.id === reviewId || event.source.id === pullRequestId)
+      try same(relevant.map((event) => [event.category, event.source.id, event.scoreThirds, event.occurredAt, event.scoreDecisionAt, event.scoreDecisionSourceId]), [
+        ["substantive-review", reviewId, 1, submittedAt, recordedAt, `value:${digest}`],
+      ])
+    })
   }
 })
 
