@@ -30,7 +30,7 @@ import { type AttemptStatus, type PaymentRequest, ExecutorUnavailable, PaymentEx
 import { type Indexed, indexPaymentEvent, obligationState, reindexHeld } from "../src/payments/ledger.vibe"
 import { RecoveryFailed, reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
 import { ReconciliationRefused, readReconciliationPacket, reconcileReviewedPaymentEvents } from "../src/payments/reviewedEvents.vibe"
-import { type EventReference, type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
+import { type EventReference, type EvmPaymentDeployment, EvidenceRefused, type FinalizedPaymentEvent, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag, storedEvidence } from "../src/payments/terms.vibe"
 import { verifyFinalized } from "../src/payments/verify.vibe"
 import { type LedgerAccess, reconciliationServices } from "../src/programs/reconcileEvents.vibe"
 import type { EvmDeployment } from "../src/vault/policy.vibe"
@@ -39,7 +39,7 @@ import { type Deployment as SolanaEscrow, type Scenario, type Sent, escrowDeploy
 
 interface Script {
   readonly submits: PaymentRequest[]
-  readonly answers: Array<"lose" | string>
+  readonly answers: Array<string | (string!!)>
   readonly statuses: Map<string, AttemptStatus>
   readonly retirements: Map<string, Retirement>
 }
@@ -96,17 +96,21 @@ function tampering(upstream: string, edits: ReadonlyMap<string, ReceiptEdit>, ke
   }
 }
 
+effect function paymentDatabase(name: string) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  return try promise(() => database(mf, "SLOP_DB"))
+}
+
 const Started = Layer.effect(Journey, effect {
   const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
   chain.setFinalized(1_000_000_000_000n)
   const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
   const edits = new Map<string, ReceiptEdit>()
   const tamper = try acquireRelease(promise(() => serve(tampering(chain.url, edits, receiptEdits))), (served) => promise(() => served.close()))
-  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-journey" } })), (started) => promise(() => started.dispose()))
-  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
-  const failed = applied.find((file) => file.error !== undefined)
-  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
-  const db = try promise(() => database(mf, "SLOP_DB"))
+  const db = try paymentDatabase("settlement-payments-journey")
   return { escrow, db, script: { submits: [], answers: [], statuses: new Map(), retirements: new Map() }, edits, tampered: tamper.url }
 })
 
@@ -140,7 +144,8 @@ function executorOf(script: Script) {
       script.submits.push(payment)
       const answer = script.answers.shift()
       if (answer === undefined || answer === "lose") throw new ExecutorUnavailable({ reason: "lost response" })
-      return { transactionId: answer }
+      const transactionId = typeof answer === "string" ? answer : try answer
+      return { transactionId }
     },
     status: (_family, identity) => effect {
       const status = script.statuses.get(identity.idempotencyKey)
@@ -242,15 +247,21 @@ effect function written(statements: ReadonlyArray<Statement>) {
   try shell(effect { try (try D1).batch(statements) })
 }
 
-effect function authorize(actor: string, wallet: string, claim: string, supersedes: string | null) {
+effect function walletConsent(actor: string, wallet: string, claim: string, supersedes: string | null, chain: (typeof chains)[Network]) {
   const now = try isoNow()
   const body = try sha256Hex(`${claim}:body`)
   const record = try sha256Hex(`${claim}:record`)
-  try written([
-    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at, chain) VALUES (${claim}, ${actor}, ${`member-${actor}`}, ${wallet}, 'd1_registry', NULL, NULL, ${body}, ${now}, ${record}, ${supersedes}, ${now}, 'base')`,
+  const statements = [
+    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at, chain) VALUES (${claim}, ${actor}, ${`member-${actor}`}, ${wallet}, 'd1_registry', NULL, NULL, ${body}, ${now}, ${record}, ${supersedes}, ${now}, ${chain})`,
     sql`INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at) VALUES (${`challenge-${claim}`}, ${claim}, ${actor}, 'journey', '2099-01-01T00:00:00.000Z', ${now})`,
     sql`INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (${claim}, ${actor}, ${now}, ${`challenge-${claim}`}, 'journey')`,
-  ])
+  ]
+  return { record, statements }
+}
+
+effect function authorize(actor: string, wallet: string, claim: string, supersedes: string | null) {
+  const { record, statements } = try walletConsent(actor, wallet, claim, supersedes, "base")
+  try written(statements)
   return record
 }
 
@@ -480,6 +491,79 @@ effect function packetRead(text: string, digestOf: string) {
     return readReconciliationPacket(text, try sha256Hex(digestOf)) catch (error) => refusalOf(error)
   }
 }
+
+layer(webCrypto, { excludeTestServices: true })((it) => {
+  it.effect('A captured executor reply after canonical indexing updates only its old attempt (spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner")', () => scoped(effect {
+    const db = try paymentDatabase("settlement-late-payout-reply")
+    const requested = try Deferred.make<void>()
+    const response = try Deferred.make<string>()
+    const script: Script = { submits: [], statuses: new Map(), retirements: new Map(), answers: [effect {
+      try Deferred.succeed(requested, undefined)
+      return try Deferred.await(response)
+    }] }
+    const now = try isoNow()
+    const actor = "42"
+    const claim = "late-reply-claim"
+    const obligation = "late-reply-obligation"
+    const digest = "a".repeat(64)
+    const destination = base58Encode(new Uint8Array(32).fill(11))
+    const asset = { address: base58Encode(new Uint8Array(32).fill(12)), decimals: 6 }
+    const deployment = {
+      projectId: "late-reply", chain: "solana", network: "solana-devnet", family: "solana", scope: "Ordinary",
+      vault: base58Encode(new Uint8Array(32).fill(13)), owner: base58Encode(new Uint8Array(32).fill(14)),
+      program: SYSTEM_PROGRAM, genesis: "", project: base58Encode(new Uint8Array(32).fill(15)), mint: asset.address,
+      feeRecipient: base58Encode(new Uint8Array(32).fill(16)), rpc: Redacted.make([]),
+    } satisfies SolanaPaymentDeployment
+    const { statements } = try walletConsent(actor, destination, claim, null, deployment.chain)
+    try on(db, script, effect {
+      try (try D1).batch([
+        ...statements,
+        snapshotRow(deployment.projectId, deployment.network, deployment.chain, deployment.vault, asset.address, asset.decimals, now),
+        sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at)
+          VALUES (${obligation}, ${deployment.projectId}, ${actor}, ${deployment.network}, ${deployment.chain}, ${deployment.vault}, ${asset.address}, ${asset.decimals}, '100', '2', ${digest}, 'reserved', ${now})`,
+        sql`INSERT INTO payment_outbox (obligation_id, state, updated_at) VALUES (${obligation}, 'ready', ${now})`,
+      ])
+    })
+
+    const pending = fork.scoped effect {
+      return on(db, script, dispatchPayment(deployment, asset, obligation)) catch (error) => failureTag(error)
+    }
+    try timeout(Deferred.await(requested), "30 seconds")
+    const captured = script.submits[0]
+    const prepared = try on(db, script, obligationState(deployment, obligation))
+    try same([captured?.claimId, captured?.destination, prepared?.settlement.delivery.attempts.map((attempt) => [attempt.key, attempt.status])],
+      [claim, destination, [[captured?.idempotencyKey, "Prepared"]]])
+
+    const evidence = {
+      ...deployment, kind: "paid", obligationId: obligation, githubUserId: actor, sourceDigest: digest,
+      transactionId: base58Encode(new Uint8Array(64).fill(17)), eventIndex: 1, blockId: base58Encode(new Uint8Array(32).fill(18)),
+      blockNumber: 5n, gross: 100n, net: 98n, fee: 2n, destination, bindingVersion: "0",
+    } satisfies FinalizedPaymentEvent
+    const paymentEvent = sql`SELECT evidence_json FROM payment_events WHERE obligation_id = ${obligation} AND kind = 'paid'`
+    const outbox = sql`SELECT state, lease_token, lease_until, updated_at FROM payment_outbox WHERE obligation_id = ${obligation}`
+    const stored = storedEvidence(evidence, asset)
+    try on(db, script, effect {
+      try (try D1).batch([sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at)
+        VALUES (${evidence.network}, ${evidence.transactionId}, ${evidence.eventIndex}, ${evidence.blockId}, 'paid', ${obligation}, ${stored}, ${now})`])
+    })
+    const cleared = try on(db, script, reindexHeld(deployment))
+    try same(cleared.map(outcomeOf), ["Recorded"])
+    const before = try on(db, script, obligationState(deployment, obligation))
+    const outboxBefore = try on(db, script, effect { return try (try D1).batch([outbox, paymentEvent]) })
+    try same([before?.settlement.payment.phase, before?.settlement.delivery.queue, before?.settlement.delivery.receipt.tx], ["Paid", "Indexed", evidence.transactionId])
+
+    try Deferred.succeed(response, evidence.transactionId)
+    const callback = join pending
+    const after = try on(db, script, obligationState(deployment, obligation))
+    const outboxAfter = try on(db, script, effect { return try (try D1).batch([outbox, paymentEvent]) })
+    const retry = try on(db, script, dispatchPayment(deployment, asset, obligation))
+    const replay = try on(db, script, indexPaymentEvent(deployment, evidence))
+    try same([callback, retry, outcomeOf(replay), script.submits.length, after?.settlement.delivery.attempts.map((attempt) => [attempt.key, attempt.status, attempt.tx])],
+      ["Submitted", "Unavailable", "Replayed", 1, [[captured?.idempotencyKey, "AttemptSubmitted", evidence.transactionId]]])
+    try same([after?.settlement.payment, after?.settlement.vault, after?.settlement.delivery.receipt, outboxAfter],
+      [before?.settlement.payment, before?.settlement.vault, before?.settlement.delivery.receipt, outboxBefore])
+  }))
+})
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
   it.effect('A payout to an unauthorized destination is held for investigation, never paid, and a later authorization of the same destination clears it as paid (spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"; spec/settlement/paymentInvestigation.md, "A later authorization of the same destination clears the hold as paid"; spec/settlement/paymentInvestigation.md, "Paid needs an authorized destination and every outcome keeps the finalized payout"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve")', () => effect {
@@ -848,10 +932,8 @@ const SolanaStarted = Layer.effect(SolanaJourney, effect {
   const native = try promise(() => nativeMonth(escrow))
   const edits = new Map<string, ReceiptEdit>()
   const tamper = try acquireRelease(promise(() => serve(tampering(escrow.chain.validator.url, edits, solanaEdits))), (served) => promise(() => served.close()))
-  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-solana-journey" } })), (started) => promise(() => started.dispose()))
-  const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((file) => file.error !== undefined)
-  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
-  return { escrow, scenario, native, db: try promise(() => database(mf, "SLOP_DB")), edits, tampered: tamper.url }
+  const db = try paymentDatabase("settlement-payments-solana-journey")
+  return { escrow, scenario, native, db, edits, tampered: tamper.url }
 })
 
 const quietScript: Script = { submits: [], answers: [], statuses: new Map(), retirements: new Map() }
