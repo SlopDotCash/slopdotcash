@@ -244,8 +244,12 @@ if (import.meta.main) {
  */
 export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>, remember: Remember, wrote: Map<string, string>, mode: TestProfile = "normal"): Promise<Reported<"traces">[]> {
   const results: Reported<"traces">[] = [];
+  const reportProblem = (problem: string) => {
+    if (problem.startsWith("unstable conformance to ")) return "the disagreement did not reproduce";
+    return /^(?:conformance to|trace|line) /.test(problem) ? "the program departs from the spec" : "the run did not get as far as comparing";
+  };
   const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([!problem, "traces",
-    `${where}: ${problem ? /^(?:conformance to|trace|line) /.test(problem) ? "the program departs from the spec" : "the run did not get as far as comparing" : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
+    `${where}: ${problem ? reportProblem(problem) : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
     problem ? indent(problem) : "", where]);
   for (const name of shelled(root)) {
     const file = path.join(root, DRIVERS, `${name}.ts`), model = machines.get(name)?.model;
