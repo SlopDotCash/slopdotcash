@@ -80,8 +80,9 @@ describe("Close and reopen an account without losing history", () => {
   // spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"
   it("a closed account signs out everywhere and only an", async () => {
     await site.allow("^console Failed to load resource: the server responded with a status of 40[19]", "^409 POST /api/v1/points/join$", "^401 GET /api/v1/payments/me$");
+    const emailAddress = named("textbox", "Email address");
     await signIn(users.lin.login, "/account");
-    await shown(named("textbox", "Email address")).toMatchObject({ visible: true });
+    await shown(emailAddress).toMatchObject({ visible: true });
     await shown(named("form", "Close account")).toMatchObject({ count: 0 });
     const [before] = await membersOf(users.lin.id);
     expect(before).toMatchObject({ public: 1, closed_at: null });
@@ -106,6 +107,7 @@ describe("Close and reopen an account without losing history", () => {
     await site.click(named("button", "Reopen account"));
     await at("/account");
     await shown(named("heading", "Settings", { level: 1 })).toMatchObject({ visible: true });
+    await shown(emailAddress).toMatchObject({ visible: true });
     expect(await membersOf(users.lin.id)).toEqual([{ actor_id: before?.actor_id, public: 1, closed_at: null }]);
   });
 });
