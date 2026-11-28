@@ -105,6 +105,29 @@ effect function joint(pull: string) {
   try (try D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (${sha256Of(raw)}, ${sha256Of(`joint ${raw}`)}, 'fixture', ${sourceDigest}, ${raw}, ${recordedAt})`)
 }
 
+function withJointAssessment(catalog: HistoricalAssessmentCatalog, assessedAt: string): HistoricalAssessmentCatalog {
+  const source = {
+    repository: audit.repository, repositoryNodeId: audit.repositoryNodeId, repositoryDatabaseId: 42,
+    pullRequestNodeId: "PR_known", pullRequestNumber: 7, headSha, mergeSha: policySha,
+    policySha, sourceDigest, occurredAt,
+  }
+  const raw = JSON.stringify({
+    schemaVersion: "slop-work-unit-record:v1", projectId: scope.projectId, sourceDigest,
+    sources: [source], claims: [], units: [], supersedes: [], legacyPredecessors: [], revisionReason: null,
+    model: { provider: "surplus", requested: "claude-opus-5.5", reported: "claude-opus-5.5" },
+    producerRevision: "f".repeat(40), assessedAt, rubricVersion: "slop-value-2026-10-01",
+  })
+  return {
+    ...catalog,
+    heads: { ...catalog.heads, jointThrough: 1, jointScopedCount: 1 },
+    joint: [{
+      sequence: 1, record_digest: sha256Of(raw), record_json: raw, recorded_at: recordedAt,
+      project_id: scope.projectId, source_digest: sourceDigest,
+      source_keys_json: JSON.stringify([[source.repositoryNodeId, source.pullRequestNodeId]]),
+    }],
+  }
+}
+
 effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean, requireNoActive = false) {
   const classified = try classifyHistoricalAssessmentScope(catalog, audit, "fixture")
   const sealed = sealedCut(try capturedCut(classified, catalog.heads, requireNoActive), fresh) catch (error) => error._tag
@@ -245,6 +268,15 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
       try same([try historicalReplayRequiresCollection("no-scoped-active-assessments", true), try historicalReplayRequiresCollection("requires-value-replay", false)], [false, true])
       const blockedReplay = historicalReplayRequiresCollection("requires-value-replay", true) catch (error) => error._tag
       try same(blockedReplay, "ReviewedRefused")
+
+      for (const suffix of ["Z", "+00:00"]) {
+        const retained = withJointAssessment(empty, `2026-10-06T00:00:00.123456${suffix}`)
+        try same(try conclusion(retained, true), { receipt: "requires-value-replay", blockers: [], sealed: "RequiresValueReplay" })
+      }
+      for (const assessedAt of ["2026-10-06T00:00:00.123456+01:00", "2026-11-31T00:00:00.123456Z"]) {
+        const malformed = withJointAssessment(empty, assessedAt)
+        try same(try conclusion(malformed, true), { receipt: "incomplete", blockers: ["invalid-joint-history"], sealed: "AuditIncomplete" })
+      }
 
       try legacy("PR_known")
       const active = try readHistoricalAssessmentCatalog(scope)
