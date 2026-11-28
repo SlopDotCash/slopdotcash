@@ -262,7 +262,7 @@ function release(overrides: Partial<ReleaseEnvironment>): ReleaseEnvironment {
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"; spec/settlement/monthPledges.md, "A refresh reads the previous UTC month, the next eleven after the current one, and every month still stored open"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
+  it.effect(`A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"; spec/settlement/monthPledges.md, "A refresh reads the previous UTC month, the next eleven after the current one, and every month still stored open"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total")`, () => effect {
     const world = try World
     provide world.clock.layer, try evmShell(world.escrow.chain.url) {
       const project = "vault-journey-store"
@@ -426,7 +426,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
     }
   })
 
-  it.effect('A run on the wrong chain or genesis is refused before any cursor or snapshot moves, a missing genesis pin makes no RPC call, and recovery refuses an untrusted release or unprotected configuration (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals")', () => effect {
+  it.effect(`A run on the wrong chain or genesis is refused before any cursor or snapshot moves, a missing genesis pin makes no RPC call, and recovery refuses an untrusted release or unprotected configuration (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals")`, () => effect {
     const world = try World
     const asked: string[] = []
     const fakeSolana = try world.serve(async (request) => {
@@ -586,7 +586,7 @@ effect function signatureOf(scenario: Scenario, label: string) {
 }
 
 layer(ClusterStarted, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('Classic SPL, admitted Token-2022 and native SOL vaults store their finalized totals (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month\'s pledge and the vault\'s open total")', () => effect {
+  it.effect(`Classic SPL, admitted Token-2022 and native SOL vaults store their finalized totals (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"; spec/settlement/monthPledges.md, "A finalized read reports no pledge support, or each month's pledge and the vault's open total")`, () => effect {
     const { tokens, native, escrow } = try Cluster
     provide try clusterShell() {
       const deployments = [
@@ -614,7 +614,7 @@ layer(ClusterStarted, { excludeTestServices: true, timeout: "900 seconds" })((it
     }
   })
 
-  it.effect('A Solana scan keeps the old cursor as the interval boundary, a held payout holds the checkpoint across a restart, and a stale worker cannot checkpoint (spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => effect {
+  it.effect(`A Solana scan keeps the old cursor as the interval boundary, a held payout holds the checkpoint across a restart, and a stale worker cannot checkpoint (spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network")`, () => effect {
     const { tokens } = try Cluster
     provide try clusterShell() {
       const deployment = try solanaDeployment(tokens.reads[0], "solana-scan")

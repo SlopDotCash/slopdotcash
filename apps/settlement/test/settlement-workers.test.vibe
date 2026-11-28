@@ -201,7 +201,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
     })
   }, 180_000)
 
-  it.effect('The Pages-facing Solana binding entrypoint reaches only the binding routes of a production Solana attester and answers 404 for reserve release and binding recovery (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+  it.effect(`The Pages-facing Solana binding entrypoint reaches only the binding routes of a production Solana attester and answers 404 for reserve release and binding recovery (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => effect {
     const script = try promise(() => bundle(root, { entry: "attester" }))
     const pages = try behindPages(script, { ...zeroPins, PAYMENT_NETWORK: "solana-mainnet", PAYMENT_DEPLOYMENTS: JSON.stringify([{ projectId: "entrypoint-isolation" }]) })
     const answers = {
@@ -223,7 +223,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
     })
   }, 180_000)
 
-  it.effect('Staging Pages can reach ordinary Solana devnet binding through the test signer only (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+  it.effect(`Staging Pages can reach ordinary Solana devnet binding through the test signer only (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => effect {
     const script = try promise(() => bundle(root, { entry: "attester" }))
     const pins = JSON.stringify([{ projectId: "entrypoint-isolation" }])
     const vars = {

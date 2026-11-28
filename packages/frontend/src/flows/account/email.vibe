@@ -134,12 +134,16 @@ export const emailLayer = Layer.effect(EmailPreferences, effect {
     const before = session.current() catch (failure) => failure._tag === "Refused" && failure.status === 401 ? null : undefined
     if (!current(mine)) return
     if (before === undefined) return try settle(mine, { status: "failed", message: emailMessages.accountCheck })
-    if (before === null || (actorHeld !== null && actorHeld !== before.githubId)) {
+    if (before === null) {
+      try resetIdentity()
+      return try settle(mine, { status: "signedOut" })
+    }
+    if (actorHeld !== null && actorHeld !== before.githubId) {
       try resetIdentity()
       try settle(mine, { status: "loading" })
     }
-    actorHeld = before?.githubId ?? null
-    const answered = call(emailPreference, {}, { limitBytes: emailLimitBytes, ...before === null ? {} : { expectedActor: before.githubId } }) catch (failure) => ({ failure })
+    actorHeld = before.githubId
+    const answered = call(emailPreference, {}, { limitBytes: emailLimitBytes, expectedActor: before.githubId }) catch (failure) => ({ failure })
     if (!current(mine)) return
     if ("failure" in answered) {
       const status = statusOf(answered.failure)
@@ -155,7 +159,6 @@ export const emailLayer = Layer.effect(EmailPreferences, effect {
       return try settle(mine, { status: "failed", message })
     }
     if (!validPreference(answered)) return try settle(mine, { status: "failed", message: emailMessages.invalid })
-    if (before === null) return try settle(mine, { status: "failed", message: emailMessages.accountCheck })
     const after = session.current() catch (failure) => ({ failure })
     if (!current(mine)) return
     if (after !== null && "failure" in after) return try settle(mine, { status: "failed", message: after.failure.message })

@@ -11,8 +11,9 @@ import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
 import { Notices } from "@repo/ports/operations";
 import type { Driver, Options } from "../../gen/settlement__monthlySettlement.conformance.ts";
 import type { Award, Escrow } from "../../gen/settlement__escrow.ts";
-import { type Eligibility, type RevisionFact, noShareRecord } from "../../gen/settlement__monthly.ts";
-import { type Event, type MonthlySettlement, noCursor } from "../../gen/settlement__monthlySettlement.ts";
+import type { DecisionRecord } from "../../gen/settlement__maintainerShare.ts";
+import type { Eligibility, RevisionFact } from "../../gen/settlement__monthly.ts";
+import type { Event, MonthlySettlement } from "../../gen/settlement__monthlySettlement.ts";
 import { fromAmount, toAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { type MonthFacts, MonthlyFacts, manifestRelationships, sendMonth } from "../../src/monthly/store.vibe";
@@ -26,6 +27,8 @@ const SERVED: ReadonlySet<string> = new Set([NETWORK]);
 const START = 1793491200;
 const ZERO_REVISION: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] };
 const NO_ELIGIBILITY: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false, retired: false, vaultRegistered: false, networkServed: false, receiptPolicyActive: false, monthlyPoolReward: false };
+const NO_SHARE_RECORD: DecisionRecord = { period: 0, repositories: [], deciders: [], decisions: [], digest: "" };
+const NO_CURSOR: MonthlySettlement["cursor"] = { period: 0, root: "", leafCount: 0, position: 0, passed: [] };
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const tokens = new Map<string, string>();
@@ -108,7 +111,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: NO_ELIGIBILITY, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), scanned: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: noCursor, leaves: [] }, period: undefined };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), scanned: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: NO_CURSOR, leaves: [] }, period: undefined };
 };
 
 function initialEscrow(): Escrow {
@@ -174,7 +177,7 @@ const forStore = (w: World, event: Event) => {
   if (event.type === "propose") {
     const hex = sha(`snapshot:${event.snapshot.digest}`);
     w.digests.set(hex, event.snapshot.digest);
-    return { ...event, snapshot: { ...event.snapshot, digest: hex }, revision: stored(event.revision), basisPoints: 0, record: noShareRecord };
+    return { ...event, snapshot: { ...event.snapshot, digest: hex }, revision: stored(event.revision), basisPoints: 0, record: NO_SHARE_RECORD };
   }
   return event;
 };
@@ -336,14 +339,14 @@ const observed = async (w: World): Promise<MonthlySettlement> => {
   if (w.period === undefined) {
     return view({ month: { project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0, eligibility: w.facts.eligibility, revision: ZERO_REVISION,
       currentRevision: w.facts.current ?? ZERO_REVISION, cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0,
-      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0, reviewedOctober: false }, escrow: w.chain.escrow, headTime: w.chain.headTime, cursor: w.chain.cursor ?? noCursor, leaves: [...(w.chain.leaves ?? [])] });
+      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0, reviewedOctober: false }, escrow: w.chain.escrow, headTime: w.chain.headTime, cursor: w.chain.cursor ?? NO_CURSOR, leaves: [...(w.chain.leaves ?? [])] });
   }
   const settlement = await run(w, loadSettlement(keyOf(w)));
   const month = settlement.state.month;
   return view({
     escrow: projected(w.chain.escrow, settlement.place, settlement.state.escrow, month, w.scanned),
     headTime: w.chain.headTime,
-    cursor: w.chain.cursor ?? noCursor,
+    cursor: w.chain.cursor ?? NO_CURSOR,
     leaves: [...(w.chain.leaves ?? [])],
     month: {
       ...month,

@@ -77,7 +77,7 @@ effect function counts(world: World, githubId: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+  it.effect(`Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")`, () => effect {
     const world = (try Intake).world
     const anonymous = try promise(() => request(world, "/api/v1/security-submissions", { json: { projectId: "intake-fixture", idempotencyKey: "anonymous-key-0001", origin: "slop", report } }))
     const extra = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-fixture", idempotencyKey: "extra-key-00000001", origin: "slop", report, note: "x" } }))
@@ -237,7 +237,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Unavailable, stale or restricted intake keeps the draft and creates nothing; restricted reports wait for the owner (spec/security/intake.md, "A restricted project\'s new reports wait for an owner decision"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready")', () => effect {
+  it.effect(`Unavailable, stale or restricted intake keeps the draft and creates nothing; restricted reports wait for the owner (spec/security/intake.md, "A restricted project's new reports wait for an owner decision"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready")`, () => effect {
     const world = (try Intake).world
     const restricted = try submit(world, "restricted-key-00001", "intake-restricted", report, "5150")
     const blocked = try submit(world, "banned-key-000000001", "intake-fixture", report, banned)
