@@ -46,12 +46,11 @@ function githubOf(moved: boolean, reads: string[], direct = false) {
     graphql: (_query, variables, schema) => effect {
       const ids = variables.ids
       if (!Array.isArray(ids)) {
-        if (!direct) return try die("Missing exact source IDs")
         return try orDie(Schema.decodeUnknownEffect(schema)({
           repository: { id: nodeId, nameWithOwner: repository, isPrivate: false, pullRequests: {
             totalCount: 2, nodes: [
               { ...original, headRefOid: original.headSha, mergeCommit: { oid: acceptedSha } },
-              { ...carrier, headRefOid: carrier.headSha, mergeCommit: { oid: "9".repeat(40) } },
+              { ...carrier, headRefOid: carrier.headSha, mergeCommit: { oid: direct ? "9".repeat(40) : acceptedSha } },
             ], pageInfo: { hasNextPage: false, endCursor: null },
           } },
         }))
@@ -240,6 +239,20 @@ function groupGithub(reads: string[], outside = false, archiveChange?: "identity
     },
   })
 }
+
+it.effect('A sibling-only correction refuses pairwise proof for a merge with another sibling (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+  provide groupGithub([]) {
+    const checked = (_request: NativeCarrierRequest) => effect { return proof }
+    const extra = verifyNativeCarrierRecipients({ ...groupPacket, recipientCorrections: [correction] }, integrationBranch, checked) catch (error) =>
+      error._tag === "ReviewedRefused" ? error.message : error._tag
+    const omitted = verifyNativeCarrierRecipients(packet, integrationBranch, checked) catch (error) =>
+      error._tag === "ReviewedRefused" ? error.message : error._tag
+    try Effect.try(() => {
+      assert.equal(extra, "Native carrier with multiple siblings requires a linked native source proof")
+      assert.equal(omitted, "Same-terminal source is outside the exact reviewed census")
+    })
+  }
+})
 
 it.effect('A linked carrier verifies its complete official membership including unchanged sibling awards (spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights")', () => effect {
   const reads: string[] = []

@@ -233,8 +233,9 @@ export effect function verifyNativeCarrierRecipients<E = never, R = never, G = n
     return correction.nativeCarrierSourceId === undefined && source !== undefined && directlyIntegrated(source) &&
       matchingScopes(packet, correction).some((candidate) => candidate.kind === "pull-request")
   })
+  const hasNativeCarrier = corrections.some(({ nativeCarrierSourceId }) => nativeCarrierSourceId !== undefined)
   let merged: ReadonlyArray<RepositoryMerge> = []
-  if (directGroups.size > 0 || directOrdinary) {
+  if (hasNativeCarrier || directOrdinary) {
     const terminals = new Set([...observed.values()].filter(directlyIntegrated).map(({ mergeCommit }) => mergeCommit.oid))
     merged = try mergedRepositorySources(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId)
     try require(merged.every((source) => source.acceptedSha !== null), "Same-terminal membership is incomplete")
@@ -279,10 +280,12 @@ export effect function verifyNativeCarrierRecipients<E = never, R = never, G = n
     const key = nativeCarrierCorrectionKey(correction)
     if (!nonDirectMerge || original === undefined || carrier === undefined || originalCensus === undefined || carrierCensus === undefined ||
       carrier.repository.databaseId !== original.repository.databaseId || carrier.mergeCommit.oid !== original.mergeCommit.oid ||
-      parents.length !== 2 || parents[1] !== carrier.headRefOid || carrierCensus.mergedAt > originalCensus.mergedAt ||
+      !directlyIntegrated(carrier) || JSON.stringify(carrier.mergeCommit.parents) !== JSON.stringify(original.mergeCommit.parents) ||
+      carrierCensus.mergedAt > originalCensus.mergedAt ||
       selected.has(key) || !heldOrdinaryScope(packet, correction) || integrationBranch === undefined || integrationBranch === "" || verify === undefined) {
       throw refusal("Native carrier recipient proof is unavailable or changed")
     }
+    try require(sameTerminal(observed, carrier.mergeCommit.oid).length === 2, "Native carrier with multiple siblings requires a linked native source proof")
     selected.set(key, try verify({
       repository: packet.sourceAudit.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, repositoryDatabaseId: original.repository.databaseId,
       integrationBranch, original: originalCensus, carrier: carrierCensus, acceptedSha: original.mergeCommit.oid,
