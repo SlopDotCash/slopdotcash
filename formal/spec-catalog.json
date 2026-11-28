@@ -15120,22 +15120,22 @@
     },
     {
       "path": "spec/operations/escrowQualification.md",
-      "sha256": "5a0565e98cd3bb1f3921134fcba495ee22c5fa4fc4d9a1e086e64eff9e26205c",
+      "sha256": "36c5dc5a52e4b5fd03ef841b1242ce8075d3325ad64a4505270cbe1fbd41e57d",
       "module": "operations__escrowQualification",
       "stories": [
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope",
-          "line": 17
+          "line": 30
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls",
-          "line": 205
+          "line": 218
         }
       ],
       "rules": [
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization",
-          "line": 19,
+          "line": 32,
           "definitions": [
             "Network",
             "QualificationPhase",
@@ -15168,7 +15168,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation",
-          "line": 75,
+          "line": 88,
           "definitions": [
             "fresh",
             "allowedOperation",
@@ -15186,7 +15186,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Missing or mismatched evidence holds the attempt, and finalized failure stops further actions",
-          "line": 112,
+          "line": 125,
           "definitions": [
             "canMissReceipt",
             "missReceipt",
@@ -15210,7 +15210,7 @@
         },
         {
           "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Completed lanes do not repeat, and Ethereum requires both shared EVM qualifications and its own evidence",
-          "line": 159,
+          "line": 172,
           "definitions": [
             "ActivationEvidence",
             "canCompleteLane",
@@ -15235,7 +15235,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Native and Token-2022 qualification requires the whole asset flow and a reviewed authorization for the particular action",
-          "line": 207,
+          "line": 220,
           "definitions": [
             "TokenFacts",
             "AssetChecks",
@@ -15249,7 +15249,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization",
-          "line": 239,
+          "line": 252,
           "definitions": [
             "SolanaUpgradeEvidence",
             "ExistingSolanaStep",
@@ -15264,7 +15264,7 @@
         },
         {
           "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Sample plans, receipts and checks cover the allowed progression and conflicting evidence",
-          "line": 266,
+          "line": 279,
           "definitions": [
             "planValues",
             "evidenceValues",
@@ -15303,8 +15303,12 @@
       ],
       "references": [
         {
+          "target": "../settlement/attesterActivation.md",
+          "line": 24
+        },
+        {
           "target": "../settlement/money.md",
-          "line": 212
+          "line": 225
         }
       ]
     },
