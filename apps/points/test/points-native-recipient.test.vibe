@@ -191,22 +191,23 @@ const groupPacket = {
 }
 const carrierProof = { ...proof, claimIds: ["7".repeat(64)] }
 
-function groupGithub(reads: string[], outside = false, changedArchive = false) {
+function groupGithub(reads: string[], outside = false, archiveChange?: "identity" | "terminal") {
   const sources = [original, carrier, sibling, ...(outside ? [foreign] : [])]
   const otherMerges = [late, tied, retired, early]
+  const event = archiveChange === "terminal" ? { ...archiveEvent, commit_id: acceptedSha, commit_url: `${archiveApi}/commits/${acceptedSha}` } : archiveEvent
   const unsupported = () => die("Unexpected GitHub method")
   return Layer.succeed(GitHub, {
     bytes: unsupported, send: unsupported, status: unsupported,
     pages: (path, schema) => effect {
       if (path !== `${archiveRoot}/issues/${archivedLate.number}/timeline`) return try die("Unexpected archive timeline")
       reads.push("archive timeline")
-      return try orDie(Schema.decodeUnknownEffect(Schema.Array(schema))([{ event: "closed" }, archiveEvent]))
+      return try orDie(Schema.decodeUnknownEffect(Schema.Array(schema))([{ event: "closed" }, event]))
     },
     json: (path, schema) => effect {
       if (path !== `${archiveRoot}/issues/events/${archiveEvent.id}`) return try die("Unexpected archive event")
       reads.push("archive event")
-      return try orDie(Schema.decodeUnknownEffect(schema)({ ...archiveEvent, issue: {
-        node_id: changedArchive ? "PR_different" : archivedLate.id, number: archivedLate.number, state: "closed",
+      return try orDie(Schema.decodeUnknownEffect(schema)({ ...event, issue: {
+        node_id: archiveChange === "identity" ? "PR_different" : archivedLate.id, number: archivedLate.number, state: "closed",
         url: `${archiveApi}/issues/${archivedLate.number}`, html_url: archiveUrl, repository_url: archiveApi,
         pull_request: { html_url: archiveUrl, url: `${archiveApi}/pulls/${archivedLate.number}`, merged_at: archivedLate.mergedAt },
       } }))
@@ -333,10 +334,17 @@ it.effect('A removed later approval must retain its official issue identity and 
       }])
     })
   }
-  provide groupGithub([], false, true) {
+  provide groupGithub([], false, "identity") {
     const rival = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
     try Effect.try(() => {
       assert.equal(rival, "ReviewedRefused")
+      assert.equal(requests.length, 1)
+    })
+  }
+  provide groupGithub([], false, "terminal") {
+    const omitted = verifyNativeCarrierRecipients(groupPacket, integrationBranch, undefined, verify, context) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.equal(omitted, "ReviewedRefused")
       assert.equal(requests.length, 1)
     })
   }

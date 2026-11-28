@@ -91,7 +91,7 @@ effect function archivedApproval(repository: string, sourceId: string, sourceUrl
 }
 
 export effect function earlierPositiveOf(projectId: string, repository: string, baseline: NativeCarrierBaseline,
-  merged: ReadonlyArray<RepositoryMerge>, terminalSources: ReadonlyArray<AuditedSource>) {
+  merged: ReadonlyArray<RepositoryMerge>, acceptedSha: string, terminalSources: ReadonlyArray<AuditedSource>) {
   const through = terminalSources.reduce((latest, source) => source.mergedAt > latest ? source.mergedAt : latest, "")
   const memberIds = new Set(terminalSources.map(({ id }) => id))
   const official = new Map(merged.map((source) => [source.id, source] as const))
@@ -111,6 +111,7 @@ export effect function earlierPositiveOf(projectId: string, repository: string, 
     if (source === undefined && shares.every(({ award }) => isIso(award.occurredAt) && award.occurredAt > through)) {
       source = try archivedApproval(repository, id, shares[0]?.award.sourceUrl ?? "", officialNumbers)
     }
+    if (source?.acceptedSha === acceptedSha) throw refusal("A positive Points source is missing from same-terminal membership")
     if (source === undefined || source.acceptedSha === null || !shares.every(({ award }) =>
       isIso(award.occurredAt) && award.occurredAt === source.mergedAt && award.sourceUrl === pullUrl(repository, source.number) &&
       Number.isSafeInteger(award.amount) && award.amount >= 0)) {

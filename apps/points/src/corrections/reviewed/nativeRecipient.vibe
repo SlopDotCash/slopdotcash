@@ -171,7 +171,7 @@ effect function correctedGroup<E, R>(packet: NativeCorrectionScope, direct: Pack
     sameTerminalSources.push(census)
   }
 
-  const earlierPositive = try earlierPositiveOf(packet.projectId, packet.sourceAudit.repository, baseline, merged, sameTerminalSources)
+  const earlierPositive = try earlierPositiveOf(packet.projectId, packet.sourceAudit.repository, baseline, merged, acceptedSha, sameTerminalSources)
   const verified = try verify({
     carrier: { repository: packet.sourceAudit.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, repositoryDatabaseId: carrier.repository.databaseId,
       integrationBranch, original: directCensus, carrier: directCensus, acceptedSha },
