@@ -79,7 +79,7 @@ function legacyEvmSetting(record: Readonly<Record<string, unknown>>): OwnedSlot 
   if (typeof wallet !== "string" || !evmAddressPattern.test(wallet) || typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36 || typeof cap !== "string" || !settingCapPattern.test(cap) || typeof enabled !== "boolean" || (enabled && cap === "0")) return undefined;
   if (hashSource !== undefined && (record.hash === null || (hashSource !== "wallet" && hashSource !== "recovery"))) return undefined;
   const plan = planOf(planText({ kind: "evmSetting", from: wallet.toLowerCase(), cap, enabled }));
-  return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, false), hashSource !== "wallet");
+  return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, false), hashSource === "recovery");
 }
 
 /** @throws {never} */
