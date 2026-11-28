@@ -474,7 +474,7 @@ export const driver = {
       assert.deepEqual(passed.kept, [true]);
       const stopped = await checkDriver(`${driver}\nprocess.on("exit", () => process.kill(process.pid, "SIGKILL"));`);
       assert.equal(stopped.result[0], false, stopped.result.join("\n"));
-      assert.match(stopped.result[3] ?? "", /did not finish: node was killed by SIGKILL[\s\S]*"summary":"1 walks of seed 1"/);
+      assert.match(stopped.result[3] ?? "", /did not finish: node was killed by SIGKILL[\s\S]*"summary":"1 model paths?, 1 walks of seed 1/);
       assert.deepEqual(stopped.kept, [false]);
       const unstable = await checkDriver(`let firstDispatch = true;\n${driver.replace(
         "dispatch() {",
