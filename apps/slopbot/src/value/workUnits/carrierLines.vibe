@@ -145,7 +145,7 @@ function blameMatches(row: LineOrigin | undefined, edit: string): row is LineOri
   return row !== undefined && row.contents === (edit.endsWith("\n") ? edit.slice(0, -1) : edit)
 }
 
-function literalPath(path: string) {
+export function literalPath(path: string) {
   return path !== "" && !path.includes("\0") && !path.includes("\n") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
 }
 
@@ -178,6 +178,33 @@ effect function blameOf(directory: string, sha: string, path: string, needed: Re
     throw new CarrierLineProofUnavailable({ reason: unavailable })
   }
   return rows
+}
+
+interface CarrierPathEdge {
+  readonly sha: string
+  readonly parentSha: string
+}
+
+export effect function carrierAliasIngress(directory: string, path: string, canonical: CarrierPathEdge, ingress: CarrierPathEdge, laterIngress: CarrierPathEdge) {
+  const edits = try editsOf(directory, canonical.parentSha, canonical.sha, path)
+  const signed = (value: Edits) => JSON.stringify([[...value.additions.values()], [...value.deletions.values()]])
+  const first = try editsOf(directory, ingress.parentSha, ingress.sha, path)
+  const later = try editsOf(directory, laterIngress.parentSha, laterIngress.sha, path)
+  if (edits.additions.size + edits.deletions.size === 0 || signed(edits) !== signed(first) || signed(edits) === signed(later)) return false
+  const added = try blameOf(directory, ingress.sha, path, first.additions)
+  const originalDeleted = try blameOf(directory, canonical.parentSha, path, edits.deletions)
+  const ingressDeleted = try blameOf(directory, ingress.parentSha, path, first.deletions)
+  const expectedAdditions = [...edits.additions.keys()]
+  for (const [index, position] of [...first.additions.keys()].entries()) {
+    const origin = added.get(position)
+    if (origin === undefined || origin.sha !== canonical.sha || origin.path !== path || origin.number !== expectedAdditions[index]) return false
+  }
+  const expectedDeletions = [...edits.deletions.keys()].map((position) => originalDeleted.get(position))
+  return [...first.deletions.keys()].every((position, index) => {
+    const before = expectedDeletions[index]
+    const current = ingressDeleted.get(position)
+    return before !== undefined && current !== undefined && sourceLine(before) === sourceLine(current)
+  })
 }
 
 effect function carrierPathLines(directory: string, request: CarrierLineRequest, path: string, candidates: ReadonlyArray<CarrierOrdinaryChange>) {

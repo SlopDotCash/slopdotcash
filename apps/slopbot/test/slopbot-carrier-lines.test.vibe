@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
 import { gitText, systemGit } from "@repo/platform/git"
+import { verifyCarrierAlias } from "../src/value/workUnits/carrierAlias.vibe"
 import { carrierPatchLines, verifyCarrierLines } from "../src/value/workUnits/carrierLines.vibe"
 
 const gitServices = Layer.mergeAll(NodeServices.layer, systemGit)
@@ -22,11 +23,11 @@ effect function openGit() {
   return root
 }
 
-effect function commit(root: string, data: string) {
+effect function commit(root: string, data: string, message = "Change source") {
   const path = try Path.Path
   try (try FileSystem.FileSystem).writeFileString(path.join(root, "source.txt"), data)
   try command(root, "add", "source.txt")
-  try command(root, "commit", "-qm", "Change source")
+  try command(root, "commit", "-qm", message)
   return try command(root, "rev-parse", "HEAD")
 }
 
@@ -74,6 +75,73 @@ it.effect("Competing deletions are unresolved even when both commits reach the a
         path: "source.txt", additions: 1, deletions: 1, unresolvedAdditions: 0, unresolvedDeletions: 1,
         claims: [{ sha: second, additions: 1, deletions: 0 }],
       }])
+    })
+  }
+}, 30_000)
+
+effect function nativeHistory(root: string, baseSha: string, headSha: string) {
+  const rows = try command(root, "rev-list", "--parents", headSha, "^" + baseSha)
+  const commits = rows.split("\n").map((row) => {
+    const [sha = "", ...parents] = row.split(" ")
+    return { sha, parents, author: { nodeId: "MDQ6VXNlcjM4MjUwNTA=", type: "User" }, attributionDigest: "a".repeat(64) }
+  })
+  return { baseSha, headSha, commitCount: commits.length, commits }
+}
+
+it.effect('Bind duplicate edits to the first actual carrier ingress (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+  provide gitServices {
+    const root = try openGit()
+    const base = try commit(root, "top\nprior\nbottom\n")
+    try command(root, "switch", "-qc", "original")
+    const canonical = try commit(root, "top\noriginal\nbottom\n", "Original edit")
+    try command(root, "switch", "-qc", "repeat", base)
+    const repeated = try commit(root, "top\noriginal\nbottom\n", "Copy the edit")
+    const followUp = try commit(root, "top\noriginal\nbottom\nindependent\n")
+    try command(root, "switch", "-qc", "carrier", base)
+    try command(root, "merge", "--no-ff", "-qm", "First ingress", "original")
+    const firstIngress = try command(root, "rev-parse", "HEAD")
+    try command(root, "merge", "--no-ff", "-qm", "Later ingress", "repeat")
+    const laterIngress = try command(root, "rev-parse", "HEAD")
+    try command(root, "switch", "-q", "main")
+    try command(root, "merge", "--no-ff", "-qm", "Accept carrier", "carrier")
+    const request = {
+      original: try nativeHistory(root, base, followUp),
+      carrier: try nativeHistory(root, base, laterIngress),
+      acceptedSha: try command(root, "rev-parse", "HEAD"),
+      path: "source.txt",
+      commitShas: [canonical, repeated] as const,
+    }
+    const proof = try verifyCarrierAlias(root, request)
+    const changedActor = {
+      ...request.carrier,
+      commits: request.carrier.commits.map((row) => row.sha === canonical ? { ...row, author: { nodeId: "MDQ6VXNlcjUyOTkwMzE=", type: "User" } } : row),
+    }
+    const actorRefusal = verifyCarrierAlias(root, { ...request, carrier: changedActor }) catch (error) => error._tag
+    const patchRefusal = verifyCarrierAlias(root, { ...request, commitShas: [canonical, followUp] }) catch (error) => error._tag
+    const topologyRefusal = verifyCarrierAlias(root, { ...request, acceptedSha: firstIngress }) catch (error) => error._tag
+    try command(root, "switch", "-qc", "replay-carrier", firstIngress)
+    try commit(root, "top\nprior\nbottom\n", "Revert the original ingress")
+    try command(root, "merge", "--no-ff", "-qm", "Reapply with independent work", "repeat")
+    const replay = try nativeHistory(root, base, try command(root, "rev-parse", "HEAD"))
+    try command(root, "switch", "-qc", "replay-main", base)
+    try command(root, "merge", "--no-ff", "-qm", "Accept reapplied carrier", "replay-carrier")
+    const acceptedReplay = try command(root, "rev-parse", "HEAD")
+    const reapplication = verifyCarrierAlias(root, { ...request, carrier: replay, acceptedSha: acceptedReplay }) catch (error) => error._tag
+    try command(root, "switch", "-qc", "third", base)
+    try commit(root, "top\noriginal\nbottom\n", "Third possible owner")
+    try command(root, "switch", "-qc", "ambiguous-carrier", laterIngress)
+    try command(root, "merge", "--no-ff", "-qm", "Third ingress", "third")
+    const ambiguous = try nativeHistory(root, base, try command(root, "rev-parse", "HEAD"))
+    try command(root, "switch", "-qc", "ambiguous-main", base)
+    try command(root, "merge", "--no-ff", "-qm", "Accept ambiguous carrier", "ambiguous-carrier")
+    const acceptedAmbiguous = try command(root, "rev-parse", "HEAD")
+    const ambiguity = verifyCarrierAlias(root, { ...request, carrier: ambiguous, acceptedSha: acceptedAmbiguous }) catch (error) => error._tag
+    try Effect.try(() => {
+      assert.deepEqual(
+        [proof.path, proof.canonicalSha, proof.repeatedSha, proof.actorNodeId, proof.canonicalIngressSha, proof.repeatedIngressSha],
+        ["source.txt", canonical, repeated, "MDQ6VXNlcjM4MjUwNTA=", firstIngress, laterIngress],
+      )
+      assert.deepEqual([actorRefusal, patchRefusal, topologyRefusal, reapplication, ambiguity], Array(5).fill("CarrierLineProofUnavailable"))
     })
   }
 }, 30_000)
