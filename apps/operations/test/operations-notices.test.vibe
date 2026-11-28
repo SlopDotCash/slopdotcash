@@ -65,7 +65,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Layer.mergeAll(Started, noticePorts, webCrypto, clock.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Save each notice once with its source change, and follow the account\'s email enrollment (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Follow the account\'s email enrollment and closure"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure suppresses every waiting notice of the account in the same write")', () => effect {
+  it.effect(`Save each notice once with its source change, and follow the account's email enrollment (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure suppresses every waiting notice of the account in the same write")`, () => effect {
     const db = try D1
     const notices = try Notices
     const first = [notice("wallet-claim:journey-1", "WalletChanged"), notice("payout-held:journey-1", "PayoutHeld")]

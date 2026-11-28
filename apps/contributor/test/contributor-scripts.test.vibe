@@ -28,7 +28,7 @@ it.effect.skipIf(!posix)('A launched GitHub child keeps the discovery lock throu
   try Effect.tryPromise(() => anUnpublishedChildStaysProtectedAfterHelperDeath())
 }, slow)
 
-it.effect.skipIf(!posix)('Only the current owner\'s live handle starts a helper (spec/contributor/discoveryLock.md, "Only the current owner\'s live handle starts a helper, and startup checks the owner again"; spec/contributor/discoveryLock.md, "Acquisition scans for a clear lock under a guard that excludes startup")', () => effect {
+it.effect.skipIf(!posix)(`Only the current owner's live handle starts a helper (spec/contributor/discoveryLock.md, "Only the current owner's live handle starts a helper, and startup checks the owner again"; spec/contributor/discoveryLock.md, "Acquisition scans for a clear lock under a guard that excludes startup")`, () => effect {
   try Effect.tryPromise(() => aStaleHelperCannotLaunchWhileASuccessorScans())
   try Effect.try(() => aReleasedHandleRefusesBeforeLaunching())
 }, slow)

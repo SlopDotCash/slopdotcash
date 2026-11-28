@@ -178,7 +178,7 @@ layer(ingressArea({ SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "true" }), { excludeTestSe
     })
   })
 
-  it.effect('Installation changes apply in GitHub\'s order and only an applied loss notifies the owners (spec/slopbot/installation.md, "Story: Apply installation changes in GitHub\'s order"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/installation.md, "Only an applied removal or suspension notifies the project owners"; spec/slopbot/installation.md, "Every Slopbot effect requires an active installation")', () => effect {
+  it.effect(`Installation changes apply in GitHub's order and only an applied loss notifies the owners (spec/slopbot/installation.md, "Story: Apply installation changes in GitHub's order"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/installation.md, "Only an applied removal or suspension notifies the project owners"; spec/slopbot/installation.md, "Every Slopbot effect requires an active installation")`, () => effect {
     const area = try Area
     try prepared(area)
     const state = area.sql("SELECT suspended_at IS NOT NULL AS suspended, removed_at IS NOT NULL AS removed, source_updated_at FROM slopbot_installations WHERE installation_id = 9100")

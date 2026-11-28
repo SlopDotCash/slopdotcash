@@ -176,7 +176,7 @@ effect function sqlRefusal(text: string) {
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('A member chooses, replaces and reuses referral names, and a followed link opens the project form for the current active name (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")', () => effect {
+  it.effect(`A member chooses, replaces and reuses referral names, and a followed link opens the project form for the current active name (spec/backend/referralCodes.md, "Story: Choose a name for a member's referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")`, () => effect {
     const area = try Area
     const { github, net } = try World
     const alice = try member("41")
