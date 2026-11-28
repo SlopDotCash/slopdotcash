@@ -53,12 +53,16 @@ effect function poolsOf(row: Row | undefined, snapshot: string, groups: Reviewed
 }
 
 export effect function holdProtected(store: Store, known: ReadonlySet<string>, protection: Protection, groups: ReviewedMergeGroups = new Map()) {
+  const unseen = store.revisions.filter((row) => !known.has(row.id))
+  if (unseen.length === 0) return 0
+  const predecessors = new Set(unseen.map((row) => row.previous))
   const numbers = new Map(store.revisions.map((row, position) => [row.id, position + 1]))
   const byId = new Map(store.revisions.map((row) => [row.id, row] as const))
   const candidates: CandidateRevision[] = []
   const published: CandidateRevision[] = []
   for (const row of store.revisions) {
     const fresh = !known.has(row.id)
+    if (!fresh && !predecessors.has(row.id)) continue
     const previous = row.previous === null ? undefined : byId.get(row.previous)
     const candidate = {
       id: numbers.get(row.id) ?? 0,
@@ -69,8 +73,8 @@ export effect function holdProtected(store: Store, known: ReadonlySet<string>, p
       occurredAt: try instant(row.award.occurredAt),
       pools: fresh ? [...(try poolsOf(row, row.sourceDigest, groups)), ...(try poolsOf(previous, row.sourceDigest, groups))] : [],
     } satisfies CandidateRevision
-    candidates.push(candidate)
-    if (!fresh) published.push(candidate)
+    if (fresh) candidates.push(candidate)
+    else published.push(candidate)
   }
   const held = new Set(heldRevisions(published, protection, candidates))
   if (held.size === 0) return 0
