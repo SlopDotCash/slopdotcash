@@ -45,6 +45,9 @@ export function nextStep(results: Result[]): string {
   const first = results.find((r) => !r.ok && r.stage !== "review");
   const about = first?.where ? ` (${first.where})` : "";
   if (first) {
+    if (first.stage === "traces" && first.detail.trimStart().startsWith("unstable conformance to ")) {
+      return `${first.stage}${about} is the first ✗. Investigate the initial mismatch and rerun pnpm check`;
+    }
     const what: Record<string, string> = {
       model: "fix the spec where the model stage points",
       always: "read the trace: fix the model, or add the rule that forbids it",

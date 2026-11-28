@@ -514,12 +514,12 @@ export function planModel<S, E>(
  * first probe that fails.
  */
 export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V> = {}) {
-  const { differ, run, fail, seen, outcomes, acceptedTransitions, refusedTransitions, keys, walks, steps, seed } = runner(oracle, found, driver, options);
+  const { run, verify, seen, outcomes, acceptedTransitions, refusedTransitions, keys, walks, steps, seed } = runner(oracle, found, driver, options);
   const ranTraces = new Set<string>();
   for (const j of found.journeys) {
     const trace: Trace<E> = j.events.map((e) => [keys[0], e]);
     ranTraces.add(JSON.stringify(j.events));
-    if (await differ(trace)) await fail(`journey "${j.story}" / "${j.rule}"`, trace);
+    await verify(`journey "${j.story}" / "${j.rule}"`, trace);
   }
   const plan = options.paths === false ? undefined : planModel(oracle, found.events, found.shape, {
     strategy: options.paths ?? "transitions",
@@ -535,7 +535,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     ranTraces.add(key);
     executedPlans++;
     const trace: Trace<E> = modelPath.events.map((e) => [keys[0], e]);
-    if (await differ(trace)) await fail(`model path "${modelPath.description}"`, trace);
+    await verify(`model path "${modelPath.description}"`, trace);
   }
   const probes = driver.receive ? await probe(oracle, found, driver, keys[0], run, options.view, plan?.prefixForTransition) : 0;
   // A walk mostly takes events the spec allows, so that it reaches deep states, and sometimes any event, so that refusals are tried.
@@ -555,7 +555,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
       if (typeof after === "string") throw new Error(after);
       model.set(key, after.after);
     }
-    if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
+    await verify(`walk ${w + 1} of seed ${seed}`, trace);
   }
 
   const knownTransitions = [...new Set([...(found.transitions ?? []), ...found.events.map(eventTypeOf)])].sort();
@@ -588,8 +588,10 @@ export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, dri
   const gone = trace.find(([, { by, ...event }]) => oracle.parseEvent(event) === undefined || (found.sender ? oracle.parseSender?.(by) === undefined : by !== undefined));
   if (gone) throw new Error(`the spec has outgrown ${from}: ${show(gone[1])} is not one of its events now; bring the trace up to date, or delete it`);
   const why = await runner(oracle, found, driver, options).differ(trace);
-  if (why) throw new ConformanceError(`conformance to ${found.source}: ${from}, replayed, ${trace.length} events:\n${lines(trace)}\n${why}`, trace, options.seed ?? 1, "replay");
+  if (why) throw new ConformanceError(`conformance to ${found.source}: ${from}, replayed, ${trace.length} events:\n${lines(trace)}\n${why.detail}`, trace, options.seed ?? 1, "replay");
 }
+
+type Disagreement = { readonly detail: string; readonly summary: string };
 
 /**
  * Each kind of event, after the shortest journey prefix that allows it: malformed, it must be refused and change
@@ -597,7 +599,7 @@ export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, dri
  * the application copies what it decodes (SPEC.md, "Using the generated code"). Returns how many were sent.
  */
 async function probe<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, key: string,
-  run: (trace: Trace<E>) => Promise<Map<string, S> | string>, view?: (state: S) => V,
+  run: (trace: Trace<E>) => Promise<Map<string, S> | Disagreement>, view?: (state: S) => V,
   prefixForTransition?: ReadonlyMap<string, { readonly prefix: readonly Sent<E>[]; readonly event: Sent<E> }>) {
   const prefixes: Sent<E>[][] = [[], ...found.journeys.flatMap((j) => j.events.map((_, i) => j.events.slice(0, i + 1)))];
   const after = (prefix: Sent<E>[]) => prefix.reduce<S>((s, { by, ...e }) => { const t = transition(oracle, found, s, e, by); return typeof t === "string" ? s : t.after; }, oracle.initial);
@@ -611,7 +613,7 @@ async function probe<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Dri
       : prefixes.flatMap((p) => samples.filter(({ by, ...e }) => oracle.enabled(after(p), e as E, by)).map((e) => [p, e] as const))[0] ?? [[], samples[0]] as const;
     const { by, ...event } = sample as Sent<E> & Record<string, unknown>;
     const model = await run(prefix.map((e) => [key, e]));
-    if (typeof model === "string") throw new Error(`conformance to ${found.source}: before probing ${type}: ${model}`);
+    if (!(model instanceof Map)) throw new Error(`conformance to ${found.source}: before probing ${type}: ${model.detail}`);
     let state: S = model.get(key)!;
     const fields = Object.keys(event).filter((f) => f !== "type");
     const malformed = [{ ...event, type: `${type}?` }, ...fields.flatMap((f) => [{ ...event, [f]: 1.5 }, { ...event, [f]: 2 ** 53 }, Object.fromEntries(Object.entries(event).filter(([g]) => g !== f))])];
@@ -652,53 +654,80 @@ function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E
   const refusedTransitions = new Set<string>();
 
   /** The first way the application differs from the spec along `trace`, or else the spec's state of each key after it. */
-  const run = async (trace: Trace<E>): Promise<Map<string, S> | string> => {
+  const run = async (trace: Trace<E>): Promise<Map<string, S> | Disagreement> => {
     await driver.reset();
     const model = new Map<string, S>();
     for (const key of keys) {
       const raw = await driver.observe(key);
       const problem = compareObservation(oracle, found, oracle.initial, raw, view);
-      if (problem) return `initial ${key}: ${problem}`;
+      if (problem) return {
+        detail: `initial ${key}: ${problem}`,
+        summary: "during reset, where the observed initial state differed from the model",
+      };
       model.set(key, oracle.initial);
     }
     for (const [i, [key, sent]] of trace.entries()) {
       const at = `event ${i + 1}, ${key} ${show(sent)}`;
+      const mismatch = (summary: string, detail = summary): Disagreement => ({
+        detail: `${at}: ${detail}`,
+        summary: `at event ${i + 1}, where ${summary}`,
+      });
       const { by, ...rawEvent } = sent as Sent<E> & Record<string, unknown>;
       const before = model.get(key)!;
       const applied = transition(oracle, found, before, rawEvent, by);
-      if (typeof applied === "string") return `${at}: ${applied}`;
+      if (typeof applied === "string") return mismatch("the oracle could not apply the event", applied);
       const { event, allowed, after, out } = applied;
       const did = await driver.dispatch(key, event, by);
-      if (did !== "accepted" && did !== "refused") return `${at}: dispatch returned ${show(did)}; it returns "accepted" or "refused" and throws otherwise`;
+      if (did !== "accepted" && did !== "refused") return mismatch(
+        "the driver returned an invalid dispatch result",
+        `dispatch returned ${show(did)}; it returns "accepted" or "refused" and throws otherwise`,
+      );
       outcomes.add(did);
-      if (allowed !== (did === "accepted")) return `${at}: the spec ${allowed ? "allows" : "refuses"} it, the application ${did} it`;
+      if (allowed !== (did === "accepted")) return mismatch(
+        `the spec ${allowed ? "allowed" : "refused"} the event and the application ${did} it`,
+        `the spec ${allowed ? "allows" : "refuses"} it, the application ${did} it`,
+      );
       if (allowed) acceptedTransitions.add(eventTypeOf(event));
       else refusedTransitions.add(eventTypeOf(event));
       if (found.outputShape && driver.observeOutput) {
         const actual = await driver.observeOutput(key);
-        if (canonical(actual, found.outputShape) !== canonical(out, found.outputShape)) return `${at}: emitted effects differ from the spec`;
+        if (canonical(actual, found.outputShape) !== canonical(out, found.outputShape)) return mismatch(
+          "emitted effects differed from the spec",
+          "emitted effects differ from the spec",
+        );
       }
       model.set(key, after);
       for (const [k, state] of model) {
         const raw = await driver.observe(k);
         const problem = compareObservation(oracle, found, state, raw, view);
-        if (problem) return `${at}: ${k} ${problem}`;
+        if (problem) return mismatch("the observed state differed from the model", `${k} ${problem}`);
         seen.add(canonical(raw, view ? "scalar" : found.shape));
       }
     }
     return model;
   };
-  const differ = async (trace: Trace<E>) => { const r = await run(trace); return typeof r === "string" ? r : undefined; };
-  /** Drop events while the disagreement stays: any subsequence is still a test, since the spec also says what is refused. */
-  const fail = async (what: string, trace: Trace<E>) => {
+  const differ = async (trace: Trace<E>) => { const r = await run(trace); return r instanceof Map ? undefined : r; };
+  /** Confirm a minimized trace before saving it. Keep the original if it still fails and the shrink does not. */
+  const verify = async (what: string, original: Trace<E>) => {
+    const first = await differ(original);
+    if (!first) return;
+    let trace = original;
     for (let i = trace.length - 1; i >= 0; i--) {
       const shorter = trace.toSpliced(i, 1);
       if (await differ(shorter)) trace = shorter;
     }
-    throw new ConformanceError(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines(trace)}\n${await differ(trace)}`, trace, seed, what);
+    let confirmed = await differ(trace);
+    let length = `shrunk to ${trace.length} events`;
+    if (!confirmed && trace !== original) {
+      trace = original;
+      confirmed = await differ(trace);
+      length = `original trace confirmed with ${trace.length} events`;
+    }
+    if (!confirmed) throw new Error(`unstable conformance to ${found.source}. The disagreement did not reproduce. First mismatch ${first.summary}.`);
+    throw new ConformanceError(`conformance to ${found.source}: ${what}, ${length}:\n${lines(trace)}\n${confirmed.detail}`, trace, seed, what);
   };
 
-  return { differ, run, fail, seen, outcomes, acceptedTransitions, refusedTransitions, keys, walks, steps, seed };
+  return { differ, run, verify, seen, outcomes, acceptedTransitions, refusedTransitions, keys, walks, steps, seed };
 }
 
 /** The state type, resolved by the generator so sets are sorted only in the variant that owns them. */

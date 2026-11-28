@@ -33,7 +33,7 @@ import { mirrorGen } from "./units.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
 import { explore, explored, pageInputs } from "./explore.ts";
 import { harnessFiles, search, simulate, simulation } from "./simulate.ts";
-import { acceptContracts, acceptReviews, NODE, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./pipeline.ts";
+import { acceptContracts, acceptReviews, NODE, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, nextStep, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./pipeline.ts";
 
 const project = path.join(import.meta.dirname, "..");
 isolatedInstalls();
@@ -425,6 +425,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(failure instanceof ConformanceError && failure.trace.length === 1 && /should be 0, but the application has 1/.test(failure.message), String(failure));
     await assert.rejects(replayTrace(domain, found, leaky, failure.trace), ConformanceError);
     await replayTrace(domain, found, counting, failure.trace);
+    const twice = { ...found, journeys: [{ story: "Count twice", rule: "Two increments", events: [{ type: "inc" }, { type: "inc" }] }] };
+    let resets = 0;
+    const unreliableShrink = {
+      ...counting,
+      reset: () => { resets++; counting.reset(); },
+      dispatch: (key: string) => {
+        // The first shrink fails once, while the original two events fail every time.
+        if (resets === 2 || states.get(key) === 1) return "refused" as const;
+        return counting.dispatch(key);
+      },
+    };
+    const recovered = await conformanceCheck(domain, twice, unreliableShrink, { paths: false, walks: 0 }).catch((e: unknown) => e);
+    assert.ok(recovered instanceof ConformanceError && recovered.trace.length === 2, String(recovered));
+    assert.match(recovered.message, /original trace confirmed with 2 events/);
+    await assert.rejects(replayTrace(domain, twice, unreliableShrink, recovered.trace), ConformanceError);
     assert.equal(departure(domain, found, [{ state: 0 }, { event: { type: "inc" }, state: 1 }]), undefined);
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
@@ -459,8 +474,19 @@ export const driver = {
       assert.deepEqual(passed.kept, [true]);
       const stopped = await checkDriver(`${driver}\nprocess.on("exit", () => process.kill(process.pid, "SIGKILL"));`);
       assert.equal(stopped.result[0], false, stopped.result.join("\n"));
-      assert.match(stopped.result[3] ?? "", /did not finish: node was killed by SIGKILL[\s\S]*"summary":"1 walks of seed 1"/);
+      assert.match(stopped.result[3] ?? "", /did not finish: node was killed by SIGKILL[\s\S]*"summary":"1 model paths?, 1 walks of seed 1/);
       assert.deepEqual(stopped.kept, [false]);
+      const unstable = await checkDriver(`let firstDispatch = true;\n${driver.replace(
+        "dispatch() {",
+        'dispatch() { if (firstDispatch) { firstDispatch = false; return "refused"; }',
+      )}`);
+      assert.equal(unstable.result[0], false, unstable.result.join("\n"));
+      assert.match(unstable.result[2], /the disagreement did not reproduce/);
+      assert.match(unstable.result[3] ?? "", /First mismatch at event 1, where the spec allowed the event and the application refused it/);
+      assert.doesNotMatch(unstable.result[3] ?? "", /Saved as|\{"type":/);
+      assert.ok(!fs.existsSync(path.join(root, "test/counterexamples/counter")));
+      assert.deepEqual(unstable.kept, [false]);
+      assert.match(nextStep([{ ok: false, stage: "traces", summary: unstable.result[2], detail: unstable.result[3] ?? "" }]), /Investigate the initial mismatch/);
       const disagreement = await checkDriver(driver.replace("return state;", "return state + 1;"));
       assert.equal(disagreement.result[0], false, disagreement.result.join("\n"));
       assert.match(disagreement.result[2], /the program departs from the spec/);
@@ -4363,6 +4389,49 @@ assert.equal((await other).status, 0);
     }
   });
 }
+
+test("conformance requires a valid terminal verdict from its driver child", async () => {
+  const root = oneRule("counter", "Count", "pure val initial: int = 0\npure def canInc(n: int): bool = n < 2\npure def inc(n: int): int = n + 1");
+  const spec = parseSpec(root, "spec/counter.md"), model = await gen(root, spec);
+  const domain = await import(path.join(root, "gen/counter.ts"));
+  const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }]], []);
+  const machines = new Map([["counter", { domain, model, found }]]);
+  const file = path.join(root, "test/drivers/counter.ts");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "junction");
+  const driver = `let state = 0;
+export const options = { keys: ["counter"], walks: 1, steps: 1, paths: false };
+export const driver = {
+  reset() { state = 0; },
+  dispatch() { state++; return "accepted"; },
+  observe() { return state; },
+};`;
+  const checkDriver = async (source: string) => {
+    fs.writeFileSync(file, source);
+    const kept: boolean[] = [];
+    const [result] = await checkTraces(root, machines, {}, async (_, run, keep) => {
+      const value = await run();
+      kept.push(keep(value));
+      return value;
+    }, new Map());
+    return { result, kept };
+  };
+  const passed = await checkDriver(driver);
+  assert.ok(passed.result[0] && passed.result[2].includes("1 walks of seed 1"), passed.result.join("\n"));
+  assert.deepEqual(passed.kept, [true]);
+  const quiet = await checkDriver(driver.replace("walks: 1", "walks: 0"));
+  assert.equal(quiet.result[0], true, quiet.result.join("\n"));
+  assert.deepEqual(quiet.kept, [true]);
+  const blank = await checkDriver(driver.replace("reset() { state = 0; }", 'reset() { throw new Error(""); }'));
+  assert.equal(blank.result[0], false, blank.result.join("\n"));
+  assert.match(blank.result[2], /did not get as far as comparing/);
+  assert.match(blank.result[3] ?? "", /the driver failed without an error message/);
+  assert.deepEqual(blank.kept, [false]);
+  const failedExit = await checkDriver(`${driver}\nprocess.exitCode = 7;`);
+  assert.equal(failedExit.result[0], false, failedExit.result.join("\n"));
+  assert.match(failedExit.result[3] ?? "", /did not finish: exited with status 7/);
+  assert.deepEqual(failedExit.kept, [false]);
+});
 
 const LANES = Math.min(4, os.availableParallelism());
 const SHARDS = { [toolShards.a]: eachCheckA, [toolShards.b]: eachCheckB };
