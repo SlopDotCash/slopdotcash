@@ -10255,7 +10255,7 @@
     },
     {
       "path": "spec/fees/submissionFeeStandingDeposits.md",
-      "sha256": "c2538ab4247529c7223fc1193dfd75fded87b2f01cd97ce20ed86894b76f51c4",
+      "sha256": "eedf28dd61acf23f8ab72cb49177be3389f0e0aac0791841f38c3ce8f20bfb60",
       "module": "fees__submissionFeeStandingDeposits",
       "stories": [
         {

@@ -630,6 +630,65 @@ layer(World, { timeout: "240 seconds" })((it) => {
     })
   })
 
+  it.effect('A keep-fee label added after the 21-day window of a covered pull request starts no strike, a label added inside it still does, and an unreadable addition time decides nothing and is read again a day later (spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
+    const { fees } = try FeeWorld
+    const tCheck = Date.parse("2026-11-26T00:00:00.000Z")
+    const closedAt = Date.parse("2026-11-10T00:00:00.000Z")
+    const lateMark = try opened("Closed in its window, marked after it", Date.parse("2026-11-02T00:00:00.000Z"))
+    const timelyMark = try opened("Closed and marked in its window", Date.parse("2026-11-02T00:00:00.000Z"))
+    for (const [number, markedAt] of [[lateMark, Date.parse("2026-11-25T00:00:00.000Z")], [timelyMark, Date.parse("2026-11-20T00:00:00.000Z")]] as const) {
+      try Effect.try(() => { fees.fake.world.pull(repo, number).state = "closed" })
+      fees.reports.set(number, { state: "closed", merged: false, closed_at: iso(closedAt) })
+      try keepMarked(number, markedAt)
+    }
+    const depositInsert = `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, withdraw_requested_at)
+      VALUES (?, ?, 1, ?, '755000000000000000000', '75.4717', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', 'robinhood-standing', ?, '2026-11-03T00:00:00.000Z')`
+    const coverInsert = `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'ada', 'widgets', '2026-11-02T00:00:00.000Z', '2026-11-02T00:00:00.000Z', '2026-11-02T00:00:00.000Z', 'watch', 1, NULL, '2026-11-09T00:00:00.000Z', '2026-11-08T00:00:00.000Z')`
+    try Effect.promise(() => fees.db.batch([
+      fees.db.prepare(depositInsert).bind("sd_late_mark", 9401, `0x${"9401".padStart(64, "0")}`, 9401),
+      fees.db.prepare(depositInsert).bind("sd_timely_mark", 9402, `0x${"9402".padStart(64, "0")}`, 9402),
+      fees.db.prepare(coverInsert).bind(repositoryId, lateMark, "sd_late_mark", 9401, projectId, installationId),
+      fees.db.prepare(coverInsert).bind(repositoryId, timelyMark, "sd_timely_mark", 9402, projectId, installationId),
+    ]))
+    const marks = effect () => {
+      const covers = (try Effect.promise(() => fees.db.prepare("SELECT deposit_id, state, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE deposit_id IN ('sd_late_mark', 'sd_timely_mark') ORDER BY deposit_id").all())).results
+      const deposits = (try Effect.promise(() => fees.db.prepare("SELECT id, outcome, outcome_reason FROM standing_deposits WHERE id IN ('sd_late_mark', 'sd_timely_mark') ORDER BY id").all())).results
+      return { covers, deposits }
+    }
+    fees.unreadLink = true
+    try at(tCheck, checkStandingDeposits())
+    fees.unreadLink = false
+    const unread = try marks()
+    try at(tCheck + day, checkStandingDeposits())
+    const read = try marks()
+    try at(tCheck + day + 48 * hour, checkStandingDeposits())
+    const afterGrace = try marks()
+    try same({ unread, read, afterGrace }, {
+      unread: {
+        covers: [
+          { deposit_id: "sd_late_mark", state: "watch", strike_seen_at: null, next_check_at: iso(tCheck + day) },
+          { deposit_id: "sd_timely_mark", state: "watch", strike_seen_at: null, next_check_at: iso(tCheck + day) },
+        ],
+        deposits: [{ id: "sd_late_mark", outcome: null, outcome_reason: null }, { id: "sd_timely_mark", outcome: null, outcome_reason: null }],
+      },
+      read: {
+        covers: [
+          { deposit_id: "sd_late_mark", state: "clear", strike_seen_at: null, next_check_at: null },
+          { deposit_id: "sd_timely_mark", state: "pending", strike_seen_at: iso(tCheck + day), next_check_at: iso(tCheck + day + 48 * hour) },
+        ],
+        deposits: [{ id: "sd_late_mark", outcome: "refund_due", outcome_reason: "withdrawn" }, { id: "sd_timely_mark", outcome: null, outcome_reason: null }],
+      },
+      afterGrace: {
+        covers: [
+          { deposit_id: "sd_late_mark", state: "clear", strike_seen_at: null, next_check_at: null },
+          { deposit_id: "sd_timely_mark", state: "strike", strike_seen_at: iso(tCheck + day), next_check_at: null },
+        ],
+        deposits: [{ id: "sd_late_mark", outcome: "refund_due", outcome_reason: "withdrawn" }, { id: "sd_timely_mark", outcome: "kept_due", outcome_reason: "strike" }],
+      },
+    })
+  })
+
   it.effect('One batch of covers whose pull requests cannot be read does not hold back the reading of the other covers or the refund that waits on them (spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes")', () => effect {
     const { fees } = try FeeWorld
     const tRun = Date.parse("2026-12-10T00:00:00.000Z")

@@ -129,11 +129,32 @@ export function standingDepositDue(
 }
 
 /** @throws {never} */
+export function coverMarkTimeNeeded(
+  cover: { readonly window_start: string; readonly state: StandingCoverState },
+  pull: StandingPullSnapshot,
+  nowMillis: number,
+): boolean {
+  const windowEnds = Date.parse(cover.window_start) + standingDepositStrikeWindowDays * dayMs;
+  const closedAt = Date.parse(pull.closed_at ?? "");
+  return cover.state === "watch" && pull.merged !== true && pull.state !== "open" && isValidDateMs(windowEnds) &&
+    closedAt <= windowEnds && nowMillis > windowEnds && (pull.labels ?? []).some((label) => label.name === keepFeeLabel);
+}
+
+/** @throws {never} */
 export function coverReading(
   cover: { readonly window_start: string; readonly state: StandingCoverState; readonly strike_seen_at: string | null },
   pull: StandingPullSnapshot,
   nowMillis: number,
+  keepMarkedAt: number | null = null,
 ): CoverReadingResult {
+  if (keepMarkedAt !== null && coverMarkTimeNeeded(cover, pull, nowMillis)) {
+    if (keepMarkedAt <= 0) {
+      return { state: cover.state, prOpen: 0, strikeSeenAt: null, nextCheckAt: new Date(nowMillis + dayMs).toISOString(), unreadableTime: null };
+    }
+    if (keepMarkedAt * 1000 > Date.parse(cover.window_start) + standingDepositStrikeWindowDays * dayMs) {
+      return coverReading(cover, { ...pull, labels: [] }, nowMillis);
+    }
+  }
   const merged = pull.merged === true;
   const open = pull.state === "open" && !merged;
   const closed = !open && !merged;

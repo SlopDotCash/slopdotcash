@@ -110,7 +110,10 @@ the standing deposit covers it. Closing a covered pull request within its
 21-day window with the maintainer keep-fee label starts a 48-hour grace period
 (`PendingStrike`); removing the label or reopening during grace returns it to
 `Watch`, while remaining closed and labelled through grace records an
-irreversible `Strike`. Once any covered pull request strikes, the deposit can
+irreversible `Strike`. The label counts only when it was added at or before
+the end of that window: a label first seen after the window is dated from the
+pull request's label events, one added later is no label, and an unreadable
+addition time decides nothing and is read again a day later. Once any covered pull request strikes, the deposit can
 only be kept (`KeptDue` then `Kept`). It is refunded (`RefundDue` then
 `Refunded`) only after coverage ended by withdrawal or expiry, the 21-day wait
 passed with every covered pull request past its window, and every covered pull

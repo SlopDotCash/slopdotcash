@@ -1,12 +1,15 @@
 // spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"
+import { keepFeeLabel } from "@repo/backend/client"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { D1, first, rows, sql } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
 import { RegistryManifests } from "@repo/ports/backend"
+import { type LabelEvent, keepMarkAt } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { activeInstallation } from "../installation/store.vibe"
-import { type PullRef, type GateRow, keepGate } from "./store.vibe"
+import { type PullRef, type GateRow, keepGate, secondsOf } from "./store.vibe"
 import {
+  coverMarkTimeNeeded,
   coverReading,
   standingCoverBatch,
   standingCoverReason,
@@ -70,6 +73,12 @@ schema CoverPullRead {
   readonly closed_at?: string | null
   readonly labels?: ReadonlyArray<CoverPullLabel>
 }
+schema KeepMarkEvent { readonly __typename: string; readonly createdAt?: string; readonly label?: CoverPullLabel | null }
+schema KeepMarkPageInfo { readonly hasPreviousPage: boolean; readonly startCursor: string | null }
+schema KeepMarkEvents { readonly nodes: ReadonlyArray<KeepMarkEvent>; readonly pageInfo: KeepMarkPageInfo }
+schema KeepMarkPull { readonly timelineItems: KeepMarkEvents }
+schema KeepMarkRepository { readonly pullRequest: KeepMarkPull | null }
+schema KeepMarkAnswer { readonly repository: KeepMarkRepository | null }
 schema SearchIssuesRead { readonly total_count?: number }
 schema ManifestRepo { readonly githubUrl?: string }
 schema ManifestShape { readonly id: string; readonly repositories: ReadonlyArray<ManifestRepo> }
@@ -77,6 +86,8 @@ schema ManifestShape { readonly id: string; readonly repositories: ReadonlyArray
 const loginPattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/u
 const repositoryPathPattern = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/u
 const dayMs = 24 * 60 * 60 * 1000
+const keepMarkEvent = "{ createdAt label { name } }"
+const keepMarkQuery = `query($owner: String!, $repo: String!, $number: Int!, $before: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], last: 100, before: $before) { pageInfo { hasPreviousPage startCursor } nodes { __typename ... on LabeledEvent ${keepMarkEvent} ... on UnlabeledEvent ${keepMarkEvent} } } } } }`
 
 export function coverFinished(gate: GateRow | undefined) {
   return gate?.state === "released" && gate.reason === standingCoverReason
@@ -165,13 +176,31 @@ export effect function recordStandingCoverGate(pull: PullRef, commentId: number,
   try keepGate(pull, { state: "released", reason: standingCoverReason, commentId, nextCheckAt: null }, at)
 }
 
-effect function readCoverPull(cover: typeof WatchedCoverRow.Type) {
+effect function keepMarkedAtOf(cover: typeof WatchedCoverRow.Type) {
+  const github = try GitHub
+  let before: string | null = null
+  for (;;) {
+    const answer: typeof KeepMarkAnswer.Type | undefined = github.graphql(keepMarkQuery, { owner: cover.owner, repo: cover.repo, number: cover.pull_number, before }, KeepMarkAnswer) catch () => undefined
+    const page = answer?.repository?.pullRequest?.timelineItems
+    if (page === undefined) return 0
+    const events = page.nodes.flatMap((event): LabelEvent[] => {
+      const at = secondsOf(event.createdAt)
+      return event.label?.name === keepFeeLabel && at > 0 ? [{ label: keepFeeLabel, added: event.__typename === "LabeledEvent", at }] : []
+    })
+    const older = page.pageInfo.startCursor
+    if (events.length > 0 || !page.pageInfo.hasPreviousPage || older === null || older === before) return keepMarkAt(events)
+    before = older
+  }
+}
+
+effect function readCoverPull(cover: typeof WatchedCoverRow.Type, nowMillis: number) {
   const active = activeInstallation(cover.installation_id) catch () => false
   if (!active) return undefined
   const app = try GitHubApp
   provide app.asInstallation(String(cover.installation_id)) {
     const found = (try GitHub).json(`/repos/${cover.owner}/${cover.repo}/pulls/${cover.pull_number}`, CoverPullRead) catch () => undefined
-    return found !== undefined && found.number === cover.pull_number ? found : undefined
+    if (found === undefined || found.number !== cover.pull_number) return undefined
+    return { pull: found, keepMarkedAt: coverMarkTimeNeeded(cover, found, nowMillis) ? try keepMarkedAtOf(cover) : null }
   }
 }
 
@@ -182,12 +211,12 @@ effect function readCovers(nowMillis: number, at: string) {
     ORDER BY updated_at, next_check_at LIMIT ${standingCoverBatch}`)
   let read = 0
   for (const cover of due) {
-    const pull = try readCoverPull(cover)
-    if (pull === undefined) {
+    const found = try readCoverPull(cover, nowMillis)
+    if (found === undefined) {
       try (try D1).run(sql`UPDATE standing_deposit_covers SET updated_at = ${at} WHERE repository_id = ${cover.repository_id} AND pull_number = ${cover.pull_number}`)
       continue
     }
-    const reading = coverReading(cover, pull, nowMillis)
+    const reading = coverReading(cover, found.pull, nowMillis, found.keepMarkedAt)
     if (reading.unreadableTime !== null) {
       try Effect.logWarning("slopbot standing cover unreadable time", {
         depositId: cover.deposit_id,
