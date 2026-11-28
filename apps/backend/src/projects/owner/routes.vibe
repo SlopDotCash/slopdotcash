@@ -26,7 +26,7 @@ import { type Json, appendedRepositories, classified, objectOf, same } from "./r
 import { type Trusted, applyCatchUpChange, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
 import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
 import { managesContacts, publishedProgram, requestedStatus, stagedProgram, withBountyAmount } from "./securityProgram.vibe"
-import { primaryAuthority, primaryOf, refreshSetup } from "./setup.vibe"
+import { primaryAuthority, primaryOf, refreshSetup, staleSetup } from "./setup.vibe"
 
 const contract = { "x-slop-project-api-contract": "project-registry-v1" }
 const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
@@ -266,10 +266,10 @@ function projectAnswer(row: { readonly id: string; readonly status: string; read
   return projectRecord({ ...row, manifest: "" }, manifest)
 }
 
-effect function created(projectId: string, actor: Actor, checked: Checked, scanReason: string) {
+effect function created(projectId: string, actor: Actor, checked: Checked, revision: number, scanReason: string) {
   const stored = try storedProject(projectId)
   if (stored === undefined) throw refusal(postProjects.registryConflictTheProjectIdRepository)
-  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: { kind: "queue", reason: scanReason } })
+  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, basedOn: revision, allowActivation: true, scanRequest: { kind: "queue", reason: scanReason } })
   return { project: projectAnswer(stored.row, stored.manifest), setup }
 }
 
@@ -289,7 +289,7 @@ effect function create(actor: Actor) {
   const by = idOf(actor.githubId)
   const creation = try creationOf(manifest, checked, by, referrer === undefined ? 0 : idOf(referrer.githubId))
   const conflict = refusal(postProjects.registryConflictTheProjectIdRepository)
-  send({
+  const committed = send({
     projectId: decoded.id,
     event: { type: "create", creation, account: closedAccount, registry: closedRegistry, exclusions: [] },
     by,
@@ -299,7 +299,7 @@ effect function create(actor: Actor) {
     if (error._tag === "Rejected") throw creationRefusal(error.event, error.state, by, conflict)
     throw storeRefusal(error, conflict) ?? error
   }
-  return answer(try created(decoded.id, actor, checked, "First scan after self-service setup"), 201)
+  return answer(try created(decoded.id, actor, checked, committed.after.project.revision, "First scan after self-service setup"), 201)
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -609,7 +609,7 @@ effect function publishStored(application: StoredApplication, actor: Actor) {
   const by = idOf(actor.githubId)
   const creation = try creationOf(manifest, checked, by, idOf(application.referrer_github_id ?? ""))
   const conflict = refusal(postProjectApplicationsByIdPublish.registryConflictTheProjectIdRepositoryOrRestrictionsChanged)
-  send({
+  const committed = send({
     projectId: application.project_id,
     event: { type: "publishApplication", creation, account: closedAccount, registry: closedRegistry, exclusions: [] },
     by,
@@ -618,7 +618,7 @@ effect function publishStored(application: StoredApplication, actor: Actor) {
     if (error._tag === "Rejected") throw creationRefusal(error.event, error.state, by, conflict)
     throw storeRefusal(error, conflict) ?? error
   }
-  return answer(try created(application.project_id, actor, checked, "First scan after publishing a stored application"), 201)
+  return answer(try created(application.project_id, actor, checked, committed.after.project.revision, "First scan after publishing a stored application"), 201)
 }
 
 effect function publish(applicationId: string, actor: Actor) {
@@ -665,7 +665,10 @@ effect function check(projectId: string, actor: Actor) {
   const project = try storedProject(projectId)
   if (project === undefined) throw refusal(putProjectsById.notFoundProjectNotFound)
   const checked = try denyingAuthority(project.manifest, accessActor(actor))
-  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: { kind: request.requestScan === true ? "rescan" : "check" } })
+  const setup = refreshSetup({ projectId, actor: accessActor(actor), checked, basedOn: project.row.revision, refuseStale: true, allowActivation: true, scanRequest: { kind: request.requestScan === true ? "rescan" : "check" } }) catch effect (error) => {
+    if (staleSetup(error)) throw refusal(postProjectSetupByIdCheck.staleRevisionNoStore, "The project changed since you loaded it")
+    throw error
+  }
   if (setup === undefined) throw refusal(putProjectsById.notFoundProjectNotFound)
   return answer({ setup })
 }

@@ -1,16 +1,17 @@
 // spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "A cleared, ready project is activated by the setup refresh"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"
 import { isoNow } from "@repo/platform/clock"
+import { Conflict } from "@repo/platform/stored"
 import { type ScanClearanceView, type ScanQueued, ScanRequests } from "@repo/ports/security"
 import type { Registry, SetupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { InstallationRead, SetupCheck } from "../../../gen/backend__projects.effect.vibe"
-import { canActivate, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { Rejected, canActivate, canReadSetup, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import { basis, clearanceState, latestOf } from "../../../gen/security__enforcement.effect.vibe"
 import { type AccessActor, type AccessCheck, type Checked, checkAuthority, currentPath, decided, installationOf, modelRead, readAccess, scopeNote, slopbotInstallUrl } from "../../authority/live.vibe"
 import type { SetupStatus } from "../../client/projectSetup.vibe"
 import { idOf } from "../store/codec.vibe"
 import { accountStanding } from "../store/facts.vibe"
-import { loadProject, send } from "../store/store.vibe"
-import { type StoredProject, storedProject } from "./records.vibe"
+import { type Committed, type Loaded, RevisionMismatch, loadProject, send } from "../store/store.vibe"
+import { type StoredProject, parsedObject } from "./records.vibe"
 import { type Json, objectOf } from "./revisionChanges.ts"
 
 export interface ListedRead {
@@ -257,39 +258,79 @@ export interface Refresh {
   readonly projectId: string
   readonly actor: AccessActor
   readonly checked?: Checked
+  readonly basedOn?: number
+  readonly refuseStale?: boolean
   readonly allowActivation: boolean
   readonly scanRequest: ScanRequest
 }
 
+export function staleSetup(error: unknown): boolean {
+  return (error instanceof RevisionMismatch && error.field === "revision") || error instanceof Conflict ||
+    (error instanceof Rejected && error.event.type === "activate" && canReadSetup(error.state))
+}
+
+effect function retrySetup(loaded: Loaded, actor: number) {
+  const row = loaded.rows.project
+  if (row === undefined) return undefined
+  const manifest = try parsedObject(row.manifest)
+  if (manifest === undefined) return undefined
+  const retry = { state: "retry" as const, message: "The project changed while setup checks were running. Run the check again." }
+  const reads = { checked: { authority: retry, access: retry }, listed: [] } satisfies Reads
+  const check = setupCheckOf(manifest, reads, actor)
+  return setupStatusOf(row, manifest, loaded.state, reads, check, recordedScan(loaded.state, manifest), null, try isoNow())
+}
+
 export effect function refreshSetup(refresh: Refresh) {
-  const before = try storedProject(refresh.projectId)
-  if (before === undefined) return undefined
-  const checked = refresh.checked ?? (try primaryAuthority(before.manifest, refresh.actor))
-  const reads = { checked, listed: try listedReads(before.manifest, refresh.actor) } satisfies Reads
+  const { projectId } = refresh
+  const observed = try loadProject(projectId)
+  const row = observed.rows.project
+  if (row === undefined) return undefined
+  const manifest = try parsedObject(row.manifest)
+  if (manifest === undefined) return undefined
   const by = idOf(refresh.actor.githubId)
-  const check = setupCheckOf(before.manifest, reads, by)
-  const state = (try loadProject(refresh.projectId)).state
-  const account = try accountStanding({ actor: by, steward: state.project.steward })
-  const queued = try queuedScan(refresh, state, before.manifest, setupState(state, check), checked.authority)
-  if (!refresh.allowActivation || !canActivate(state, by, check, account)) {
-    const scan = try scanCheck(refresh.projectId, state, before.manifest, queued, reads, refresh.actor)
-    return setupStatusOf(before.row, before.manifest, state, reads, check, scan, null, try isoNow())
+  if (refresh.basedOn !== undefined && row.revision !== refresh.basedOn) {
+    if (refresh.refuseStale) throw new RevisionMismatch({ projectId, field: "revision" })
+    return try retrySetup(observed, by)
   }
-  const access = checked.access
-  const installation = access.state === "read" && access.access.installation === "installed" ? access.access.installationId : 0
-  const committed = try send({
-    projectId: refresh.projectId,
-    event: { type: "activate", check, account },
-    by,
-    setupRead: state.setupRead,
-    revision: {
-      manifestText: JSON.stringify({ ...before.manifest, status: "active" }),
-      reason: `Activated automatically after setup checks for @${refresh.actor.login}: ${checked.authority.message} Slopbot installation ${installation}. ${admissionNote(state, before.manifest)}.`,
-      actor: { githubId: refresh.actor.githubId, login: refresh.actor.login },
-    },
-  })
-  const after = try storedProject(refresh.projectId)
-  if (after === undefined) return undefined
-  const scan = try scanCheck(refresh.projectId, committed.after, after.manifest, queued, reads, refresh.actor)
-  return setupStatusOf(after.row, after.manifest, committed.after, reads, check, scan, after.row.revision, try isoNow())
+  const checked = refresh.checked ?? (try primaryAuthority(manifest, refresh.actor))
+  const reads = { checked, listed: try listedReads(manifest, refresh.actor) } satisfies Reads
+  const check = setupCheckOf(manifest, reads, by)
+  const account = try accountStanding({ actor: by, steward: observed.state.project.steward })
+  const latest = try loadProject(projectId)
+  const { state } = latest
+  if (latest.rows.project?.revision !== row.revision || canReadSetup({ ...state, setupRead: observed.state.setupRead })) {
+    if (refresh.refuseStale) throw new RevisionMismatch({ projectId, field: "revision" })
+    return try retrySetup(latest, by)
+  }
+  const queued = try queuedScan(refresh, state, manifest, setupState(state, check), checked.authority)
+  let committed: Committed | undefined
+  if (refresh.allowActivation && canActivate(state, by, check, account)) {
+    const access = checked.access
+    const installation = access.state === "read" && access.access.installation === "installed" ? access.access.installationId : 0
+    committed = send({
+      projectId,
+      event: { type: "activate", check, account },
+      by,
+      basedOn: row.revision,
+      setupRead: observed.state.setupRead,
+      revision: {
+        manifestText: JSON.stringify({ ...manifest, status: "active" }),
+        reason: `Activated automatically after setup checks for @${refresh.actor.login}: ${checked.authority.message} Slopbot installation ${installation}. ${admissionNote(state, manifest)}.`,
+        actor: { githubId: refresh.actor.githubId, login: refresh.actor.login },
+      },
+    }) catch effect (error) => {
+      if (!refresh.refuseStale && staleSetup(error)) return undefined
+      throw error
+    }
+    if (committed === undefined) return try retrySetup(try loadProject(projectId), by)
+  }
+  if (committed?.stamped === undefined) {
+    const scan = try scanCheck(projectId, state, manifest, queued, reads, refresh.actor)
+    return setupStatusOf(row, manifest, state, reads, check, scan, null, try isoNow())
+  }
+  const activated = try parsedObject(committed.stamped.text)
+  if (activated === undefined) return undefined
+  const revision = committed.after.project.revision
+  const scan = try scanCheck(projectId, committed.after, activated, queued, reads, refresh.actor)
+  return setupStatusOf({ ...row, revision, status: committed.stamped.manifest.status }, activated, committed.after, reads, check, scan, revision, try isoNow())
 }
